@@ -1,0 +1,108 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color-scheme: dark;
+  background: #020617;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+.document-editor {
+  min-height: 0;
+}
+
+.document-editor .tiptap {
+  min-height: 100%;
+  padding: 2rem;
+  outline: none;
+  color: #cbd5e1;
+  line-height: 1.75;
+}
+
+.document-editor .tiptap h1,
+.document-editor .tiptap h2,
+.document-editor .tiptap h3,
+.document-editor .tiptap h4,
+.document-editor .tiptap h5,
+.document-editor .tiptap h6,
+.document-editor .tiptap h7 {
+  margin: 0 0 1rem;
+  color: #f8fafc;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.document-editor .tiptap h1 { font-size: 2.25rem; }
+.document-editor .tiptap h2 { font-size: 1.875rem; }
+.document-editor .tiptap h3 { font-size: 1.5rem; }
+.document-editor .tiptap h4 { font-size: 1.25rem; }
+.document-editor .tiptap h5 { font-size: 1.125rem; }
+.document-editor .tiptap h6,
+.document-editor .tiptap h7 { font-size: 1rem; }
+
+.document-editor .tiptap p {
+  margin: 0 0 1rem;
+}
+
+.document-editor .tiptap ul {
+  margin: 0 0 1rem;
+  padding-left: 1.5rem;
+}
+
+.document-editor .tiptap ol {
+  margin: 0 0 1rem;
+  padding-left: 1.5rem;
+}
+
+.document-editor .tiptap blockquote {
+  margin: 0 0 1rem;
+  border-left: 3px solid #22d3ee;
+  padding-left: 1rem;
+  color: #94a3b8;
+}
+
+.document-editor .tiptap pre {
+  margin: 0 0 1rem;
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  background: #020617;
+  padding: 1rem;
+}
+
+.document-editor .tiptap code {
+  border-radius: 0.25rem;
+  background: #1e293b;
+  padding: 0.125rem 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+.document-editor .tiptap pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.document-editor .tiptap a {
+  color: #67e8f9;
+  text-decoration: underline;
+}
+
+.document-editor .tiptap li::marker {
+  color: #22d3ee;
+}
+
+@media (max-width: 640px) {
+  .document-editor .tiptap {
+    padding: 1.25rem;
+  }
+}
