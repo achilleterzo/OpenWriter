@@ -723,7 +723,7 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, request, o
         const parsed = anyTool ? parseToolCall(result.reply) : null
         const thinking = result.thinking ? { thinking: result.thinking } : {}
         if (!parsed) {
-          await append({ role: 'assistant', content: result.reply || t('(empty reply)'), ...thinking })
+          await append(result.reply.trim() ? { role: 'assistant', content: result.reply, ...thinking } : { role: 'assistant', content: t('The model returned an empty reply. Use “Resume from here” to try again.'), error: true, ...thinking })
           break
         }
 
