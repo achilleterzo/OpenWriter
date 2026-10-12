@@ -89,9 +89,9 @@ function createNotesStore({ getProjectPath }) {
     const notes = readNotes(file)
     const index = notes.findIndex((note) => note.id === id)
     if (index === -1) throw new Error(t('Note not found'))
-    // Il testo ancorato e l'autore non si modificano: cambiano contenuto, stato e (comment → suggestion) il tipo.
-    const { body, replacement, status, kind } = changes || {}
-    notes[index] = { ...normalize({ ...notes[index], body, replacement, status, kind }, notes[index]), updatedAt: new Date().toISOString() }
+    // L'autore non si modifica: cambiano contenuto, stato, (comment → suggestion) il tipo e, per riallinearla dopo una modifica del testo, l'ancora.
+    const { body, replacement, status, kind, quote, prefix, suffix } = changes || {}
+    notes[index] = { ...normalize({ ...notes[index], body, replacement, status, kind, quote, prefix, suffix }, notes[index]), updatedAt: new Date().toISOString() }
     writeAtomic(file, JSON.stringify(notes, null, 2))
     return notes[index]
   }

@@ -11,8 +11,8 @@ const optionSchema = { anyOf: [{ type: 'string' }, { type: 'object', properties:
 export const TOOL_DEFINITIONS = [
   { group: 'files', name: 'list_directory', required: [], description: 'Lists the files and folders of a project directory (the .ow folder is excluded).', parameters: { path: 'optional: path relative to the project root (default: the root)' } },
   { group: 'files', name: 'read_file', required: ['path'], description: 'Reads the text of a project file (.md, .txt, .docx, .pdf, …). Long files are read in chunks. If the file is open in a tab it returns the CURRENT editor text, including unsaved changes (yours too).', parameters: { path: 'path relative to the project root', offset: 'optional: character to start from', limit: 'optional: maximum number of characters' } },
-  { group: 'notes', name: 'add_note', required: ['quote', 'body'], description: 'Adds a note anchored to a piece of text in the document. If you propose a correction or a rewrite you MUST pass it in "replacement": the user can accept it (applying it to the text), edit it or reject it. Do not put the corrected text only in the comment. Without "replacement" the note is a plain remark.', parameters: { quote: 'EXACT text of the document to anchor the note to: short, unique and inside a single paragraph', body: 'explanation of the note', replacement: 'the corrected text that would replace the quote exactly (required for every proposed correction)', path: 'optional: document (default: the active one)' } },
-  { group: 'notes', name: 'update_note', required: ['id'], description: "Revises a note written by the assistant (not the user's notes) that is still open or resolved: changes its text or proposed correction, or reopens or resolves it. Use it when the user asks to reconsider, deepen or fix the notes. It cannot accept or reject: that is the user's choice. To answer a note written by the user, add a new note with add_note.", parameters: { id: 'note identifier (given by list_notes)', body: 'optional: new text of the note', replacement: 'optional: new proposed correction (a comment becomes a suggestion)', status: 'optional: open (reopens) | resolved (resolves, e.g. when the issue no longer applies)', path: 'optional: document of the note (default: the active one)' } },
+  { group: 'notes', name: 'add_note', required: [], description: 'Adds notes anchored to text in the document. For a proposed correction or rewrite, "quote" must be the WHOLE passage to replace (the full sentence or paragraph, copied exactly) and "replacement" the COMPLETE rewritten passage, ready to be applied as it is: the user accepts it with one click and should not have to edit it. Never put only advice or a fragment in "replacement". Without "replacement" the note is a plain remark. To add several notes pass them all in one call with "notes" (up to 20) instead of one call each.', parameters: { quote: 'EXACT text of the document to anchor the note to (the whole passage to replace when proposing a correction)', body: 'short explanation of the note', replacement: 'the complete corrected passage that would replace the quote exactly (required for every proposed correction)', path: 'optional: document (default: the active one)', notes: { type: 'array', description: 'alternative to quote/body/replacement: several notes in one call, each {quote, body, replacement?}', items: { type: 'object', properties: { quote: { type: 'string' }, body: { type: 'string' }, replacement: { type: 'string' } }, required: ['quote', 'body'] } } } },
+  { group: 'notes', name: 'update_note', required: ['id'], description: "Revises a note written by the assistant (not the user's notes) that is still open or resolved: changes its text or proposed correction, or reopens or resolves it. Use it when the user asks to reconsider, deepen or fix the notes. It cannot accept or reject: that is the user's choice. To answer a note written by the user, add a new note with add_note.", parameters: { id: 'note identifier (given by list_notes)', body: 'optional: new text of the note', replacement: 'optional: new proposed correction (a comment becomes a suggestion)', status: 'optional: open (reopens) | resolved (resolves, e.g. when the issue no longer applies; allowed on any note)', quote: 'optional: EXACT current text of the document to re-anchor the note to, when the passage it referred to was edited (allowed on any note; the document must be open)', path: 'optional: document of the note (default: the active one)' } },
   { group: 'notes', name: 'list_notes', required: [], description: 'Lists the notes with their status (open, accepted, rejected, resolved). Use it to remember what was already proposed, accepted or rejected.', parameters: { path: 'optional: document (default: the active one)', status: 'optional: open | accepted | rejected | resolved | all (default: all)', all_documents: 'optional: true to include every document of the project' } },
   { group: 'edit', name: 'replace_text', required: ['find', 'replace'], description: 'Replaces a passage of the open document. The user can undo the change with Ctrl+Z and it is not saved to disk.', parameters: { find: 'EXACT text to replace (must appear only once)', replace: 'new text, empty to delete; may contain Markdown', path: 'optional: document (default: the active one)' } },
   { group: 'edit', name: 'insert_text', required: ['text', 'position'], description: 'Inserts text into the open document, in an undoable way.', parameters: { text: 'text to insert; may contain Markdown', position: 'after | before | start | end', anchor: 'only for after/before: EXACT text next to which to insert (must appear only once)', path: 'optional: document (default: the active one)' } },
@@ -55,13 +55,13 @@ export function toolSchemas(enabled) {
 
 const GROUP_TITLES = { files: 'Project files', notes: 'Notes in the document', edit: 'Editing the document', web: 'Browser', vision: 'Images and screenshots', ask: 'Questions to the user' }
 // Steps (tool calls) per request: the default, adjustable in the settings.
-export const DEFAULT_MAX_TOOL_STEPS = 15
+export const DEFAULT_MAX_TOOL_STEPS = 30
 
 export function toolsPrompt(enabled, { documentPath, native = false, maxSteps = DEFAULT_MAX_TOOL_STEPS } = {}) {
   const definitions = TOOL_DEFINITIONS.filter((tool) => enabled[tool.group])
   if (!definitions.length) return ''
   // With native calls the provider already describes the tools: no text format, which would confuse the models.
-  const notesHint = enabled.notes ? "If the user asks to review or reconsider the notes: read them with list_notes, update YOUR still-open notes with update_note (text and proposed correction) and answer the user's notes by adding new ones with add_note. Accepting or rejecting a suggestion is always up to the user." : ''
+  const notesHint = enabled.notes ? "If the user asks to review or reconsider the notes: read them with list_notes, update YOUR still-open notes with update_note (text and proposed correction) and answer the user's notes by adding new ones with add_note. Accepting or rejecting a suggestion is always up to the user. When reviewing, add few, meaningful notes, all in ONE add_note call (\"notes\"), and give each correction as the complete rewritten passage in \"replacement\". If the user asks you to fix or rewrite the text, edit it directly with replace_text instead of leaving notes." : ''
   const webHint = enabled.web ? 'To know what the user is looking at in the browser use browser_tabs and then browser_read on the tab concerned; to search or open pages use web_search and web_open, choosing the tab with the tab parameter. To follow a link of a page use browser_follow_link (link number or text).' : ''
   const visionHint = enabled.vision ? 'You can look at images and screenshots with view_image, screenshot_document and screenshot_browser: use them when the visual look matters (layout, charts, images in pages). Images arrive as attachments: describe only what you really see.' : ''
   const askHint = enabled.ask ? 'When you need a decision or a piece of information that boils down to a few alternatives (which topic to cover, which way to go, which variant to prefer), use ask_choice instead of listing the options in the text, then go on according to the answer. Do not ask for needless confirmations.' : ''
@@ -324,16 +324,31 @@ export function createToolRunner(context) {
       needProject()
       const { tab, editor } = context.getDocument(args.path)
       if (!tab.filePath) throw new Error('The document is not saved in the project: ask the user to save it before adding notes')
-      if (!text(args.body).trim()) throw new Error('Missing parameter "body"')
-      const { index, hit } = locateUnique(editor, text(args.quote), 'The quote')
-      const quote = index.text.slice(hit.index, hit.index + hit.length)
-      const hasReplacement = args.replacement !== undefined && args.replacement !== null
-      const note = await api.addNote({
-        filePath: tab.filePath,
-        note: { kind: hasReplacement ? 'suggestion' : 'comment', quote, ...anchorContext(index, hit), body: text(args.body), replacement: hasReplacement ? text(args.replacement) : null, author: 'ai' },
-      })
+      // Several notes can come in one call ("notes"), so a review does not use up the step limit one note at a time.
+      let list = args.notes
+      if (typeof list === 'string') { try { list = JSON.parse(list) } catch { list = null } }
+      const items = Array.isArray(list) && list.length ? list : [args]
+      if (items.length > 20) throw new Error('Too many notes in one call (at most 20)')
+      const results = []
+      for (const [position, item] of items.entries()) {
+        const label = items.length > 1 ? ` (note ${position + 1})` : ''
+        try {
+          if (!text(item.body).trim()) throw new Error(`Missing parameter "body"${label}`)
+          const { index, hit } = locateUnique(editor, text(item.quote), 'The quote')
+          const quote = index.text.slice(hit.index, hit.index + hit.length)
+          const hasReplacement = item.replacement !== undefined && item.replacement !== null
+          const note = await api.addNote({
+            filePath: tab.filePath,
+            note: { kind: hasReplacement ? 'suggestion' : 'comment', quote, ...anchorContext(index, hit), body: text(item.body), replacement: hasReplacement ? text(item.replacement) : null, author: 'ai' },
+          })
+          results.push(`Note ${note.id} added (${note.kind}) on “${quote.slice(0, 80)}”.`)
+        } catch (error) {
+          if (items.length === 1) throw error
+          results.push(`Note ${position + 1} NOT added: ${error.message}`)
+        }
+      }
       context.onNotesChanged()
-      return `Note ${note.id} added (${note.kind}) on “${quote.slice(0, 80)}”. The user will see it highlighted and can ${note.kind === 'suggestion' ? 'accept or reject it' : 'resolve it'}.`
+      return `${results.join('\n')}\nThe user will see the notes highlighted and can accept, reject or resolve them.`
     },
 
     async list_notes(args) {
@@ -356,11 +371,19 @@ export function createToolRunner(context) {
       const id = text(args.id).trim()
       if (!id) throw new Error('Missing parameter "id": get it from list_notes')
       // The note's document need not be open: its project path is enough.
-      const filePath = args.path ? `${project}/${text(args.path).replace(/\\/g, '/')}` : context.getDocument().tab.filePath
-      if (!filePath) throw new Error('The document is not saved in the project: it has no notes')
-      const note = (await api.listNotes(filePath)).find((item) => item.id === id)
-      if (!note) throw new Error(`Note ${id} not found in this document`)
-      if (note.author !== 'ai') throw new Error("You can only edit notes written by the assistant: to answer a note by the user, add a new note with add_note")
+      let filePath = args.path ? `${project}/${text(args.path).replace(/\\/g, '/')}` : context.getDocument().tab.filePath
+      let note = filePath ? (await api.listNotes(filePath)).find((item) => item.id === id) : null
+      // The id is unique: if it is not in the document given or active, look for it in the whole project.
+      if (!note) {
+        for (const entry of await api.listAllNotes()) {
+          const found = entry.notes.find((item) => item.id === id)
+          if (found) { note = found; filePath = `${project}/${entry.path}`; break }
+        }
+      }
+      if (!note) throw new Error(`Note ${id} not found in the project`)
+      // Notes by the user can only be resolved or re-anchored; their text and proposals stay theirs.
+      const editsContent = (args.body !== undefined && args.body !== null) || (args.replacement !== undefined && args.replacement !== null)
+      if (note.author !== 'ai' && editsContent) throw new Error("You can only edit the text of notes written by the assistant: to answer a note by the user, add a new note with add_note")
       if (note.status === 'accepted' || note.status === 'rejected') throw new Error(`The user has already ${note.status === 'accepted' ? 'accepted' : 'rejected'} this note: if needed, add a new note`)
 
       const changes = {}
@@ -372,11 +395,19 @@ export function createToolRunner(context) {
         changes.replacement = text(args.replacement)
         if (note.kind === 'comment') changes.kind = 'suggestion'
       }
+      if (args.quote !== undefined && args.quote !== null) {
+        // Re-anchors the note to the current text of the document (after the original passage was edited).
+        const relative = filePath.startsWith(`${project}/`) ? filePath.slice(project.length + 1) : args.path
+        const { editor } = context.getDocument(relative)
+        const { index, hit } = locateUnique(editor, text(args.quote), 'The quote')
+        changes.quote = index.text.slice(hit.index, hit.index + hit.length)
+        Object.assign(changes, anchorContext(index, hit))
+      }
       if (args.status !== undefined && args.status !== null) {
         if (!['open', 'resolved'].includes(text(args.status))) throw new Error('"status" can only be open or resolved: accepting and rejecting is up to the user')
         changes.status = text(args.status)
       }
-      if (!Object.keys(changes).length) throw new Error('Nothing to update: give body, replacement or status')
+      if (!Object.keys(changes).length) throw new Error('Nothing to update: give body, replacement, quote or status')
 
       const updated = await api.updateNote({ filePath, id, changes })
       context.onNotesChanged()
