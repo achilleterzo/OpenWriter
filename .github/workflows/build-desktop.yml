@@ -1,0 +1,193 @@
+name: Build Desktop App
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Manual release type. Normal releases should be created as tags from the app.'
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  # Decides the release tag and synchronizes the package version on main.
+  # A direct `v*` tag is the release trigger; its version commit is then pushed
+  # to main without creating another release trigger.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.decide.outputs.release_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Determine release tag
+        id: decide
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            release_tag="${{ github.ref_name }}"
+            version="${release_tag#v}"
+
+            echo "Synchronizing package version $version on main"
+            git fetch origin main
+            git switch --force-create main origin/main
+
+            npm version "$version" --no-git-tag-version --no-commit-hooks >/dev/null
+            echo "Changed version files:"
+            git status --short -- package.json package-lock.json
+
+            if ! git diff --quiet -- package.json package-lock.json; then
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git add package.json package-lock.json
+              git commit -m "chore(release): $release_tag"
+              git push origin main
+            else
+              echo "Package version already matches $version; no version commit required."
+            fi
+
+            echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          bump="${{ inputs.release_type || '' }}"
+          if [ -z "$bump" ]; then
+            echo "release_tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Manual release requested: $bump"
+
+          npm version "$bump" --no-git-tag-version --no-commit-hooks >/dev/null
+          new_version="v$(node -p "require('./package.json').version")"
+
+          if git rev-parse "refs/tags/$new_version" >/dev/null 2>&1; then
+            echo "Tag $new_version already exists, aborting to avoid overwriting it." >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore(release): $new_version"
+          git tag "$new_version"
+          # Keep the release version synchronized on main. The workflow does
+          # not listen to pushes on main, so this cannot start another release.
+          git push origin HEAD:main
+          git push origin "$new_version"
+
+          echo "release_tag=$new_version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    if: needs.version.outputs.release_tag != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: openwriter-windows
+            build_args: --win nsis
+            artifact_path: release/*Setup*.exe
+          - os: ubuntu-latest
+            artifact_name: openwriter-linux
+            build_args: --linux AppImage
+            artifact_path: release/*.AppImage
+          - os: macos-latest
+            artifact_name: openwriter-macos
+            build_args: --mac dmg
+            artifact_path: release/*.dmg
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.version.outputs.release_tag }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Align package version with release tag
+        shell: bash
+        run: |
+          release_tag="${{ needs.version.outputs.release_tag }}"
+          version="${release_tag#v}"
+          npm version "$version" --no-git-tag-version --no-commit-hooks
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build desktop package
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: |
+          rm -rf release
+          npm run build:desktop:ci -- ${{ matrix.build_args }} --publish never
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows asset
+        uses: actions/download-artifact@v6
+        with:
+          name: openwriter-windows
+          path: release-assets/windows
+
+      - name: Download Linux asset
+        uses: actions/download-artifact@v6
+        with:
+          name: openwriter-linux
+          path: release-assets/linux
+
+      - name: Download macOS asset
+        uses: actions/download-artifact@v6
+        with:
+          name: openwriter-macos
+          path: release-assets/macos
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.release_tag }}
+          files: |
+            release-assets/windows/*.exe
+            release-assets/linux/*.AppImage
+            release-assets/macos/*.dmg
