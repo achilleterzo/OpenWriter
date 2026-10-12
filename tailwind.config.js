@@ -18,6 +18,24 @@ export default {
         900: 'rgb(var(--slate-900) / <alpha-value>)',
         950: 'rgb(var(--slate-950) / <alpha-value>)',
         },
+        emerald: {
+          300: 'rgb(var(--emerald-300) / <alpha-value>)',
+          400: 'rgb(var(--emerald-400) / <alpha-value>)',
+        },
+        rose: {
+          300: 'rgb(var(--rose-300) / <alpha-value>)',
+          400: 'rgb(var(--rose-400) / <alpha-value>)',
+        },
+        amber: {
+          300: 'rgb(var(--amber-300) / <alpha-value>)',
+          400: 'rgb(var(--amber-400) / <alpha-value>)',
+        },
+        teal: {
+          200: 'rgb(var(--teal-200) / <alpha-value>)',
+          300: 'rgb(var(--teal-300) / <alpha-value>)',
+          900: 'rgb(var(--teal-900) / <alpha-value>)',
+          950: 'rgb(var(--teal-950) / <alpha-value>)',
+        },
         accent: {
         300: 'rgb(var(--accent-300) / <alpha-value>)',
         400: 'rgb(var(--accent-400) / <alpha-value>)',
