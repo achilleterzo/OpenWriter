@@ -4,12 +4,13 @@ import AiProviderSettings from './AiProviderSettings.jsx'
 import AppearanceSettings from './AppearanceSettings.jsx'
 import GeneralSettings from './GeneralSettings.jsx'
 import ProjectSettings from './ProjectSettings.jsx'
+import { t } from '../i18n/index.js'
 
 // Per aggiungere una sezione basta una nuova voce qui.
 const sections = [
-  { id: 'general', label: 'Generale', icon: SlidersHorizontal },
-  { id: 'project', label: 'Progetto', icon: FolderCog },
-  { id: 'appearance', label: 'Aspetto', icon: Palette },
+  { id: 'general', label: t('General'), icon: SlidersHorizontal },
+  { id: 'project', label: t('Project'), icon: FolderCog },
+  { id: 'appearance', label: t('Appearance'), icon: Palette },
   { id: 'ai', label: 'AI', icon: Bot },
 ]
 
@@ -35,8 +36,8 @@ export default function SettingsScreen({ project, onChooseProject, onBack }) {
         <header className="flex items-center gap-4 border-b border-slate-800 px-6 py-5">
           <button
             type="button"
-            aria-label="Torna al documento"
-            title="Torna al documento"
+            aria-label={t('Back to the document')}
+            title={t('Back to the document')}
             className="rounded-md p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-50"
             onClick={onBack}
           >
@@ -44,14 +45,13 @@ export default function SettingsScreen({ project, onChooseProject, onBack }) {
           </button>
           <div>
             <p className="flex items-center gap-2 text-sm font-medium uppercase tracking-[0.25em] text-accent-400">
-              <Settings2 size={15} /> Impostazioni
-            </p>
+              <Settings2 size={15} /> {t('Settings')}</p>
             <h1 id="settings-title" className="mt-1 text-2xl font-semibold tracking-tight">{current.label}</h1>
           </div>
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-          <nav role="tablist" aria-orientation="vertical" aria-label="Sezioni delle impostazioni" className="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-800 p-3 sm:w-52 sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r">
+          <nav role="tablist" aria-orientation="vertical" aria-label={t('Settings sections')} className="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-800 p-3 sm:w-52 sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r">
             {sections.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}

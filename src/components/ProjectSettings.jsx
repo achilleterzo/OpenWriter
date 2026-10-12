@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Check, FolderCog } from 'lucide-react'
 import SpellcheckLanguages from './SpellcheckLanguages.jsx'
+import { formatNumber } from '../i18n/index.js'
+import { t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
 const languages = ['Italiano', 'English', 'Español', 'Français', 'Deutsch', 'Português']
@@ -41,7 +43,10 @@ export default function ProjectSettings({ project }) {
     }
   }
 
-  if (!project) return <p className="text-sm text-slate-400">Apri una cartella di progetto per configurarne le impostazioni.</p>
+  const contextLength = formatNumber(form?.context.length ?? 0)
+  const contextLimit = formatNumber(20000)
+
+  if (!project) return <p className="text-sm text-slate-400">{t('Open a project folder to configure its settings.')}</p>
   if (error && !form) return <p className="text-sm text-rose-400">{error}</p>
   if (!form) return null
 
@@ -50,60 +55,50 @@ export default function ProjectSettings({ project }) {
       <div>
         <div className="flex items-center gap-2">
           <FolderCog className="text-accent-400" size={20} />
-          <h2 className="text-lg font-semibold">Impostazioni del progetto</h2>
+          <h2 className="text-lg font-semibold">{t('Project settings')}</h2>
         </div>
-        <p className="mt-2 max-w-xl text-sm leading-6 text-slate-400">
-          Salvate nella cartella <code className="rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">.ow</code> del progetto, insieme alla cronologia delle versioni: puoi versionarla o copiarla con il progetto.
-        </p>
+        <p className="mt-2 max-w-xl text-sm leading-6 text-slate-400">{t('Saved in the project\'s .ow folder, together with the version history: you can version it or copy it along with the project.')}</p>
       </div>
 
-      <label className="text-sm text-slate-300">
-        Nome del progetto
-        <input value={form.name} maxLength={200} className={fieldClass} placeholder="Facoltativo" onChange={(event) => update({ name: event.target.value })} />
+      <label className="text-sm text-slate-300">{t('Project name')}<input value={form.name} maxLength={200} className={fieldClass} placeholder={t('Optional')} onChange={(event) => update({ name: event.target.value })} />
       </label>
 
-      <label className="text-sm text-slate-300">
-        Contesto per l&apos;AI
-        <textarea
+      <label className="text-sm text-slate-300">{t('Context for the AI')}<textarea
           value={form.context}
           rows={9}
           className={`${fieldClass} resize-y font-mono text-sm leading-6`}
-          placeholder={'Descrivi il progetto: pubblico, tono di voce, glossario, regole di stile…\nL\'assistente lo riceve a ogni conversazione.'}
+          placeholder={t('Describe the project: audience, tone of voice, glossary, style rules…\nThe assistant receives it in every conversation.')}
           onChange={(event) => update({ context: event.target.value })}
         />
-        <span className="mt-1 block text-xs text-slate-500">Salvato in <code>.ow/context.md</code>, quindi puoi anche modificarlo a mano. {form.context.length.toLocaleString('it')} / 20.000 caratteri.</span>
+        <span className="mt-1 block text-xs text-slate-500">{t('Saved in .ow/context.md, so you can also edit it by hand. {contextLength} / {contextLimit} characters.', { contextLength, contextLimit })}</span>
       </label>
 
-      <label className="text-sm text-slate-300">
-        Lingua delle risposte AI in questo progetto
-        <select className={fieldClass} value={form.language} onChange={(event) => update({ language: event.target.value })}>
-          <option value="">Predefinita (impostazioni AI)</option>
+      <label className="text-sm text-slate-300">{t('AI reply language in this project')}<select className={fieldClass} value={form.language} onChange={(event) => update({ language: event.target.value })}>
+          <option value="">{t('Default (AI settings)')}</option>
           {[...new Set([...languages, form.language].filter(Boolean))].map((language) => <option key={language} value={language}>{language}</option>)}
         </select>
       </label>
 
       <div className="grid gap-2 text-sm text-slate-300">
-        <span>Lingue del correttore ortografico in questo progetto</span>
+        <span>{t('Spell checker languages in this project')}</span>
         <SpellcheckLanguages
           available={spellcheck.available}
           value={form.spellcheck}
-          emptyHint={`Predefinite: ${spellcheck.global.join(', ') || 'nessuna'}`}
+          emptyHint={t('Default: {value}', { value: spellcheck.global.join(', ') || t('None') })}
           onChange={(languages) => update({ spellcheck: languages })}
         />
-        <span className="text-xs text-slate-500">Se non ne scegli nessuna valgono quelle delle impostazioni generali.</span>
+        <span className="text-xs text-slate-500">{t('If you choose none, the ones from the general settings apply.')}</span>
       </div>
 
       <label className="flex items-start gap-3 text-sm text-slate-300">
         <input type="checkbox" checked={form.autoVersions} className="mt-1 accent-accent-500" onChange={(event) => update({ autoVersions: event.target.checked })} />
-        <span>
-          Salva una versione a ogni salvataggio
-          <span className="block text-xs text-slate-500">Se il testo è cambiato. Si conservano al massimo 100 versioni per documento; le automatiche più vecchie vengono scartate per prime.</span>
+        <span>{t('Save a version on every save')}<span className="block text-xs text-slate-500">{t('If the text changed. At most 100 versions are kept per document; the oldest automatic ones are discarded first.')}</span>
         </span>
       </label>
 
       <div className="flex items-center gap-3">
-        <button type="button" className="rounded-md bg-accent-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-500" onClick={save}>Salva impostazioni</button>
-        {saved && <span className="flex items-center gap-1 text-sm text-emerald-400"><Check size={15} /> Salvato</span>}
+        <button type="button" className="rounded-md bg-accent-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-500" onClick={save}>{t('Save settings')}</button>
+        {saved && <span className="flex items-center gap-1 text-sm text-emerald-400"><Check size={15} /> {t('Saved')}</span>}
         {error && <span className="text-sm text-rose-400">{error}</span>}
       </div>
     </section>

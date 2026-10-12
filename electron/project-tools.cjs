@@ -1,5 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
+const { t } = require('./i18n.cjs')
 
 const EXCLUDED_NAMES = new Set(['.ow', '.git', 'node_modules'])
 const BINARY_DOCUMENT_EXTENSIONS = new Set(['.docx', '.pdf'])
@@ -30,11 +31,11 @@ function htmlToText(html) {
 function createProjectTools({ getProjectPath, readDocument }) {
   function resolveInside(relativePath = '') {
     const project = getProjectPath()
-    if (!project) throw new Error('Nessun progetto aperto')
+    if (!project) throw new Error(t('No project open'))
     const target = path.resolve(project, String(relativePath || '.'))
     const relative = path.relative(project, target)
-    if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Percorso fuori dal progetto')
-    if (relative.split(path.sep).some((part) => EXCLUDED_NAMES.has(part))) throw new Error('Questo percorso non è accessibile')
+    if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error(t('Path is outside the project'))
+    if (relative.split(path.sep).some((part) => EXCLUDED_NAMES.has(part))) throw new Error(t('This path is not accessible'))
     return { target, relative: relative.split(path.sep).join('/') }
   }
 
@@ -55,16 +56,16 @@ function createProjectTools({ getProjectPath, readDocument }) {
   async function readFile(relativePath, { offset = 0, limit = DEFAULT_READ_CHARS } = {}) {
     const { target, relative } = resolveInside(relativePath)
     const stats = await fs.promises.stat(target)
-    if (!stats.isFile()) throw new Error('Non è un file: usa list_directory per le cartelle')
+    if (!stats.isFile()) throw new Error(t('Not a file: use list_directory for folders'))
 
     let text
     if (BINARY_DOCUMENT_EXTENSIONS.has(path.extname(target).toLowerCase())) {
       const document = await readDocument(target)
       text = htmlToText(document.content)
     } else {
-      if (stats.size > MAX_TEXT_FILE_BYTES) throw new Error('File troppo grande per essere letto come testo')
+      if (stats.size > MAX_TEXT_FILE_BYTES) throw new Error(t('File too large to be read as text'))
       const buffer = await fs.promises.readFile(target)
-      if (buffer.includes(0)) throw new Error('Il file è binario e non può essere letto come testo')
+      if (buffer.includes(0)) throw new Error(t('The file is binary and cannot be read as text'))
       text = buffer.toString('utf8')
     }
 
@@ -78,10 +79,10 @@ function createProjectTools({ getProjectPath, readDocument }) {
   // Contenuto di un'immagine del progetto (la cartella .ow resta esclusa).
   async function readImage(relativePath) {
     const { target } = resolveInside(relativePath)
-    if (!IMAGE_EXTENSIONS.has(path.extname(target).toLowerCase())) throw new Error('Formato non supportato: sono ammessi png, jpg, gif, webp e bmp')
+    if (!IMAGE_EXTENSIONS.has(path.extname(target).toLowerCase())) throw new Error(t('Unsupported format: png, jpg, gif, webp and bmp are allowed'))
     const stats = await fs.promises.stat(target)
-    if (!stats.isFile()) throw new Error('Non è un file')
-    if (stats.size > MAX_IMAGE_BYTES) throw new Error('Immagine troppo grande (oltre 8 MB)')
+    if (!stats.isFile()) throw new Error(t('Not a file'))
+    if (stats.size > MAX_IMAGE_BYTES) throw new Error(t('Image too large (over 8 MB)'))
     return fs.promises.readFile(target)
   }
 

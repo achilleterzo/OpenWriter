@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
 
@@ -29,20 +30,20 @@ export default function useDocumentFileCommands({ activeTab, getEditor, workspac
           })
           if (savedPath) {
             workspace.markSaved(activeTab.id, savedPath)
-            onStatusChange('Salvato')
+            onStatusChange(t('Saved'))
           }
         }
 
         if (command === 'export-docx') {
-          if (await electronAPI.exportDocx(editor.getHTML())) onStatusChange('DOCX esportato')
+          if (await electronAPI.exportDocx(editor.getHTML())) onStatusChange(t('DOCX exported'))
         }
 
         if (command === 'export-pdf') {
-          if (await electronAPI.exportPdf(editor.getHTML())) onStatusChange('PDF esportato')
+          if (await electronAPI.exportPdf(editor.getHTML())) onStatusChange(t('PDF exported'))
         }
       } catch (error) {
         console.error(error)
-        onStatusChange("Errore durante l'operazione")
+        onStatusChange(t('The operation failed'))
       }
       return undefined
     })

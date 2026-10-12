@@ -1,41 +1,43 @@
 const { Menu } = require('electron')
+const { t } = require('./i18n.cjs')
 
+// Le voci con "role" usano un'etichetta esplicita: altrimenti Electron le mostrerebbe nella lingua del sistema, non in quella scelta.
 function createApplicationMenu(sendCommand) {
   const command = (name) => () => sendCommand(name)
 
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
-      label: 'File',
+      label: t('File'),
       submenu: [
-        { label: 'Nuovo documento', accelerator: 'CmdOrCtrl+N', click: command('new') },
-        { label: 'Apri...', accelerator: 'CmdOrCtrl+O', click: command('open') },
-        { label: 'Apri cartella progetto...', accelerator: 'CmdOrCtrl+Shift+O', click: command('open-project') },
-        { label: 'Chiudi scheda', accelerator: 'CmdOrCtrl+W', click: command('close-tab') },
+        { label: t('New document'), accelerator: 'CmdOrCtrl+N', click: command('new') },
+        { label: t('Open…'), accelerator: 'CmdOrCtrl+O', click: command('open') },
+        { label: t('Open project folder…'), accelerator: 'CmdOrCtrl+Shift+O', click: command('open-project') },
+        { label: t('Close tab'), accelerator: 'CmdOrCtrl+W', click: command('close-tab') },
         { type: 'separator' },
-        { label: 'Salva', accelerator: 'CmdOrCtrl+S', click: command('save') },
-        { label: 'Salva con nome...', accelerator: 'CmdOrCtrl+Shift+S', click: command('save-as') },
+        { label: t('Save'), accelerator: 'CmdOrCtrl+S', click: command('save') },
+        { label: t('Save as…'), accelerator: 'CmdOrCtrl+Shift+S', click: command('save-as') },
         { type: 'separator' },
-        { label: 'Esporta DOCX...', click: command('export-docx') },
-        { label: 'Esporta PDF...', click: command('export-pdf') },
+        { label: t('Export DOCX…'), click: command('export-docx') },
+        { label: t('Export PDF…'), click: command('export-pdf') },
         { type: 'separator' },
-        { label: 'Impostazioni...', accelerator: 'CmdOrCtrl+,', click: command('settings') },
+        { label: t('Settings…'), accelerator: 'CmdOrCtrl+,', click: command('settings') },
         { type: 'separator' },
-        { role: 'quit' },
+        { role: 'quit', label: t('Quit') },
       ],
     },
     {
-      label: 'Modifica',
+      label: t('Edit'),
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
+        { role: 'undo', label: t('Undo') },
+        { role: 'redo', label: t('Redo') },
         { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' },
+        { role: 'cut', label: t('Cut') },
+        { role: 'copy', label: t('Copy') },
+        { role: 'paste', label: t('Paste') },
+        { role: 'selectAll', label: t('Select all') },
         { type: 'separator' },
-        { label: 'Trova…', accelerator: 'CmdOrCtrl+F', click: command('find') },
-        { label: 'Sostituisci…', accelerator: 'CmdOrCtrl+H', click: command('replace') },
+        { label: t('Find…'), accelerator: 'CmdOrCtrl+F', click: command('find') },
+        { label: t('Replace…'), accelerator: 'CmdOrCtrl+H', click: command('replace') },
       ],
     },
   ]))

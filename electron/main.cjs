@@ -12,6 +12,7 @@ const { createChatStore } = require('./chat-store.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
 const { createNotesStore } = require('./notes-store.cjs')
 const images = require('./images.cjs')
+const { t, setLocale, getLocale } = require('./i18n.cjs')
 
 const isDevelopment = !app.isPackaged
 let mainWindow
@@ -33,10 +34,11 @@ const markdownFilter = {
   extensions: ['md', 'markdown', 'mdown'],
 }
 
-const supportedDocumentsFilter = {
-  name: 'Tutti i file supportati',
+// Una funzione, non una costante: il nome si traduce nella lingua corrente anche dopo un cambio di lingua.
+const supportedDocumentsFilter = () => ({
+  name: t('All supported files'),
   extensions: ['md', 'markdown', 'mdown', 'docx', 'pdf'],
-}
+})
 
 function escapeHtml(value) {
   return value
@@ -86,7 +88,7 @@ async function openDocument() {
   const result = await dialog.showOpenDialog(mainWindow, {
     defaultPath: projectPath || undefined,
     properties: ['openFile'],
-    filters: [supportedDocumentsFilter, markdownFilter, { name: 'Word', extensions: ['docx'] }, { name: 'PDF', extensions: ['pdf'] }],
+    filters: [supportedDocumentsFilter(), markdownFilter, { name: 'Word', extensions: ['docx'] }, { name: 'PDF', extensions: ['pdf'] }],
   })
 
   if (result.canceled) return null
@@ -150,10 +152,10 @@ async function setProject(directory) {
 
 // Le operazioni del file explorer sono limitate alla cartella del progetto corrente.
 function resolveInProject(target) {
-  if (!projectPath) throw new Error('Nessun progetto aperto')
+  if (!projectPath) throw new Error(t('No project open'))
   const resolved = path.resolve(target)
   const relative = path.relative(projectPath, resolved)
-  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Percorso fuori dal progetto')
+  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error(t('Path is outside the project'))
   return resolved
 }
 
@@ -168,7 +170,7 @@ async function uniqueDestination(directory, fileName) {
 
 async function importFiles({ paths, targetDirectory }) {
   const directory = resolveInProject(targetDirectory)
-  if (!(await fs.stat(directory)).isDirectory()) throw new Error('La destinazione non è una cartella')
+  if (!(await fs.stat(directory)).isDirectory()) throw new Error(t('The destination is not a folder'))
   const copied = []
   const skipped = []
   for (const source of Array.isArray(paths) ? paths : []) {
@@ -187,16 +189,16 @@ async function importFiles({ paths, targetDirectory }) {
 
 async function renamePath({ path: target, newName }) {
   const source = resolveInProject(target)
-  if (source === projectPath) throw new Error('Non si può rinominare la cartella del progetto da qui')
+  if (source === projectPath) throw new Error(t('The project folder cannot be renamed from here'))
   const name = String(newName || '').trim()
-  if (!name || name === '.' || name === '..' || /[\\/:*?"<>|]/.test(name)) throw new Error('Nome non valido')
+  if (!name || name === '.' || name === '..' || /[\\/:*?"<>|]/.test(name)) throw new Error(t('Invalid name'))
   const isDirectory = (await fs.stat(source)).isDirectory()
   // Se l'estensione viene omessa o non è supportata, si conserva quella originale.
   const finalName = isDirectory || documentExtensions.includes(path.extname(name).toLowerCase()) ? name : `${name}${path.extname(source)}`
   const destination = resolveInProject(path.join(path.dirname(source), finalName))
   if (destination === source) return source
   const caseOnlyChange = destination.toLowerCase() === source.toLowerCase()
-  if (!caseOnlyChange && fsSync.existsSync(destination)) throw new Error('Esiste già un elemento con questo nome')
+  if (!caseOnlyChange && fsSync.existsSync(destination)) throw new Error(t('An item with this name already exists'))
   await fs.rename(source, destination)
   try { projectFile.moveHistory(source, destination) } catch (error) { console.error('Cronologia non spostata:', error) }
   try { notesStore.move(source, destination) } catch (error) { console.error('Note non spostate:', error) }
@@ -205,15 +207,15 @@ async function renamePath({ path: target, newName }) {
 
 async function deletePath(target) {
   const source = resolveInProject(target)
-  if (source === projectPath) throw new Error('Non si può eliminare la cartella del progetto da qui')
+  if (source === projectPath) throw new Error(t('The project folder cannot be deleted from here'))
   const isDirectory = (await fs.stat(source)).isDirectory()
   const { response } = await dialog.showMessageBox(mainWindow, {
     type: 'warning',
-    buttons: ['Sposta nel cestino', 'Annulla'],
+    buttons: [t('Move to the trash'), t('Cancel')],
     defaultId: 1,
     cancelId: 1,
-    message: `Eliminare "${path.basename(source)}"?`,
-    detail: isDirectory ? 'La cartella e tutto il suo contenuto verranno spostati nel cestino.' : 'Il file verrà spostato nel cestino.',
+    message: t('Delete "{basename}"?', { basename: path.basename(source) }),
+    detail: isDirectory ? t('The folder and all its contents will be moved to the trash.') : t('The file will be moved to the trash.'),
   })
   if (response !== 0) return false
   await shell.trashItem(source)
@@ -448,7 +450,7 @@ ipcMain.handle('images:capture-page', async (_event, rect) => {
 })
 ipcMain.handle('images:capture-webview', async (_event, contentsId) => {
   const contents = webContents.fromId(Number(contentsId))
-  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) throw new Error('Scheda browser non valida')
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) throw new Error(t('Invalid browser tab'))
   return images.prepareImage(await contents.capturePage())
 })
 ipcMain.handle('chat:save-attachment', (_event, attachment) => chatStore.saveAttachment(attachment || {}))
@@ -499,7 +501,7 @@ ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, sa
   const targetPath = await chooseSavePath({
     filePath,
     saveAs,
-    defaultPath: 'Nuovo documento.md',
+    defaultPath: `${t('New document')}.md`,
     filters: [markdownFilter],
   })
   if (!targetPath) return null
@@ -515,18 +517,18 @@ ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, sa
 })
 ipcMain.handle('document:export-docx', async (_event, { html }) => {
   const targetPath = await chooseSavePath({
-    defaultPath: 'Nuovo documento.docx',
+    defaultPath: `${t('New document')}.docx`,
     filters: [{ name: 'Word', extensions: ['docx'] }],
   })
   if (!targetPath) return null
   const docxPath = /\.docx$/i.test(targetPath) ? targetPath : `${targetPath}.docx`
-  const document = await htmlToDocx(`<html><body>${html}</body></html>`, null, { title: 'Nuovo documento' })
+  const document = await htmlToDocx(`<html><body>${html}</body></html>`, null, { title: t('New document') })
   await fs.writeFile(docxPath, document)
   return docxPath
 })
 ipcMain.handle('document:export-pdf', async (_event, { html }) => {
   const targetPath = await chooseSavePath({
-    defaultPath: 'Nuovo documento.pdf',
+    defaultPath: `${t('New document')}.pdf`,
     filters: [{ name: 'PDF', extensions: ['pdf'] }],
   })
   if (!targetPath) return null
@@ -555,16 +557,38 @@ app.on('web-contents-created', (_event, contents) => {
   contents.on('will-navigate', (event, url) => { if (!/^(https?:|about:blank)/i.test(url)) event.preventDefault() })
 })
 
-app.whenReady().then(async () => {
-  const browserSession = session.fromPartition(BROWSER_PARTITION)
-  browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-  browserSession.on('will-download', (event) => event.preventDefault())
-  await loadProject()
-  createWindow()
+// Lingua del processo principale: ricordata tra gli avvii, così il menu nasce già nella lingua giusta.
+const languageFilePath = () => path.join(app.getPath('userData'), 'language.json')
+
+function loadLanguage() {
+  try { setLocale(JSON.parse(fsSync.readFileSync(languageFilePath(), 'utf8')).locale) } catch { /* prima esecuzione: inglese */ }
+}
+
+function buildMenu() {
   createApplicationMenu((command) => {
     if (command === 'settings' || command === 'open-project') mainWindow?.webContents.send('app:command', command)
     else mainWindow?.webContents.send('document:command', command)
   })
+}
+
+ipcMain.handle('i18n:set-locale', (_event, code) => {
+  const before = getLocale()
+  const after = setLocale(code)
+  if (after !== before) {
+    try { fsSync.writeFileSync(languageFilePath(), JSON.stringify({ locale: after })) } catch (error) { console.error(error) }
+    buildMenu()
+  }
+  return after
+})
+
+app.whenReady().then(async () => {
+  const browserSession = session.fromPartition(BROWSER_PARTITION)
+  browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  browserSession.on('will-download', (event) => event.preventDefault())
+  loadLanguage()
+  await loadProject()
+  createWindow()
+  buildMenu()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

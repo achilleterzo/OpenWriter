@@ -1,35 +1,36 @@
+import { t } from './i18n/index.js'
 const STORAGE_KEY = 'openwriter.appearance'
 
 export const themes = [
-  { value: 'system', label: 'Sistema' },
-  { value: 'dark', label: 'Scuro' },
-  { value: 'light', label: 'Chiaro' },
+  { value: 'system', label: t('System') },
+  { value: 'dark', label: t('Dark') },
+  { value: 'light', label: t('Light') },
 ]
 
 export const accents = [
-  { value: 'violet', label: 'Viola', swatch: '#8b5cf6' },
-  { value: 'cyan', label: 'Ciano', swatch: '#06b6d4' },
-  { value: 'emerald', label: 'Smeraldo', swatch: '#10b981' },
-  { value: 'rose', label: 'Rosa', swatch: '#f43f5e' },
-  { value: 'amber', label: 'Ambra', swatch: '#f59e0b' },
+  { value: 'violet', label: t('Violet'), swatch: '#8b5cf6' },
+  { value: 'cyan', label: t('Cyan'), swatch: '#06b6d4' },
+  { value: 'emerald', label: t('Emerald'), swatch: '#10b981' },
+  { value: 'rose', label: t('Rose'), swatch: '#f43f5e' },
+  { value: 'amber', label: t('Amber'), swatch: '#f59e0b' },
 ]
 
 export const fonts = [
-  { value: 'sans', label: 'Sans-serif', family: 'ui-sans-serif, system-ui, sans-serif' },
-  { value: 'serif', label: 'Serif', family: 'Georgia, Cambria, "Times New Roman", serif' },
-  { value: 'mono', label: 'Monospazio', family: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
+  { value: 'sans', label: t('Sans-serif'), family: 'ui-sans-serif, system-ui, sans-serif' },
+  { value: 'serif', label: t('Serif'), family: 'Georgia, Cambria, "Times New Roman", serif' },
+  { value: 'mono', label: t('Monospace'), family: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' },
 ]
 
 export const lineHeights = [
-  { value: 'compact', label: 'Compatta', size: 1.5 },
-  { value: 'normal', label: 'Normale', size: 1.75 },
-  { value: 'relaxed', label: 'Ampia', size: 2 },
+  { value: 'compact', label: t('Compact'), size: 1.5 },
+  { value: 'normal', label: t('Normal'), size: 1.75 },
+  { value: 'relaxed', label: t('Relaxed'), size: 2 },
 ]
 
 export const widths = [
-  { value: 'narrow', label: 'Stretta', size: '40rem' },
-  { value: 'medium', label: 'Media', size: '56rem' },
-  { value: 'full', label: 'Piena', size: '100%' },
+  { value: 'narrow', label: t('Narrow'), size: '40rem' },
+  { value: 'medium', label: t('Medium|width'), size: '56rem' },
+  { value: 'full', label: t('Full'), size: '100%' },
 ]
 
 export const fontSizeRange = { min: 14, max: 24 }

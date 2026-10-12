@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Check, RotateCcw } from 'lucide-react'
 import { accents, defaultAppearance, fonts, fontSizeRange, getAppearance, lineHeights, subscribeAppearance, themes, updateAppearance, widths } from '../appearance.js'
+import { t } from '../i18n/index.js'
 
 function Segmented({ label, options, value, onChange }) {
   return (
@@ -31,11 +32,11 @@ export default function AppearanceSettings() {
   return (
     <div className="grid gap-6">
       <section className="grid gap-6 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
-        <h2 className="text-lg font-semibold">Interfaccia</h2>
-        <Segmented label="Tema" options={themes} value={appearance.theme} onChange={(theme) => updateAppearance({ theme })} />
+        <h2 className="text-lg font-semibold">{t('Interface')}</h2>
+        <Segmented label={t('Theme')} options={themes} value={appearance.theme} onChange={(theme) => updateAppearance({ theme })} />
         <div className="grid gap-2">
-          <span className="text-sm text-slate-300">Colore d&apos;accento</span>
-          <div role="radiogroup" aria-label="Colore d'accento" className="flex gap-3">
+          <span className="text-sm text-slate-300">{t('Accent color')}</span>
+          <div role="radiogroup" aria-label={t('Accent color')} className="flex gap-3">
             {accents.map((accent) => (
               <button
                 key={accent.value}
@@ -57,24 +58,23 @@ export default function AppearanceSettings() {
 
       <section className="grid gap-6 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
         <div className="flex items-center justify-between gap-4">
-          <h2 className="text-lg font-semibold">Editor</h2>
+          <h2 className="text-lg font-semibold">{t('Editor')}</h2>
           <button type="button" className="flex items-center gap-1.5 text-xs text-slate-500 transition hover:text-slate-50" onClick={() => updateAppearance(defaultAppearance)}>
-            <RotateCcw size={13} /> Ripristina predefiniti
-          </button>
+            <RotateCcw size={13} /> {t('Restore defaults')}</button>
         </div>
-        <Segmented label="Carattere" options={fonts} value={appearance.font} onChange={(font) => updateAppearance({ font })} />
+        <Segmented label={t('Font')} options={fonts} value={appearance.font} onChange={(font) => updateAppearance({ font })} />
         <label className="grid gap-2 text-sm text-slate-300">
-          <span className="flex justify-between"><span>Dimensione del testo</span><span className="text-slate-500">{appearance.fontSize} px</span></span>
+          <span className="flex justify-between"><span>{t('Text size')}</span><span className="text-slate-500">{appearance.fontSize} px</span></span>
           <input type="range" min={fontSizeRange.min} max={fontSizeRange.max} step="1" value={appearance.fontSize} className="accent-accent-500" onChange={(event) => updateAppearance({ fontSize: Number(event.target.value) })} />
         </label>
-        <Segmented label="Interlinea" options={lineHeights} value={appearance.lineHeight} onChange={(lineHeight) => updateAppearance({ lineHeight })} />
-        <Segmented label="Larghezza del testo" options={widths} value={appearance.width} onChange={(width) => updateAppearance({ width })} />
+        <Segmented label={t('Line spacing')} options={lineHeights} value={appearance.lineHeight} onChange={(lineHeight) => updateAppearance({ lineHeight })} />
+        <Segmented label={t('Text width')} options={widths} value={appearance.width} onChange={(width) => updateAppearance({ width })} />
 
         <div className="rounded-lg border border-slate-800 bg-slate-900 p-1">
           <div className="document-editor mx-auto">
             <div className="tiptap">
-              <h2>Anteprima</h2>
-              <p>Il testo del documento appare così: <a href="#anteprima" onClick={(event) => event.preventDefault()}>un collegamento</a> e un po&apos; di <code>codice</code>.</p>
+              <h2>{t('Preview')}</h2>
+              <p>{t('The document text looks like this:')} <a href="#anteprima" onClick={(event) => event.preventDefault()}>{t('a link')}</a> {t('and a bit of')} <code>{t('code')}</code>.</p>
             </div>
           </div>
         </div>

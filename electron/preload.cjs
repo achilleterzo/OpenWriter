@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   captureWebview: (contentsId) => ipcRenderer.invoke('images:capture-webview', contentsId),
   saveAttachment: (attachment) => ipcRenderer.invoke('chat:save-attachment', attachment),
   getAttachment: (id) => ipcRenderer.invoke('chat:get-attachment', id),
+  setLocale: (code) => ipcRenderer.invoke('i18n:set-locale', code),
   getProject: () => ipcRenderer.invoke('workspace:get-project'),
   chooseProject: () => ipcRenderer.invoke('workspace:choose-project'),
   listDirectory: (directory) => ipcRenderer.invoke('workspace:list-directory', directory),

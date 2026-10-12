@@ -1,8 +1,9 @@
 import { FileText, Globe, PanelRight, Plus, X } from 'lucide-react'
+import { t } from '../i18n/index.js'
 
 export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, onNewBrowser, assistantOpen, onToggleAssistant }) {
   return (
-    <div role="tablist" aria-label="Documenti aperti" className="flex shrink-0 items-stretch overflow-x-auto border-b border-slate-800 bg-slate-950">
+    <div role="tablist" aria-label={t('Open documents')} className="flex shrink-0 items-stretch overflow-x-auto border-b border-slate-800 bg-slate-950">
       {tabs.map((tab) => {
         const active = tab.id === activeId
         return (
@@ -19,7 +20,7 @@ export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, onNew
             <span className="truncate">{tab.title}</span>
             <button
               type="button"
-              aria-label={`Chiudi ${tab.title}`}
+              aria-label={t('Close {title}', { title: tab.title })}
               className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-slate-700 hover:text-slate-50"
               onClick={(event) => { event.stopPropagation(); onClose(tab.id) }}
             >
@@ -29,17 +30,17 @@ export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, onNew
           </div>
         )
       })}
-      <button type="button" aria-label="Nuovo documento" title="Nuovo documento (Ctrl+N)" className="px-3 text-slate-500 transition hover:bg-slate-900 hover:text-slate-50" onClick={onNew}>
+      <button type="button" aria-label={t('New document')} title={t('New document (Ctrl+N)')} className="px-3 text-slate-500 transition hover:bg-slate-900 hover:text-slate-50" onClick={onNew}>
         <Plus size={16} />
       </button>
-      <button type="button" aria-label="Apri il browser" title="Nuova scheda browser" className="px-3 text-slate-500 transition hover:bg-slate-900 hover:text-slate-50" onClick={onNewBrowser}>
+      <button type="button" aria-label={t('Open the browser')} title={t('New browser tab')} className="px-3 text-slate-500 transition hover:bg-slate-900 hover:text-slate-50" onClick={onNewBrowser}>
         <Globe size={16} />
       </button>
       <button
         type="button"
-        aria-label="Assistente AI"
+        aria-label={t('AI assistant')}
         aria-pressed={assistantOpen}
-        title={assistantOpen ? 'Nascondi assistente AI' : 'Mostra assistente AI'}
+        title={assistantOpen ? t('Hide AI assistant') : t('Show AI assistant')}
         className={`sticky right-0 ml-auto shrink-0 border-l border-slate-800 bg-slate-950 px-3 transition ${assistantOpen ? 'text-accent-400' : 'text-slate-500 hover:text-slate-50'}`}
         onClick={onToggleAssistant}
       >

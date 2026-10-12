@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Brain, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Copy, CornerDownLeft, FolderOpen, GitBranch, Loader2, Pencil, Plus, Send, Settings, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import MarkdownMessage from './MarkdownMessage.jsx'
 import { reasoningByProvider } from '../lib/aiOptions.js'
+import { formatDateTime, languageEnglishName } from '../i18n/index.js'
 import { DEFAULT_MAX_TOOL_STEPS, createToolRunner, describeCall, parseToolCall, toolSchemas, toolsPrompt, visibleText } from '../lib/aiTools.js'
+import { t } from '../i18n/index.js'
 
 const api = window.electronAPI
 const ai = api?.ai
@@ -37,23 +39,23 @@ async function loadRecentImages(messages) {
 }
 
 const quickActions = [
-  { label: 'Correggi', prompt: 'Correggi ortografia, grammatica e punteggiatura senza cambiare il significato. Restituisci solo il testo corretto.' },
-  { label: 'Riscrivi', prompt: 'Riscrivi il testo in modo più chiaro e scorrevole mantenendo il significato e il tono.' },
-  { label: 'Riassumi', prompt: 'Riassumi il testo in pochi punti essenziali.' },
-  { label: 'Revisiona', prompt: 'Revisiona il testo: elenca i problemi di stile, chiarezza e coerenza e proponi miglioramenti concreti.' },
+  { label: t('Proofread'), prompt: t('Fix spelling, grammar and punctuation without changing the meaning. Return only the corrected text.') },
+  { label: t('Rewrite'), prompt: t('Rewrite the text to be clearer and smoother, keeping the meaning and the tone.') },
+  { label: t('Summarize'), prompt: t('Summarize the text in a few key points.') },
+  { label: t('Review'), prompt: t('Review the text: list issues of style, clarity and consistency and suggest concrete improvements.') },
 ]
 
 // Titoli lunghi: nelle liste a discesa si abbreviano, il titolo completo resta nel tooltip.
 const ellipsize = (value, limit) => (value.length > limit ? `${value.slice(0, limit - 1).trimEnd()}…` : value)
 const blankConversation = () => ({ id: null, title: '', parentId: null, branchedAt: null, contextFrom: [], messages: [] })
-const dateFormatter = new Intl.DateTimeFormat('it', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+const SHORT_DATE = { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }
 
 const systemPrompt = (language, projectContext = '', previousChats = [], toolsText = '') => [
-  'Sei l\'assistente di scrittura integrato in OpenWriter, un editor di documenti Markdown.',
-  `Rispondi in ${language}, salvo diversa richiesta. Sii conciso.`,
-  'Quando riscrivi o correggi un testo, restituisci direttamente il testo in Markdown, senza preamboli.',
-  projectContext.trim() && `Contesto del progetto fornito dall'autore (rispettalo):\n---\n${projectContext.trim()}\n---`,
-  ...previousChats.map(({ title, transcript }) => `Conversazione precedente "${title}", da usare solo come contesto:\n---\n${transcript}\n---`),
+  'You are the writing assistant built into OpenWriter, a Markdown document editor.',
+  `Reply in ${language}, unless asked otherwise. Be concise.`,
+  'When you rewrite or correct a text, return the text itself in Markdown, with no preamble.',
+  projectContext.trim() && `Project context provided by the author (follow it):\n---\n${projectContext.trim()}\n---`,
+  ...previousChats.map(({ title, transcript }) => `Previous conversation "${title}", to be used only as context:\n---\n${transcript}\n---`),
   toolsText,
 ].filter(Boolean).join('\n\n')
 
@@ -77,14 +79,14 @@ function toModelMessages(messages, context, native, loaded = new Map()) {
       const entries = message.images || []
       const attached = entries.map((entry) => loaded.get(imageKey(entry))).filter(Boolean)
       const omitted = entries.length - attached.length
-      const content = `${message.content}${omitted ? `\n(${omitted === 1 ? 'immagine non più allegata' : `${omitted} immagini non più allegate`} per contenere i token)` : ''}`
+      const content = `${message.content}${omitted ? `\n(${omitted === 1 ? 'image no longer attached' : `${omitted} images no longer attached`} to save tokens)` : ''}`
       if (native) {
         const result = { role: 'tool', tool_name: message.name, content }
-        return attached.length ? [result, { role: 'user', content: `[Immagine restituita da ${message.name}]`, images: attached.map((image) => image.data) }] : [result]
+        return attached.length ? [result, { role: 'user', content: `[Image returned by ${message.name}]`, images: attached.map((image) => image.data) }] : [result]
       }
-      return [{ role: 'user', content: `[Risultato di ${message.name}]\n${content}`, ...(attached.length ? { images: attached } : {}) }]
+      return [{ role: 'user', content: `[Result of ${message.name}]\n${content}`, ...(attached.length ? { images: attached } : {}) }]
     }
-    if (message.role === 'user' && index === lastUser && context) return [{ role: 'user', content: `${context}\n\nRichiesta: ${message.content}` }]
+    if (message.role === 'user' && index === lastUser && context) return [{ role: 'user', content: `${context}\n\nRequest: ${message.content}` }]
     if (native && message.role === 'assistant' && message.toolCall) {
       return [{ role: 'assistant', content: visibleText(message.content).text, tool_calls: [{ function: { name: message.toolCall.name, arguments: message.toolCall.arguments } }] }]
     }
@@ -102,19 +104,19 @@ const actionClass = 'flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-slat
 function ThinkingBlock({ text, live = false }) {
   return (
     <details open={live} className="max-w-[92%] rounded-lg border border-slate-800 bg-slate-950/40 px-2.5 py-1.5 text-xs text-slate-500">
-      <summary className="flex cursor-pointer select-none items-center gap-1.5"><Brain size={12} /> Ragionamento</summary>
+      <summary className="flex cursor-pointer select-none items-center gap-1.5"><Brain size={12} /> {t('Reasoning')}</summary>
       <p className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words italic leading-5">{live ? text.slice(-1500) : text}</p>
     </details>
   )
 }
 
 function ToolResult({ message }) {
-  const body = message.content.length > MAX_TOOL_DISPLAY_CHARS ? `${message.content.slice(0, MAX_TOOL_DISPLAY_CHARS)}\n… (${message.content.length} caratteri)` : message.content
+  const body = message.content.length > MAX_TOOL_DISPLAY_CHARS ? `${message.content.slice(0, MAX_TOOL_DISPLAY_CHARS)}\n${t('… ({count} characters)', { count: message.content.length })}` : message.content
   return (
     <details className="group max-w-[92%] rounded-lg border border-slate-800 bg-slate-950/40 px-2.5 py-1.5 text-xs text-slate-500">
       <summary className="flex cursor-pointer select-none items-center gap-1.5">
         <ChevronRight size={12} className="transition group-open:rotate-90" />
-        <Wrench size={12} /> {message.name}{message.error ? <span className="text-rose-400"> · errore</span> : ''}
+        <Wrench size={12} /> {message.name}{message.error ? <span className="text-rose-400">{t('· error')}</span> : ''}
       </summary>
       <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono leading-5">{body}</pre>
     </details>
@@ -155,7 +157,7 @@ function AskStepView({ step, initial, onAnswer }) {
   return (
     <div>
       <p className="font-medium text-slate-50">{step.question}</p>
-      {step.ordered && <p className="mt-0.5 text-xs text-slate-400">Scegli nell&apos;ordine che preferisci: la sequenza conta.</p>}
+      {step.ordered && <p className="mt-0.5 text-xs text-slate-400">{t('Choose in the order you prefer: the sequence matters.')}</p>}
       <div className="mt-2 grid gap-1.5">
         {visible.map((option, index) => {
           const position = picked.indexOf(option.label)
@@ -175,7 +177,7 @@ function AskStepView({ step, initial, onAnswer }) {
                 {option.description && <span className="block break-words text-xs text-slate-400">{option.description}</span>}
               </span>
               {active && (step.ordered
-                ? <span aria-label={`Scelta numero ${position + 1}`} className="mt-0.5 flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-accent-600 px-1 text-xs font-semibold text-white">{position + 1}</span>
+                ? <span aria-label={t('Choice number {value}', { value: position + 1 })} className="mt-0.5 flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-accent-600 px-1 text-xs font-semibold text-white">{position + 1}</span>
                 : <Check size={14} className="mt-1 shrink-0 text-accent-400" />)}
             </button>
           )
@@ -185,8 +187,8 @@ function AskStepView({ step, initial, onAnswer }) {
             <input
               autoFocus
               value={other}
-              aria-label="Altro"
-              placeholder="Scrivi la tua risposta…"
+              aria-label={t('Other')}
+              placeholder={t('Type your answer…')}
               className="min-w-0 flex-1 rounded-lg border border-accent-400 bg-slate-900 px-2.5 py-2 text-slate-100 outline-none placeholder:text-slate-500"
               onChange={(event) => setOther(event.target.value)}
               onKeyDown={(event) => {
@@ -194,25 +196,24 @@ function AskStepView({ step, initial, onAnswer }) {
                 if (event.key === 'Escape') { setOtherOpen(false); setOther('') }
               }}
             />
-            {!step.multiple && <button type="button" disabled={!other.trim()} className="rounded-lg bg-accent-600 px-3 text-white transition hover:bg-accent-500 disabled:opacity-40" onClick={() => submit([], other)}>Invia</button>}
+            {!step.multiple && <button type="button" disabled={!other.trim()} className="rounded-lg bg-accent-600 px-3 text-white transition hover:bg-accent-500 disabled:opacity-40" onClick={() => submit([], other)}>{t('Send')}</button>}
           </div>
         ) : (
           <button type="button" className="flex w-full items-center gap-2 rounded-lg border border-dashed border-slate-600 px-2.5 py-2 text-left text-slate-400 transition hover:border-accent-400 hover:text-slate-50" onClick={() => setOtherOpen(true)}>
-            <Pencil size={13} /> Altro…
-          </button>
+            <Pencil size={13} /> {t('Other…')}</button>
         ))}
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
         {pages > 1 ? (
           <div className="flex items-center gap-1 text-xs text-slate-400">
-            <button type="button" aria-label="Pagina precedente" disabled={page === 0} className={pagerButton} onClick={() => setPage(page - 1)}><ChevronLeft size={15} /></button>
-            <span>Pagina {page + 1} di {pages} · {step.options.length} scelte</span>
-            <button type="button" aria-label="Pagina successiva" disabled={page === pages - 1} className={pagerButton} onClick={() => setPage(page + 1)}><ChevronRight size={15} /></button>
+            <button type="button" aria-label={t('Previous page')} disabled={page === 0} className={pagerButton} onClick={() => setPage(page - 1)}><ChevronLeft size={15} /></button>
+            <span>{t('Page {value} of {pages} · {length} choices', { value: page + 1, pages, length: step.options.length })}</span>
+            <button type="button" aria-label={t('Next page')} disabled={page === pages - 1} className={pagerButton} onClick={() => setPage(page + 1)}><ChevronRight size={15} /></button>
           </div>
         ) : <span />}
         <div className="flex items-center gap-1.5">
-          <button type="button" className="rounded px-2 py-1 text-xs text-slate-400 transition hover:bg-slate-700 hover:text-slate-50" onClick={() => onAnswer({ selected: [], other: '', skipped: true })}>Salta</button>
-          {step.multiple && <button type="button" disabled={!confirmable} className="rounded-lg bg-accent-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-accent-500 disabled:opacity-40" onClick={() => submit(picked, otherOpen ? other : '')}>Conferma{picked.length ? ` (${picked.length})` : ''}</button>}
+          <button type="button" className="rounded px-2 py-1 text-xs text-slate-400 transition hover:bg-slate-700 hover:text-slate-50" onClick={() => onAnswer({ selected: [], other: '', skipped: true })}>{t('Skip')}</button>
+          {step.multiple && <button type="button" disabled={!confirmable} className="rounded-lg bg-accent-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-accent-500 disabled:opacity-40" onClick={() => submit(picked, otherOpen ? other : '')}>{t('Confirm{value}', { value: picked.length ? ` (${picked.length})` : '' })}</button>}
         </div>
       </div>
     </div>
@@ -240,15 +241,15 @@ function AskCard({ ask }) {
   }
 
   return (
-    <div ref={cardRef} tabIndex={-1} role="group" aria-label="Domanda dell'assistente" className="w-full max-w-[96%] rounded-xl border border-accent-500/50 bg-slate-800/70 p-3 text-sm outline-none">
+    <div ref={cardRef} tabIndex={-1} role="group" aria-label={t('Assistant question')} className="w-full max-w-[96%] rounded-xl border border-accent-500/50 bg-slate-800/70 p-3 text-sm outline-none">
       {sequence && (
         <div className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-400">
-          <button type="button" aria-label="Domanda precedente" disabled={index === 0} className="flex items-center gap-0.5 rounded px-1.5 py-0.5 transition hover:bg-slate-700 hover:text-slate-50 disabled:opacity-30 disabled:hover:bg-transparent" onClick={() => setIndex(index - 1)}><ChevronLeft size={13} /> Indietro</button>
-          <span aria-label={`Domanda ${index + 1} di ${steps.length}`} className="flex items-center gap-1.5">
-            Domanda {index + 1} di {steps.length}
+          <button type="button" aria-label={t('Previous question')} disabled={index === 0} className="flex items-center gap-0.5 rounded px-1.5 py-0.5 transition hover:bg-slate-700 hover:text-slate-50 disabled:opacity-30 disabled:hover:bg-transparent" onClick={() => setIndex(index - 1)}><ChevronLeft size={13} /> {t('Back')}</button>
+          <span aria-label={t('Question {value} of {length}', { value: index + 1, length: steps.length })} className="flex items-center gap-1.5">
+            <span>{t('Question {value} of {length}', { value: index + 1, length: steps.length })}</span>
             <span className="flex gap-1" aria-hidden="true">{steps.map((_, position) => <span key={position} className={`h-1.5 w-1.5 rounded-full ${position === index ? 'bg-accent-400' : answers[position] ? 'bg-accent-500/50' : 'bg-slate-600'}`} />)}</span>
           </span>
-          <button type="button" className="rounded px-1.5 py-0.5 transition hover:bg-slate-700 hover:text-slate-50" onClick={() => ask.resolve({ answers: [], cancelled: true })}>Annulla</button>
+          <button type="button" className="rounded px-1.5 py-0.5 transition hover:bg-slate-700 hover:text-slate-50" onClick={() => ask.resolve({ answers: [], cancelled: true })}>{t('Cancel')}</button>
         </div>
       )}
       <AskStepView key={index} step={steps[index]} initial={answers[index]} onAnswer={answer} />
@@ -274,8 +275,8 @@ function ToolImages({ images, onOpen }) {
     <div className="flex max-w-[92%] flex-wrap gap-1.5">
       {images.map((entry, index) => (sources[index]
         ? (
-          <button key={index} type="button" title={entry.label || 'Immagine'} className="overflow-hidden rounded border border-slate-700 bg-slate-950/40 transition hover:border-accent-400" onClick={() => onOpen({ src: sources[index], label: entry.label })}>
-            <img src={sources[index]} alt={entry.label || 'Immagine'} className="max-h-32 max-w-44 object-contain" />
+          <button key={index} type="button" title={entry.label || t('Image')} className="overflow-hidden rounded border border-slate-700 bg-slate-950/40 transition hover:border-accent-400" onClick={() => onOpen({ src: sources[index], label: entry.label })}>
+            <img src={sources[index]} alt={entry.label || t('Image')} className="max-h-32 max-w-44 object-contain" />
           </button>
         )
         : <span key={index} className="flex h-16 w-24 items-center justify-center rounded border border-slate-800 text-slate-500"><ImageIcon size={16} /></span>))}
@@ -290,8 +291,8 @@ function ImageViewer({ src, label, onClose }) {
     return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [onClose])
   return (
-    <div role="dialog" aria-label="Immagine" className="fixed inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black/80 p-6" onClick={onClose}>
-      <img src={src} alt={label || 'Immagine'} className="max-h-[85vh] max-w-[92vw] object-contain" />
+    <div role="dialog" aria-label={t('Image')} className="fixed inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black/80 p-6" onClick={onClose}>
+      <img src={src} alt={label || t('Image')} className="max-h-[85vh] max-w-[92vw] object-contain" />
       {label && <p className="max-w-[92vw] truncate text-sm text-slate-200">{label}</p>}
     </div>
   )
@@ -310,7 +311,7 @@ function Message({ message, editor, onBranch, onOpenImage }) {
       <div className="group flex flex-col items-start gap-1">
         <ToolResult message={message} />
         {message.images?.length > 0 && <ToolImages images={message.images} onOpen={onOpenImage} />}
-        {onBranch && <div className="flex text-xs text-slate-500 opacity-0 transition group-hover:opacity-100"><button type="button" className={actionClass} onClick={onBranch}><GitBranch size={12} /> Dirama da qui</button></div>}
+        {onBranch && <div className="flex text-xs text-slate-500 opacity-0 transition group-hover:opacity-100"><button type="button" className={actionClass} onClick={onBranch}><GitBranch size={12} /> {t('Branch from here')}</button></div>}
       </div>
     )
   }
@@ -337,15 +338,14 @@ function Message({ message, editor, onBranch, onOpenImage }) {
       <div className="flex gap-1 text-xs text-slate-500 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
         {assistant && !message.error && shown && (
           <>
-            <button type="button" className={actionClass} onClick={copy}>{copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copiato' : 'Copia'}</button>
+            <button type="button" className={actionClass} onClick={copy}>{copied ? <Check size={12} /> : <Copy size={12} />} {copied ? t('Copied') : t('Copy')}</button>
             {editor && (
-              <button type="button" title="Sostituisce la selezione o inserisce al cursore" className={actionClass} onClick={() => editor.chain().focus().insertContent(shown, { contentType: 'markdown' }).run()}>
-                <CornerDownLeft size={12} /> Inserisci
-              </button>
+              <button type="button" title={t('Replaces the selection or inserts at the cursor')} className={actionClass} onClick={() => editor.chain().focus().insertContent(shown, { contentType: 'markdown' }).run()}>
+                <CornerDownLeft size={12} /> {t('Insert')}</button>
             )}
           </>
         )}
-        {onBranch && <button type="button" title="Crea una nuova conversazione a partire da questo messaggio" className={actionClass} onClick={onBranch}><GitBranch size={12} /> Dirama da qui</button>}
+        {onBranch && <button type="button" title={t('Create a new conversation starting from this message')} className={actionClass} onClick={onBranch}><GitBranch size={12} /> {t('Branch from here')}</button>}
       </div>
     </div>
   )
@@ -433,6 +433,7 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
   const canUseNativeProvider = ['ollama', 'ollama-cloud'].includes(provider)
   const canBranch = Boolean(project && current.id && !busy)
   const parent = current.parentId ? conversations.find((item) => item.id === current.parentId) : null
+  const parentTitle = parent?.title || t('deleted conversation')
 
   // Modello e sforzo si cambiano anche dalla chat: sono le stesse impostazioni del provider attivo.
   async function changeProviderSetting(changes) {
@@ -458,7 +459,7 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
       refreshList()
       return saved
     } catch (reason) {
-      setError(`Conversazione non salvata: ${reason.message}`)
+      setError(t('Conversation not saved: {message}', { message: reason.message }))
       return conversation
     }
   }
@@ -476,7 +477,7 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
   }
 
   async function removeConversation() {
-    if (!current.id || busy || !window.confirm(`Eliminare la conversazione "${current.title}"? Il file in .ow/chat verrà cancellato.`)) return
+    if (!current.id || busy || !window.confirm(t('Delete the conversation "{title}"? The file in .ow/chat will be removed.', { title: current.title }))) return
     try {
       await api.deleteConversation(current.id)
       const list = await api.listConversations()
@@ -516,12 +517,12 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
 
   // Una singola richiesta in streaming: aggiorna `live` man mano e restituisce { reply, thinking }.
   async function streamReply(messages, options) {
-    liveRef.current = { text: '', thinking: '', status: 'In attesa del modello…' }
+    liveRef.current = { text: '', thinking: '', status: t('Waiting for the model…') }
     scheduleLive()
     const request = ai.chatStream(messages, (event) => {
       const state = liveRef.current
       if (event.type === 'text') { state.text += event.delta; state.status = '' }
-      else if (event.type === 'thinking') { state.thinking += event.delta; state.status = state.text ? state.status : 'Sta ragionando…' }
+      else if (event.type === 'thinking') { state.thinking += event.delta; state.status = state.text ? state.status : t('Thinking…') }
       else if (event.type === 'status') state.status = event.text
       scheduleLive()
     }, options)
@@ -570,7 +571,7 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
     const maxSteps = settings.maxToolSteps || DEFAULT_MAX_TOOL_STEPS
     // Mostra la domanda in chat e attende la risposta dell'utente (o Salta / Annulla / Interrompi).
     const askUser = (spec) => new Promise((resolve) => {
-      liveRef.current = { text: '', thinking: '', status: 'In attesa della tua risposta…' }
+      liveRef.current = { text: '', thinking: '', status: t('Waiting for your answer…') }
       scheduleLive()
       const finish = (result) => { pendingAskRef.current = null; setPendingAsk(null); resolve(result) }
       pendingAskRef.current = finish
@@ -606,15 +607,15 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
         const selection = editor ? selectedText(editor) : ''
         const documentText = editor && includeDocument ? editor.getMarkdown().slice(0, MAX_CONTEXT_CHARS) : ''
         const context = [
-          documentText && `Documento aperto (Markdown):\n"""\n${documentText}\n"""`,
-          selection && `Testo selezionato dall'utente:\n"""\n${selection}\n"""`,
+          documentText && `Open document (Markdown):\n"""\n${documentText}\n"""`,
+          selection && `Text selected by the user:\n"""\n${selection}\n"""`,
         ].filter(Boolean).join('\n\n')
         let result
         try {
           // Un modello che rifiuta gli strumenti nativi viene ricordato e da lì in poi usa il formato testuale.
           const attemptReply = async (native) => {
             const system = systemPrompt(
-              projectSettings?.ai?.language || settings.language || 'Italiano',
+              projectSettings?.ai?.language || settings.language || languageEnglishName(),
               projectSettings?.ai?.context,
               previous,
               anyTool ? toolsPrompt(toolsOn, { documentPath: toolBridge.activeDocumentPath(), native, maxSteps }) : '',
@@ -624,7 +625,7 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
             const streamOptions = native ? { tools: toolSchemas(toolsOn) } : {}
             let reply = await streamReply(modelMessages, streamOptions)
             // Una risposta vuota (capita con alcuni modelli dopo il ragionamento) si ritenta una volta con un richiamo esplicito.
-            if (!reply.reply.trim()) reply = await streamReply([...modelMessages, { role: 'user', content: 'La tua risposta era vuota. Rispondi ora, oppure usa uno strumento.' }], streamOptions)
+            if (!reply.reply.trim()) reply = await streamReply([...modelMessages, { role: 'user', content: 'Your reply was empty. Reply now, or use a tool.' }], streamOptions)
             return reply
           }
           const native = anyTool && canUseNative && !nativeUnsupported.current
@@ -638,8 +639,8 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
         } catch (reason) {
           const partial = visibleText(liveRef.current.text).text
           if (runRef.current.cancelled) {
-            if (partial.trim()) await append({ role: 'assistant', content: `${partial}\n\n(interrotto)`, ...(liveRef.current.thinking ? { thinking: liveRef.current.thinking } : {}) })
-            else setError('Richiesta interrotta')
+            if (partial.trim()) await append({ role: 'assistant', content: `${partial}\n\n${t('(interrupted)')}`, ...(liveRef.current.thinking ? { thinking: liveRef.current.thinking } : {}) })
+            else setError(t('Request interrupted'))
           } else {
             await append({ role: 'assistant', content: reason.message, error: true })
           }
@@ -649,7 +650,7 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
         const parsed = anyTool ? parseToolCall(result.reply) : null
         const thinking = result.thinking ? { thinking: result.thinking } : {}
         if (!parsed) {
-          await append({ role: 'assistant', content: result.reply || '(risposta vuota)', ...thinking })
+          await append({ role: 'assistant', content: result.reply || t('(empty reply)'), ...thinking })
           break
         }
 
@@ -663,13 +664,13 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
         // Al limite di passaggi si chiede all'utente se continuare, invece di fermarsi e basta.
         if (step >= limit) {
           // Le etichette sono variabili: la decisione si confronta con la stessa stringa mostrata, così non dipende dalla lingua.
-          const continueLabel = `Continua (altri ${maxSteps} passaggi)`
+          const continueLabel = t('Continue ({count} more steps)', { count: maxSteps })
           const decision = await askUser({
             steps: [{
-              question: `Ho usato i ${limit} passaggi consentiti con gli strumenti. Vuoi che continui?`,
+              question: t('I have used the {limit} steps allowed with the tools. Do you want me to continue?', { limit }),
               options: [
-                { label: continueLabel, description: 'Riprende il lavoro da dove si è fermato.' },
-                { label: 'Fermati qui', description: 'Lascia le cose come sono.' },
+                { label: continueLabel, description: t('Resumes the work where it stopped.') },
+                { label: t('Stop here'), description: t('Leaves things as they are.') },
               ],
               multiple: false,
               ordered: false,
@@ -678,8 +679,8 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
             }],
           })
           if (runRef.current.cancelled || decision.answers?.[0]?.selected?.[0] !== continueLabel) {
-            await append({ role: 'tool', name: parsed.call.name, content: 'Non eseguito: limite di passaggi raggiunto.', error: true })
-            await append({ role: 'assistant', content: `Mi sono fermato dopo ${limit} passaggi con gli strumenti. Se vuoi che prosegua, scrivimelo oppure aumenta il limite in Impostazioni → AI.` })
+            await append({ role: 'tool', name: parsed.call.name, content: 'Not run: step limit reached.', error: true })
+            await append({ role: 'assistant', content: t('I stopped after {limit} steps with the tools. If you want me to continue, tell me or raise the limit in Settings → AI.', { limit }) })
             break
           }
           limit += maxSteps
@@ -700,7 +701,7 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
                 imageCache.set(saved.id, { mime: saved.mime, data: image.data })
                 entry = { id: saved.id, mime: saved.mime, label: image.label }
               } catch (reason) {
-                setError(`Immagine non salvata nel progetto: ${reason.message}`)
+                setError(t('Image not saved in the project: {message}', { message: reason.message }))
               }
             }
             stored.push(entry)
@@ -726,7 +727,7 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
   }
 
   const attachable = conversations.filter((item) => item.id !== current.id && !current.contextFrom.includes(item.id))
-  const titleOf = (id) => conversations.find((item) => item.id === id)?.title || 'Conversazione eliminata'
+  const titleOf = (id) => conversations.find((item) => item.id === id)?.title || t('Deleted conversation')
   const iconButton = 'rounded p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-50 disabled:opacity-40'
   const liveShown = live ? visibleText(live.text) : null
 
@@ -735,12 +736,12 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
       <header className="grid gap-2 border-b border-slate-800 px-3 py-2">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400"><Sparkles size={13} className="text-accent-400" /> Assistente AI</h2>
-            {enabled && <p className="truncate text-xs text-slate-500">{providerLabel}{model ? ` · ${model}` : ''}{projectSettings?.ai?.context?.trim() ? ' · contesto di progetto' : ''}</p>}
+            <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400"><Sparkles size={13} className="text-accent-400" /> {t('AI assistant')}</h2>
+            {enabled && <p className="truncate text-xs text-slate-500">{providerLabel}{model ? ` · ${model}` : ''}{projectSettings?.ai?.context?.trim() ? t(' · project context') : ''}</p>}
           </div>
           <div className="flex shrink-0 gap-0.5">
-            <button type="button" aria-label="Nuova conversazione" title="Nuova conversazione" disabled={busy || !current.messages.length} className={iconButton} onClick={() => openConversation(null)}><Plus size={14} /></button>
-            <button type="button" aria-label="Impostazioni AI" title="Impostazioni AI" className={iconButton} onClick={onOpenSettings}><Settings size={14} /></button>
+            <button type="button" aria-label={t('New conversation')} title={t('New conversation')} disabled={busy || !current.messages.length} className={iconButton} onClick={() => openConversation(null)}><Plus size={14} /></button>
+            <button type="button" aria-label={t('AI settings')} title={t('AI settings')} className={iconButton} onClick={onOpenSettings}><Settings size={14} /></button>
           </div>
         </div>
 
@@ -750,46 +751,44 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
               <input
                 autoFocus
                 defaultValue={current.title}
-                aria-label="Titolo della conversazione"
+                aria-label={t('Conversation title')}
                 className="min-w-0 flex-1 rounded border border-accent-400 bg-slate-800 px-2 py-1 text-sm text-slate-50 outline-none"
                 onBlur={(event) => { setRenaming(false); const title = event.target.value.trim(); if (title && title !== current.title) updateConversation({ title }) }}
                 onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') setRenaming(false) }}
               />
             ) : (
               <select
-                aria-label="Conversazione"
+                aria-label={t('Conversation')}
                 value={current.id || ''}
                 disabled={busy}
                 className="w-0 min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100 outline-none focus:border-accent-400"
                 onChange={(event) => openConversation(event.target.value || null)}
               >
-                {!current.id && <option value="">Nuova conversazione</option>}
-                {conversations.map((item) => <option key={item.id} value={item.id} title={item.title}>{item.parentId ? '↳ ' : ''}{ellipsize(item.title, 38)} · {dateFormatter.format(new Date(item.updatedAt))}</option>)}
+                {!current.id && <option value="">{t('New conversation')}</option>}
+                {conversations.map((item) => <option key={item.id} value={item.id} title={item.title}>{item.parentId ? '↳ ' : ''}{ellipsize(item.title, 38)} · {formatDateTime(item.updatedAt, SHORT_DATE)}</option>)}
               </select>
             )}
-            <button type="button" aria-label="Rinomina conversazione" title="Rinomina" disabled={!current.id || busy || renaming} className={iconButton} onClick={() => setRenaming(true)}><Pencil size={14} /></button>
-            <button type="button" aria-label="Elimina conversazione" title="Elimina" disabled={!current.id || busy} className={`${iconButton} hover:text-rose-400`} onClick={removeConversation}><Trash2 size={14} /></button>
-            <button type="button" aria-label="Apri la cartella delle conversazioni" title="Apri .ow/chat nel file manager" className={iconButton} onClick={() => api.openChatFolder()}><FolderOpen size={14} /></button>
+            <button type="button" aria-label={t('Rename conversation')} title={t('Rename')} disabled={!current.id || busy || renaming} className={iconButton} onClick={() => setRenaming(true)}><Pencil size={14} /></button>
+            <button type="button" aria-label={t('Delete conversation')} title={t('Delete')} disabled={!current.id || busy} className={`${iconButton} hover:text-rose-400`} onClick={removeConversation}><Trash2 size={14} /></button>
+            <button type="button" aria-label={t('Open the conversations folder')} title={t('Open .ow/chat in the file manager')} className={iconButton} onClick={() => api.openChatFolder()}><FolderOpen size={14} /></button>
           </div>
         )}
         {current.parentId && (
-          <p className="flex min-w-0 items-center gap-1 text-xs text-slate-500"><GitBranch size={12} className="shrink-0" /> <span className="truncate">Ramo di «{parent?.title || 'conversazione eliminata'}», dal messaggio {current.branchedAt + 1}</span></p>
+          <p className="flex min-w-0 items-center gap-1 text-xs text-slate-500"><GitBranch size={12} className="shrink-0" /> <span className="truncate">{t('Branch of “{parentTitle}”, from message {value}', { parentTitle, value: current.branchedAt + 1 })}</span></p>
         )}
       </header>
 
       {!ai || !settings ? null : !enabled ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
           <Sparkles size={30} className="text-slate-500" />
-          <p className="text-sm text-slate-400">L&apos;assistente AI è disattivato. Abilitalo e scegli un provider nelle impostazioni.</p>
-          <button type="button" className="rounded-md bg-accent-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-accent-500" onClick={onOpenSettings}>Apri impostazioni</button>
+          <p className="text-sm text-slate-400">{t('The AI assistant is turned off. Enable it and choose a provider in the settings.')}</p>
+          <button type="button" className="rounded-md bg-accent-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-accent-500" onClick={onOpenSettings}>{t('Open settings')}</button>
         </div>
       ) : (
         <>
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
             {!current.messages.length && !busy && (
-              <p className="m-auto max-w-[16rem] text-center text-sm text-slate-500">
-                Chiedi di correggere, riscrivere o discutere il documento. Se selezioni del testo, l&apos;assistente lavora su quello.
-                {!project && ' Senza un progetto aperto la conversazione non viene salvata.'}
+              <p className="m-auto max-w-[16rem] text-center text-sm text-slate-500">{t('Ask to proofread, rewrite or discuss the document. If you select some text, the assistant works on that.')}{!project && t(' Without an open project the conversation is not saved.')}
               </p>
             )}
             {current.messages.map((message, index) => <Message key={index} message={message} editor={editor} onBranch={canBranch ? () => branchFrom(index) : null} onOpenImage={setViewer} />)}
@@ -800,7 +799,7 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
                 {liveShown?.text && <div className="max-w-[92%] break-words rounded-xl bg-slate-800 px-3 py-2 text-sm leading-6 text-slate-200"><MarkdownMessage>{liveShown.text}</MarkdownMessage></div>}
                 <p className="flex items-center gap-1.5 text-xs text-slate-500">
                   <Loader2 size={13} className="animate-spin" />
-                  {liveShown?.calling ? 'Preparo una chiamata a uno strumento…' : live?.status || (liveShown?.text ? 'Scrive…' : 'Elaboro…')}
+                  {liveShown?.calling ? t('Preparing a tool call…') : live?.status || (liveShown?.text ? t('Writing…') : t('Working…'))}
                 </p>
               </div>
             )}
@@ -816,28 +815,23 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
               ))}
             </div>
             <label className="mb-2 flex items-center gap-2 text-xs text-slate-500">
-              <input type="checkbox" checked={includeDocument} onChange={(event) => setIncludeDocument(event.target.checked)} className="accent-accent-500" />
-              Includi il documento attivo come contesto{contextTab ? ` (${contextTab.title})` : ''}
+              <input type="checkbox" checked={includeDocument} onChange={(event) => setIncludeDocument(event.target.checked)} className="accent-accent-500" />{t('Include the active document as context')}{contextTab ? ` (${contextTab.title})` : ''}
             </label>
             <div className="mb-2 grid grid-cols-2 gap-2 text-xs text-slate-400">
-              <label className="grid min-w-0 gap-0.5">
-                Modello
-                <select
-                  aria-label="Modello"
+              <label className="grid min-w-0 gap-0.5">{t('Model')}<select
+                  aria-label={t('Model')}
                   disabled={busy}
                   value={model || ''}
                   title={model || ''}
                   className="w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs text-slate-100 outline-none focus:border-accent-400 disabled:opacity-50"
                   onChange={(event) => changeProviderSetting({ model: event.target.value })}
                 >
-                  <option value="">{canUseNativeProvider ? 'Seleziona un modello' : 'Predefinito del client'}</option>
+                  <option value="">{canUseNativeProvider ? t('Select a model') : t('Client default')}</option>
                   {[...new Set([model, ...models].filter(Boolean))].map((name) => <option key={name} value={name} title={name}>{name}</option>)}
                 </select>
               </label>
-              <label className="grid min-w-0 gap-0.5">
-                Sforzo
-                <select
-                  aria-label="Sforzo di ragionamento"
+              <label className="grid min-w-0 gap-0.5">{t('Effort')}<select
+                  aria-label={t('Reasoning effort')}
                   disabled={busy}
                   value={settings.providers?.[provider]?.reasoning || reasoningByProvider[provider][0].value}
                   className="w-full min-w-0 rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs text-slate-100 outline-none focus:border-accent-400 disabled:opacity-50"
@@ -852,18 +846,18 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
                 {current.contextFrom.map((id) => (
                   <span key={id} title={titleOf(id)} className="flex max-w-full items-center gap-1 rounded-full border border-slate-700 bg-slate-800 py-0.5 pl-2 pr-1 text-slate-300">
                     <span className="truncate">{titleOf(id)}</span>
-                    <button type="button" aria-label="Rimuovi dal contesto" disabled={busy} className="rounded-full p-0.5 hover:bg-slate-700" onClick={() => updateConversation({ contextFrom: current.contextFrom.filter((item) => item !== id) })}><X size={11} /></button>
+                    <button type="button" aria-label={t('Remove from context')} disabled={busy} className="rounded-full p-0.5 hover:bg-slate-700" onClick={() => updateConversation({ contextFrom: current.contextFrom.filter((item) => item !== id) })}><X size={11} /></button>
                   </span>
                 ))}
                 {attachable.length > 0 && (
                   <select
-                    aria-label="Usa una conversazione precedente come contesto"
+                    aria-label={t('Use a previous conversation as context')}
                     value=""
                     disabled={busy}
                     className="w-44 max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5 text-xs text-slate-300 outline-none focus:border-accent-400"
                     onChange={(event) => event.target.value && updateConversation({ contextFrom: [...current.contextFrom, event.target.value] })}
                   >
-                    <option value="">+ Contesto da conversazione…</option>
+                    <option value="">{t('+ Context from a conversation…')}</option>
                     {attachable.map((item) => <option key={item.id} value={item.id} title={item.title}>{ellipsize(item.title, 40)}</option>)}
                   </select>
                 )}
@@ -873,7 +867,7 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
               <textarea
                 value={input}
                 rows={3}
-                placeholder="Scrivi un messaggio…  (Invio per inviare, Maiusc+Invio per andare a capo)"
+                placeholder={t('Type a message…  (Enter to send, Shift+Enter for a new line)')}
                 className="min-h-0 flex-1 resize-none rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400"
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
@@ -884,8 +878,8 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
                 }}
               />
               {busy
-                ? <button type="button" aria-label="Interrompi" title="Interrompi" className="rounded-md bg-rose-600 p-2.5 text-white transition hover:bg-rose-500" onClick={stop}><Square size={16} /></button>
-                : <button type="button" aria-label="Invia" title="Invia" disabled={!input.trim()} className="rounded-md bg-accent-600 p-2.5 text-white transition hover:bg-accent-500 disabled:opacity-50" onClick={() => send(input)}><Send size={16} /></button>}
+                ? <button type="button" aria-label={t('Stop')} title={t('Stop')} className="rounded-md bg-rose-600 p-2.5 text-white transition hover:bg-rose-500" onClick={stop}><Square size={16} /></button>
+                : <button type="button" aria-label={t('Send')} title={t('Send')} disabled={!input.trim()} className="rounded-md bg-accent-600 p-2.5 text-white transition hover:bg-accent-500 disabled:opacity-50" onClick={() => send(input)}><Send size={16} /></button>}
             </div>
           </div>
         </>

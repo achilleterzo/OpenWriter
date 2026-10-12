@@ -1,6 +1,7 @@
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
+const { t } = require('./i18n.cjs')
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/
 const MAX_TITLE_CHARS = 200
@@ -17,12 +18,12 @@ const MAX_MESSAGE_CHARS = 200000
 function createChatStore({ getProjectPath }) {
   const directory = () => {
     const project = getProjectPath()
-    if (!project) throw new Error('Nessun progetto aperto')
+    if (!project) throw new Error(t('No project open'))
     return path.join(project, '.ow', 'chat')
   }
 
   function fileFor(id) {
-    if (!ID_PATTERN.test(String(id))) throw new Error('Identificativo di conversazione non valido')
+    if (!ID_PATTERN.test(String(id))) throw new Error(t('Invalid conversation identifier'))
     return path.join(directory(), `${id}.json`)
   }
 
@@ -40,7 +41,7 @@ function createChatStore({ getProjectPath }) {
     const now = new Date().toISOString()
     return {
       id: input.id,
-      title: text(input.title ?? existing.title, MAX_TITLE_CHARS).trim() || 'Nuova conversazione',
+      title: text(input.title ?? existing.title, MAX_TITLE_CHARS).trim() || t('New conversation'),
       createdAt: existing.createdAt || input.createdAt || now,
       updatedAt: now,
       parentId: optionalId(input.parentId),
@@ -67,8 +68,8 @@ function createChatStore({ getProjectPath }) {
 
   function readConversation(id) {
     const file = fileFor(id)
-    if (!fs.existsSync(file)) throw new Error('Conversazione non trovata')
-    try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { throw new Error(`${id}.json non è un JSON valido`) }
+    if (!fs.existsSync(file)) throw new Error(t('Conversation not found'))
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { throw new Error(t('{id}.json is not valid JSON', { id })) }
   }
 
   const summary = (conversation) => ({
@@ -117,19 +118,19 @@ function createChatStore({ getProjectPath }) {
   function saveAttachment({ mime, data }) {
     const id = crypto.randomUUID()
     const buffer = Buffer.from(String(data || ''), 'base64')
-    if (!buffer.length) throw new Error('Allegato vuoto')
+    if (!buffer.length) throw new Error(t('Empty attachment'))
     fs.mkdirSync(attachmentsDirectory(), { recursive: true })
     fs.writeFileSync(path.join(attachmentsDirectory(), `${id}.${attachmentExtension(mime)}`), buffer)
     return { id, mime: mime === 'image/jpeg' ? 'image/jpeg' : 'image/png' }
   }
 
   function getAttachment(id) {
-    if (!ID_PATTERN.test(String(id))) throw new Error('Identificativo di allegato non valido')
+    if (!ID_PATTERN.test(String(id))) throw new Error(t('Invalid attachment identifier'))
     for (const [extension, mime] of [['png', 'image/png'], ['jpg', 'image/jpeg']]) {
       const file = path.join(attachmentsDirectory(), `${id}.${extension}`)
       if (fs.existsSync(file)) return { mime, data: fs.readFileSync(file).toString('base64') }
     }
-    throw new Error('Allegato non trovato')
+    throw new Error(t('Attachment not found'))
   }
 
   const attachmentIds = (conversation) => (conversation.messages || []).flatMap((message) => (message.images || []).map((image) => image.id))

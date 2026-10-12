@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { t } from '../i18n/index.js'
 
 const KEY_STEP = 16
 
@@ -55,7 +56,7 @@ export default function PanelResizer({ side, width, min, max, defaultWidth, labe
       aria-valuemin={min}
       aria-valuemax={Math.round(max)}
       tabIndex={0}
-      title="Trascina per ridimensionare, doppio clic per ripristinare"
+      title={t('Drag to resize, double-click to reset')}
       className={`group absolute inset-y-0 z-10 flex w-2 cursor-col-resize touch-none justify-center outline-none ${side === 'left' ? '-right-1' : '-left-1'}`}
       onPointerDown={begin}
       onPointerMove={move}

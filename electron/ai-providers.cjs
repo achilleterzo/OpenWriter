@@ -4,6 +4,7 @@ const https = require('node:https')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const { t } = require('./i18n.cjs')
 
 const PROVIDERS = ['ollama', 'ollama-cloud', 'codex', 'claude']
 const LABELS = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', codex: 'Codex', claude: 'Claude' }
@@ -93,7 +94,7 @@ function killTree(child) {
   }
 }
 
-const abortError = () => Object.assign(new Error('Richiesta interrotta'), { name: 'AbortError' })
+const abortError = () => Object.assign(new Error(t('Request interrupted')), { name: 'AbortError' })
 
 // Come runCli, ma passa ogni riga di stdout a `onLine` appena arriva e si può interrompere con `signal`.
 function runCliStream(provider, args, { cwd, input = '', timeout = CLI_TIMEOUT_MS, onLine = () => {}, signal } = {}) {
@@ -116,7 +117,7 @@ function runCliStream(provider, args, { cwd, input = '', timeout = CLI_TIMEOUT_M
     let timer
     const arm = () => {
       clearTimeout(timer)
-      timer = setTimeout(() => { killTree(child); finish(new Error(`${LABELS[provider]} non ha risposto entro ${Math.round(timeout / 1000)} secondi`)) }, timeout)
+      timer = setTimeout(() => { killTree(child); finish(new Error(t('{value} did not answer within {round} seconds', { value: LABELS[provider], round: Math.round(timeout / 1000) }))) }, timeout)
     }
     arm()
     signal?.addEventListener('abort', onAbort)
@@ -130,10 +131,10 @@ function runCliStream(provider, args, { cwd, input = '', timeout = CLI_TIMEOUT_M
       for (const line of lines) if (line.trim()) onLine(line)
     })
     child.stderr.on('data', (chunk) => { stderr += chunk })
-    child.once('error', (error) => finish(error.code === 'ENOENT' ? new Error(`Client ${LABELS[provider]} non trovato. Installalo e riprova.`) : error))
+    child.once('error', (error) => finish(error.code === 'ENOENT' ? new Error(t('{value} client not found. Install it and try again.', { value: LABELS[provider] })) : error))
     child.once('close', (code) => {
       if (buffer.trim()) onLine(buffer)
-      finish(code !== 0 ? new Error(stderr.trim() || `${LABELS[provider]} terminato con codice ${code}`) : null)
+      finish(code !== 0 ? new Error(stderr.trim() || t('{value} exited with code {code}', { value: LABELS[provider], code })) : null)
     })
     child.stdin.end(input)
   })
@@ -150,7 +151,7 @@ function runCli(provider, args, { cwd, input = '', timeout = CLI_TIMEOUT_MS } = 
       if (settled) return
       settled = true
       try { child.kill() } catch {}
-      reject(new Error(`${LABELS[provider]} non ha risposto entro ${Math.round(timeout / 1000)} secondi`))
+      reject(new Error(t('{value} did not answer within {round} seconds', { value: LABELS[provider], round: Math.round(timeout / 1000) })))
     }, timeout)
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
@@ -160,13 +161,13 @@ function runCli(provider, args, { cwd, input = '', timeout = CLI_TIMEOUT_MS } = 
       if (settled) return
       settled = true
       clearTimeout(timer)
-      reject(error.code === 'ENOENT' ? new Error(`Client ${LABELS[provider]} non trovato. Installalo e riprova.`) : error)
+      reject(error.code === 'ENOENT' ? new Error(t('{value} client not found. Install it and try again.', { value: LABELS[provider] })) : error)
     })
     child.once('close', (code) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      if (code !== 0) return reject(new Error(stderr.trim() || `${LABELS[provider]} terminato con codice ${code}`))
+      if (code !== 0) return reject(new Error(stderr.trim() || t('{value} exited with code {code}', { value: LABELS[provider], code })))
       resolve(stdout)
     })
     child.stdin.end(input)
@@ -223,11 +224,11 @@ function requestJson(urlString, { method = 'GET', headers = {} } = {}, body = nu
           try { detail = JSON.parse(data)?.error || detail } catch {}
           return reject(new Error(`HTTP ${response.statusCode}${detail ? `: ${String(detail).slice(0, 200)}` : ''}`))
         }
-        try { resolve(JSON.parse(data)) } catch { reject(new Error('Risposta JSON non valida')) }
+        try { resolve(JSON.parse(data)) } catch { reject(new Error(t('Invalid JSON response'))) }
       })
     })
     request.on('error', reject)
-    request.on('timeout', () => request.destroy(new Error(`Richiesta Ollama scaduta dopo ${HTTP_TIMEOUT_MS / 1000} secondi`)))
+    request.on('timeout', () => request.destroy(new Error(t('Ollama request timed out after {value} seconds', { value: HTTP_TIMEOUT_MS / 1000 }))))
     if (body) request.write(JSON.stringify(body))
     request.end()
   })
@@ -275,7 +276,7 @@ function streamJson(urlString, { headers = {} } = {}, body, onObject, signal) {
     const onAbort = () => { request.destroy(); finish(abortError()) }
     signal?.addEventListener('abort', onAbort)
     request.on('error', finish)
-    request.on('timeout', () => request.destroy(new Error(`Nessuna risposta da Ollama per ${HTTP_TIMEOUT_MS / 1000} secondi`)))
+    request.on('timeout', () => request.destroy(new Error(t('No response from Ollama for {value} seconds', { value: HTTP_TIMEOUT_MS / 1000 }))))
     request.write(JSON.stringify(body))
     request.end()
   })
@@ -294,7 +295,8 @@ function normalizeSettings(settings = {}) {
     aiEnabled: settings.aiEnabled === true,
     provider: PROVIDERS.includes(settings.provider) ? settings.provider : 'ollama',
     providers: Object.fromEntries(PROVIDERS.map((provider) => [provider, normalizeProviderConfig(provider, saved[provider])])),
-    language: String(settings.language || 'Italiano'),
+    // Vuota = la lingua dell'interfaccia (risolta nella chat); altrimenti il nome scelto, es. "Italiano".
+    language: String(settings.language || ''),
     // Quante chiamate agli strumenti può concatenare l'assistente in una singola richiesta.
     maxToolSteps: Math.min(50, Math.max(1, Math.round(Number(settings.maxToolSteps)) || 15)),
     // Strumenti messi a disposizione dell'assistente; la navigazione web è opt-in perché invia query all'esterno.
@@ -344,7 +346,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
   }
 
   function saveApiKey(value) {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('Archiviazione sicura delle credenziali non disponibile su questo sistema')
+    if (!safeStorage.isEncryptionAvailable()) throw new Error(t('Secure credential storage is not available on this system'))
     const apiKey = String(value || '').trim()
     sessionApiKey = apiKey
     if (!apiKey) {
@@ -360,7 +362,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
 
   function cloudOptions(supplied = '') {
     const key = apiKey(supplied)
-    if (!key) throw new Error('API key Ollama Cloud richiesta')
+    if (!key) throw new Error(t('Ollama Cloud API key required'))
     return { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' } }
   }
 
@@ -379,9 +381,9 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
 
   function assertConfigured() {
     const config = providerConfig()
-    if (!getSettings().aiEnabled) throw new Error('La generazione AI è disattivata nelle impostazioni')
-    if (activeProvider() === 'ollama' && !(config.endpoint && config.model)) throw new Error('Configura endpoint e modello Ollama nelle impostazioni')
-    if (activeProvider() === 'ollama-cloud' && !(apiKey() && config.model)) throw new Error('Configura API key e modello Ollama Cloud nelle impostazioni')
+    if (!getSettings().aiEnabled) throw new Error(t('AI generation is turned off in the settings'))
+    if (activeProvider() === 'ollama' && !(config.endpoint && config.model)) throw new Error(t('Configure the Ollama endpoint and model in the settings'))
+    if (activeProvider() === 'ollama-cloud' && !(apiKey() && config.model)) throw new Error(t('Configure the Ollama Cloud API key and model in the settings'))
   }
 
   // Invia il prompt alla CLI in modalità streaming e traduce i suoi eventi in { type: 'text' | 'thinking' | 'status', ... }.
@@ -423,7 +425,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
             if (item.type === 'reasoning' && item.text) onEvent({ type: 'thinking', delta: `${item.text}\n` })
             else if (item.type === 'agent_message' && typeof item.text === 'string') { state.text = item.text; onEvent({ type: 'text', delta: item.text }) }
           } else if (event.type === 'item.started' && item?.type === 'command_execution') {
-            onEvent({ type: 'status', text: `Codex esegue: ${String(item.command || '').slice(0, 80)}` })
+            onEvent({ type: 'status', text: t('Codex is running: {slice}', { slice: String(item.command || '').slice(0, 80) }) })
           }
         },
       })
@@ -453,7 +455,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
           if (delta?.type === 'text_delta' && delta.text) { state.text += delta.text; onEvent({ type: 'text', delta: delta.text }) }
           else if (delta?.type === 'thinking_delta' && delta.thinking) onEvent({ type: 'thinking', delta: delta.thinking })
         } else if (event.type === 'system' && event.subtype === 'thinking_tokens') {
-          onEvent({ type: 'status', text: `Sta ragionando… (~${event.estimated_tokens} token)` })
+          onEvent({ type: 'status', text: t('Thinking… (~{estimated_tokens} tokens)', { estimated_tokens: event.estimated_tokens }) })
         } else if (event.type === 'result' && typeof event.result === 'string') {
           state.result = event.result
         }
@@ -590,9 +592,9 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
   // Avvia il login OAuth della CLI, cattura l'URL stampato e lo apre nel browser predefinito.
   // Se la CLI chiede un codice ("Paste code here"), va inviato con submitLoginCode.
   async function login(provider = activeProvider(), { openExternal } = {}) {
-    if (!['codex', 'claude'].includes(provider)) throw new Error('Seleziona Codex o Claude per avviare il login OAuth')
+    if (!['codex', 'claude'].includes(provider)) throw new Error(t('Select Codex or Claude to start the OAuth sign-in'))
     const availability = await runCliStatus(provider, ['--version'])
-    if (availability.missing) throw new Error(`Client ${LABELS[provider]} non trovato. Installalo e riprova.`)
+    if (availability.missing) throw new Error(t('{value} client not found. Install it and try again.', { value: LABELS[provider] }))
     stopLogin()
     const invocation = cliInvocation(provider, provider === 'codex' ? ['login'] : ['auth', 'login'])
     const child = spawn(invocation.command, invocation.args, { cwd: getWorkingDirectory() || undefined, env: cliEnvironment(provider), windowsHide: true, shell: invocation.shell, stdio: ['pipe', 'pipe', 'pipe'] })
@@ -623,7 +625,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
   }
 
   function submitLoginCode(code) {
-    if (!loginChild?.stdin.writable) throw new Error('Nessun login in corso. Premi di nuovo Accedi.')
+    if (!loginChild?.stdin.writable) throw new Error(t('No sign-in in progress. Press Sign in again.'))
     loginChild.stdin.write(`${String(code || '').trim()}
 `)
     return true
@@ -643,7 +645,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
         try { child.kill() } catch {}
         error ? reject(error) : resolve(value)
       }
-      const timer = setTimeout(() => finish(new Error('Rilevamento modelli Codex scaduto')), 30000)
+      const timer = setTimeout(() => finish(new Error(t('Codex model discovery timed out'))), 30000)
       const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`)
       child.stdout.setEncoding('utf8')
       child.stderr.setEncoding('utf8')
@@ -655,7 +657,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
         for (const line of lines) {
           let message
           try { message = JSON.parse(line) } catch { continue }
-          if (message.error) return finish(new Error(message.error.message || 'Errore Codex app-server'))
+          if (message.error) return finish(new Error(message.error.message || t('Codex app-server error')))
           if (message.id === 1) {
             send({ method: 'initialized', params: {} })
             send({ method: 'model/list', id: 2, params: { limit: 100, includeHidden: false } })
@@ -669,8 +671,8 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
           }
         }
       })
-      child.once('error', (error) => finish(error.code === 'ENOENT' ? new Error('Client Codex non trovato. Assicurati che `codex` sia nel PATH.') : error))
-      child.once('close', (code) => { if (!settled && code !== 0) finish(new Error(stderr.trim() || `Rilevamento modelli Codex fallito (codice ${code})`)) })
+      child.once('error', (error) => finish(error.code === 'ENOENT' ? new Error(t('Codex client not found. Make sure `codex` is on your PATH.')) : error))
+      child.once('close', (code) => { if (!settled && code !== 0) finish(new Error(stderr.trim() || t('Codex model discovery failed (code {code})', { code }))) })
       send({ method: 'initialize', id: 1, params: { clientInfo: { name: 'openwriter', title: 'OpenWriter', version: app.getVersion() } } })
     })
   }
@@ -686,7 +688,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
       return names(data)
     }
     const target = String(endpoint || providerConfig('ollama').endpoint || '').replace(/\/$/, '')
-    if (!target) throw new Error('Configura l\'endpoint Ollama nelle impostazioni')
+    if (!target) throw new Error(t('Configure the Ollama endpoint in the settings'))
     return names(await requestJson(`${target}/api/tags`))
   }
 

@@ -1,6 +1,7 @@
 const dns = require('node:dns').promises
 const net = require('node:net')
 const { nativeImage } = require('electron')
+const { t } = require('./i18n.cjs')
 
 const MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024
 const MAX_SIDE = 1568
@@ -24,17 +25,17 @@ function isPrivateAddress(address) {
 // Il controllo si fa sugli indirizzi risolti dal DNS, non solo sul nome: così "localtest.me" o un DNS ostile non aggirano il blocco.
 async function assertPublicUrl(urlString) {
   let url
-  try { url = new URL(urlString) } catch { throw new Error('Indirizzo non valido') }
-  if (!/^https?:$/.test(url.protocol)) throw new Error('Sono ammessi solo indirizzi http e https')
+  try { url = new URL(urlString) } catch { throw new Error(t('Invalid address')) }
+  if (!/^https?:$/.test(url.protocol)) throw new Error(t('Only http and https addresses are allowed'))
   const host = url.hostname.replace(/^\[|\]$/g, '')
   const addresses = net.isIP(host) ? [host] : (await dns.lookup(host, { all: true })).map((entry) => entry.address)
-  if (!addresses.length || addresses.some(isPrivateAddress)) throw new Error('Gli indirizzi locali e di rete privata non sono ammessi')
+  if (!addresses.length || addresses.some(isPrivateAddress)) throw new Error(t('Local and private-network addresses are not allowed'))
   return url
 }
 
 // Normalizza qualsiasi immagine: la rimpicciolisce se enorme e la ricodifica in PNG (o JPEG se pesante), formati accettati da tutti i modelli.
 function prepareImage(image) {
-  if (!image || image.isEmpty()) throw new Error('Immagine vuota o formato non supportato')
+  if (!image || image.isEmpty()) throw new Error(t('Empty image or unsupported format'))
   let current = image
   const { width, height } = current.getSize()
   const longest = Math.max(width, height)
@@ -49,10 +50,10 @@ const prepareBuffer = (buffer) => prepareImage(nativeImage.createFromBuffer(buff
 
 function decodeDataUrl(urlString) {
   const match = /^data:image\/([a-z0-9.+-]+);base64,([\s\S]+)$/i.exec(urlString)
-  if (!match) throw new Error('Immagine incorporata non valida')
-  if (/svg/i.test(match[1])) throw new Error('Le immagini SVG non sono supportate')
+  if (!match) throw new Error(t('Invalid embedded image'))
+  if (/svg/i.test(match[1])) throw new Error(t('SVG images are not supported'))
   const buffer = Buffer.from(match[2], 'base64')
-  if (buffer.length > MAX_DOWNLOAD_BYTES) throw new Error('Immagine troppo grande')
+  if (buffer.length > MAX_DOWNLOAD_BYTES) throw new Error(t('Image too large'))
   return buffer
 }
 
@@ -61,7 +62,7 @@ async function readLimited(response) {
   let total = 0
   for await (const chunk of response.body) {
     total += chunk.length
-    if (total > MAX_DOWNLOAD_BYTES) throw new Error('Immagine troppo grande (oltre 8 MB)')
+    if (total > MAX_DOWNLOAD_BYTES) throw new Error(t('Image too large (over 8 MB)'))
     chunks.push(chunk)
   }
   return Buffer.concat(chunks)
@@ -80,11 +81,11 @@ async function fetchImage(urlString) {
     }
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const type = String(response.headers.get('content-type') || '').toLowerCase()
-    if (!type.startsWith('image/')) throw new Error(`Il collegamento non è un'immagine (${type || 'tipo sconosciuto'})`)
-    if (type.includes('svg')) throw new Error('Le immagini SVG non sono supportate')
+    if (!type.startsWith('image/')) throw new Error(t("The link is not an image ({type})", { type: type || t('unknown type') }))
+    if (type.includes('svg')) throw new Error(t('SVG images are not supported'))
     return prepareBuffer(await readLimited(response))
   }
-  throw new Error('Troppi reindirizzamenti')
+  throw new Error(t('Too many redirects'))
 }
 
 module.exports = { fetchImage, prepareImage, prepareBuffer, assertPublicUrl, isPrivateAddress, MAX_DOWNLOAD_BYTES }

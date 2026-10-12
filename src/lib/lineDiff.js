@@ -1,3 +1,4 @@
+import { t } from '../i18n/index.js'
 const MAX_MATRIX_CELLS = 4_000_000
 
 // Diff per righe: restituisce [{ type: 'same' | 'add' | 'del', text }].
@@ -54,10 +55,10 @@ export function collapseDiff(lines, context = 3) {
   let hidden = 0
   lines.forEach((line, index) => {
     if (keep[index]) {
-      if (hidden) { result.push({ type: 'gap', text: `${hidden} righe invariate` }); hidden = 0 }
+      if (hidden) { result.push({ type: 'gap', text: t('{hidden} unchanged lines', { hidden }) }); hidden = 0 }
       result.push(line)
     } else hidden += 1
   })
-  if (hidden) result.push({ type: 'gap', text: `${hidden} righe invariate` })
+  if (hidden) result.push({ type: 'gap', text: t('{hidden} unchanged lines', { hidden }) })
   return result
 }

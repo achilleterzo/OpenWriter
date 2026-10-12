@@ -15,6 +15,7 @@ import useDocumentFileCommands from './hooks/useDocumentFileCommands.js'
 import { setAnnotations } from './lib/annotationExtension.js'
 import { relativeToProject } from './lib/aiTools.js'
 import { PANELS, clampWidth, fitLayout, loadLayout, maxWidthFor, saveLayout } from './lib/layout.js'
+import { AFTER_LANGUAGE_RELOAD_KEY, t } from './i18n/index.js'
 
 const electronAPI = window.electronAPI
 const SAVE_DELAY_MS = 500
@@ -32,7 +33,7 @@ let untitledCounter = 0
 function createTab(document = null, id = crypto.randomUUID()) {
   if (!document) {
     untitledCounter += 1
-    return { id, filePath: null, sourcePath: null, untitled: untitledCounter, title: `Senza titolo ${untitledCounter}`, content: '<h2>Inizia a scrivere</h2><p>Questo è il tuo nuovo documento.</p>', contentType: 'html', dirty: false }
+    return { id, filePath: null, sourcePath: null, untitled: untitledCounter, title: t('Untitled {untitledCounter}', { untitledCounter }), content: t('<h2>Start writing</h2><p>This is your new document.</p>'), contentType: 'html', dirty: false }
   }
   // Solo i Markdown si possono risalvare nello stesso file: DOCX e PDF diventano nuovi documenti.
   const savable = document.format === 'markdown'
@@ -40,7 +41,7 @@ function createTab(document = null, id = crypto.randomUUID()) {
 }
 
 // La scheda del browser non è un documento: non ha editor, file né bozze, e non viene salvata nella sessione.
-const createBrowserTab = () => ({ id: crypto.randomUUID(), kind: 'browser', title: 'Browser', filePath: null, sourcePath: null, dirty: false })
+const createBrowserTab = () => ({ id: crypto.randomUUID(), kind: 'browser', title: t('Browser'), filePath: null, sourcePath: null, dirty: false })
 const isDocument = (tab) => tab && tab.kind !== 'browser'
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms) })
 const samePath = (left, right) => Boolean(left) && Boolean(right) && left.replace(/\\/g, '/').toLowerCase() === right.replace(/\\/g, '/').toLowerCase()
@@ -75,7 +76,12 @@ export default function App() {
   const [explorerRefresh, setExplorerRefresh] = useState(0)
   const [historyVersion, setHistoryVersion] = useState(0)
   const [status, setStatus] = useState('')
-  const [screen, setScreen] = useState('editor')
+  const [screen, setScreen] = useState(() => {
+    try {
+      if (sessionStorage.getItem(AFTER_LANGUAGE_RELOAD_KEY)) { sessionStorage.removeItem(AFTER_LANGUAGE_RELOAD_KEY); return 'settings' }
+    } catch { /* sessionStorage non disponibile */ }
+    return 'editor'
+  })
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [conversationId, setConversationId] = useState(null)
   const [settingsVersion, setSettingsVersion] = useState(0)
@@ -150,7 +156,7 @@ export default function App() {
     let activeConversation = session?.conversationId ?? null
     if (Array.isArray(session?.chat) && session.chat.length && (await electronAPI.getProject())) {
       try {
-        const imported = await electronAPI.createConversation({ title: 'Conversazione importata', messages: session.chat })
+        const imported = await electronAPI.createConversation({ title: t('Imported conversation'), messages: session.chat })
         activeConversation = imported.id
       } catch (error) {
         console.warn('Importazione della conversazione non riuscita', error)
@@ -189,13 +195,13 @@ export default function App() {
       const items = []
       if (info.misspelledWord) {
         items.push(...info.suggestions.map((suggestion) => ({ label: suggestion, bold: true, onClick: () => electronAPI.replaceMisspelling(suggestion) })))
-        if (!info.suggestions.length) items.push({ label: 'Nessun suggerimento', disabled: true })
-        items.push({ label: `Aggiungi "${info.misspelledWord}" al dizionario`, onClick: () => electronAPI.addToDictionary(info.misspelledWord) }, { separator: true })
+        if (!info.suggestions.length) items.push({ label: t('No suggestions'), disabled: true })
+        items.push({ label: t('Add "{misspelledWord}" to dictionary', { misspelledWord: info.misspelledWord }), onClick: () => electronAPI.addToDictionary(info.misspelledWord) }, { separator: true })
       }
-      if (info.isEditable) items.push({ label: 'Taglia', hint: `${modKey}X`, disabled: !info.flags.canCut, onClick: () => electronAPI.editAction('cut') })
-      items.push({ label: 'Copia', hint: `${modKey}C`, disabled: !info.flags.canCopy, onClick: () => electronAPI.editAction('copy') })
+      if (info.isEditable) items.push({ label: t('Cut'), hint: `${modKey}X`, disabled: !info.flags.canCut, onClick: () => electronAPI.editAction('cut') })
+      items.push({ label: t('Copy'), hint: `${modKey}C`, disabled: !info.flags.canCopy, onClick: () => electronAPI.editAction('copy') })
       if (info.isEditable) {
-        items.push({ label: 'Incolla', hint: `${modKey}V`, disabled: !info.flags.canPaste, onClick: () => electronAPI.editAction('paste') }, { separator: true }, { label: 'Seleziona tutto', hint: `${modKey}A`, onClick: () => electronAPI.editAction('selectAll') })
+        items.push({ label: t('Paste'), hint: `${modKey}V`, disabled: !info.flags.canPaste, onClick: () => electronAPI.editAction('paste') }, { separator: true }, { label: t('Select all'), hint: `${modKey}A`, onClick: () => electronAPI.editAction('selectAll') })
       }
       setContextMenu({ x: info.x, y: info.y, items })
     })
@@ -264,13 +270,13 @@ export default function App() {
       const tab = createTab(document)
       setTabs((current) => [...current, tab])
       setActiveId(tab.id)
-      setStatus('Aperto')
+      setStatus(t('Opened'))
     },
     closeTab(id) {
       const current = latest.current.tabs
       const tab = current.find((item) => item.id === id)
       if (!tab) return
-      if (tab.dirty && !window.confirm(`"${tab.title}" ha modifiche non salvate. Chiuderlo comunque?`)) return
+      if (tab.dirty && !window.confirm(t('"{title}" has unsaved changes. Close it anyway?', { title: tab.title }))) return
       const remaining = current.filter((item) => item.id !== id)
       const next = remaining.some(isDocument) ? remaining : [...remaining, createTab()]
       setTabs(next)
@@ -290,14 +296,14 @@ export default function App() {
       }))
       setExpandedPaths((current) => new Set([...current].map((item) => remapPath(item, from, to))))
       setHistoryVersion((value) => value + 1)
-      setStatus('Rinominato')
+      setStatus(t('Renamed'))
     },
     // Le schede di un file eliminato restano aperte come documenti non salvati, così il testo non va perso.
     pathDeleted(target) {
       setTabs((current) => current.map((tab) => (isInside(tab.sourcePath, target) || isInside(tab.filePath, target) ? { ...tab, sourcePath: null, filePath: null, dirty: true } : tab)))
       setExpandedPaths((current) => new Set([...current].filter((item) => !isInside(item, target))))
       setHistoryVersion((value) => value + 1)
-      setStatus('Spostato nel cestino')
+      setStatus(t('Moved to the trash'))
     },
     requestFind(replace) {
       setFindRequest((current) => ({ nonce: current.nonce + 1, replace }))
@@ -352,8 +358,8 @@ export default function App() {
       const tab = wanted
         ? documents.find((item) => samePath(item.filePath, wanted) || samePath(item.sourcePath, wanted))
         : documents.find((item) => item.id === contextTabId)
-      if (!tab) throw new Error(wanted ? `Il documento "${relativePath}" non è aperto in una scheda: chiedi all'utente di aprirlo` : 'Nessun documento aperto')
-      if (!currentEditors[tab.id]) throw new Error('L\'editor del documento non è ancora pronto')
+      if (!tab) throw new Error(wanted ? t('The document "{relativePath}" is not open in a tab: ask the user to open it', { relativePath }) : t('No document open'))
+      if (!currentEditors[tab.id]) throw new Error(t('The document editor is not ready yet'))
       return { tab, editor: currentEditors[tab.id] }
     },
     // Testo attuale dell'editor per un file del progetto aperto in una scheda (anche con modifiche non salvate).
@@ -388,13 +394,13 @@ export default function App() {
       if (!newTab && reference !== undefined && reference !== null && String(reference).trim() !== '') {
         const key = String(reference).trim().toLowerCase().replace(/^(scheda|tab)\s*#?/, '')
         target = (/^\d+$/.test(key) ? list[Number(key) - 1] : null) || list.find((item) => item.id.toLowerCase().startsWith(key)) || null
-        if (!target) throw new Error(`Scheda browser "${reference}" non trovata: usa browser_tabs per vedere quelle aperte`)
+        if (!target) throw new Error(t('Browser tab "{reference}" not found: use browser_tabs to see the open ones', { reference }))
       } else if (!newTab) {
         target = list.find((item) => item.id === latest.current.activeId) || list.find((item) => item.id === lastBrowserId.current) || list[0] || null
       }
       let number = target ? list.indexOf(target) + 1 : 0
       if (!target) {
-        if (!create && !newTab) throw new Error("Nessuna scheda del browser aperta: la può aprire l'utente (icona del globo) oppure tu con web_open o web_search, se la navigazione web è attiva")
+        if (!create && !newTab) throw new Error(t('No browser tab is open: the user can open one (globe icon) or you can with web_open or web_search, if web browsing is enabled'))
         target = createBrowserTab()
         number = list.length + 1
         setTabs((current) => [...current, target])
@@ -406,7 +412,7 @@ export default function App() {
         if (controller) return { controller, id: target.id, shortId: target.id.slice(0, 6), number }
         await sleep(50)
       }
-      throw new Error('Il browser non è pronto')
+      throw new Error(t('The browser is not ready'))
     },
     // Schermata della parte visibile del documento (se non è in primo piano lo porta davanti e attende il ridisegno).
     async captureDocument(relativePath) {
@@ -416,7 +422,7 @@ export default function App() {
         await sleep(500)
       }
       const element = document.querySelector(`[data-document-scroll="${tab.id}"]`)
-      if (!element) throw new Error('Il documento non è visibile')
+      if (!element) throw new Error(t('The document is not visible'))
       const { x, y, width, height } = element.getBoundingClientRect()
       return { title: tab.title, image: await electronAPI.captureRect({ x, y, width, height }) }
     },
@@ -433,13 +439,13 @@ export default function App() {
         await sleep(600)
         image = await capture()
       }
-      return { number: target.number, shortId: target.shortId, title: info.title || 'senza titolo', url: info.url, image }
+      return { number: target.number, shortId: target.shortId, title: info.title || t('untitled'), url: info.url, image }
     },
     // Prima di una modifica dell'assistente si archivia il testo attuale, così è sempre recuperabile dalla cronologia.
     async snapshot(tab, editor) {
       if (!tab.filePath || !latest.current.project) return
       try {
-        await electronAPI.addVersion(tab.filePath, editor.getMarkdown(), 'Prima della modifica AI')
+        await electronAPI.addVersion(tab.filePath, editor.getMarkdown(), t('Before the AI edit'))
         setHistoryVersion((value) => value + 1)
       } catch (error) {
         console.warn('Versione di sicurezza non salvata', error)
@@ -475,7 +481,7 @@ export default function App() {
       workspace.openDocument(await electronAPI.openDocumentPath(filePath))
     } catch (error) {
       console.error(error)
-      setStatus('Impossibile aprire il file')
+      setStatus(t('Could not open the file'))
     }
   }
 
@@ -504,7 +510,7 @@ export default function App() {
         />
         {sideTab && (
           <aside style={{ width: widths.left }} className="relative flex shrink-0 flex-col border-r border-slate-800 bg-slate-900/60">
-            <PanelResizer side="left" label="Larghezza del pannello laterale" width={widths.left} min={PANELS.left.min} max={maxWidthFor('left', resizeContext('left'))} defaultWidth={PANELS.left.default} onChange={resizePanel('left')} onCommit={commitLayout} />
+            <PanelResizer side="left" label={t('Side panel width')} width={widths.left} min={PANELS.left.min} max={maxWidthFor('left', resizeContext('left'))} defaultWidth={PANELS.left.default} onChange={resizePanel('left')} onCommit={commitLayout} />
             <h2 className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{{ files: 'File', outline: 'Struttura', history: 'Cronologia', notes: 'Note' }[sideTab]}</h2>
             {sideTab === 'files' && (
               <FileExplorer project={project} activePath={contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} />
@@ -512,7 +518,7 @@ export default function App() {
             {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} />}
             {sideTab === 'notes' && (editors[contextTab?.id]
               ? <NotesPanel tab={contextTab} editor={editors[contextTab.id]} project={project} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} />
-              : <p className="px-3 py-3 text-xs text-slate-500">Nessun documento aperto.</p>)}
+              : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>)}
             {sideTab === 'history' && (
               <HistoryPanel tab={contextTab} editor={editors[contextTab?.id]} project={project} historyVersion={historyVersion} onChanged={() => setHistoryVersion((value) => value + 1)} onStatus={setStatus} />
             )}
@@ -526,13 +532,13 @@ export default function App() {
               : <DocumentPane key={tab.id} tab={tab} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onNoteSelect={selectNote} />))}
           </section>
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
-            <span className="truncate" title={project || ''}>{project ? `Progetto: ${project}` : 'Nessun progetto'}</span>
+            <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>
             <span className="shrink-0">{status}</span>
           </footer>
         </main>
         {/* Sempre montato: chiudere il pannello non interrompe una richiesta in corso. */}
         <aside style={{ width: widths.right }} className={assistantOpen ? 'relative flex min-w-0 shrink-0 flex-col overflow-hidden border-l border-slate-800 bg-slate-900/60' : 'hidden'}>
-          {assistantOpen && <PanelResizer side="right" label="Larghezza dell'assistente" width={widths.right} min={PANELS.right.min} max={maxWidthFor('right', resizeContext('right'))} defaultWidth={PANELS.right.default} onChange={resizePanel('right')} onCommit={commitLayout} />}
+          {assistantOpen && <PanelResizer side="right" label={t('Assistant width')} width={widths.right} min={PANELS.right.min} max={maxWidthFor('right', resizeContext('right'))} defaultWidth={PANELS.right.default} onChange={resizePanel('right')} onCommit={commitLayout} />}
           <AiChatPanel
             editor={editors[contextTab?.id]}
             contextTab={contextTab}

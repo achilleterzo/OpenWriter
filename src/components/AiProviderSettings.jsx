@@ -4,24 +4,25 @@ import { reasoningByProvider } from '../lib/aiOptions.js'
 import ollamaLogo from '../assets/provider-logos/ollama.svg'
 import codexLogo from '../assets/provider-logos/codex.svg'
 import claudeCodeLogo from '../assets/provider-logos/claude-code.svg'
+import { t } from '../i18n/index.js'
 
 const ai = window.electronAPI?.ai
 
 const providers = [
-  { value: 'ollama', label: 'Ollama', description: 'Servizio HTTP locale' },
-  { value: 'ollama-cloud', label: 'Ollama Cloud', description: 'API ospitata con API key' },
-  { value: 'codex', label: 'Codex', description: 'CLI nativa con OAuth ChatGPT' },
-  { value: 'claude', label: 'Claude', description: 'CLI nativa con OAuth Claude' },
+  { value: 'ollama', label: 'Ollama', description: t('Local HTTP service') },
+  { value: 'ollama-cloud', label: 'Ollama Cloud', description: t('Hosted API with an API key') },
+  { value: 'codex', label: 'Codex', description: t('Native CLI with ChatGPT OAuth') },
+  { value: 'claude', label: 'Claude', description: t('Native CLI with Claude OAuth') },
 ]
 const logos = { ollama: ollamaLogo, 'ollama-cloud': ollamaLogo, codex: codexLogo, claude: claudeCodeLogo }
 const languages = ['Italiano', 'English', 'Español', 'Français', 'Deutsch', 'Português']
 const toolOptions = [
-  { key: 'files', label: 'File del progetto', help: 'Elencare le cartelle e leggere i file del progetto (la cartella .ow è esclusa).' },
-  { key: 'notes', label: 'Note nel documento', help: 'Aggiungere note e suggerimenti ancorati al testo, che tu accetti o rifiuti, e consultarli.' },
-  { key: 'edit', label: 'Modifica del documento aperto', help: 'Sostituire o inserire testo. Le modifiche sono annullabili con Ctrl+Z, non vengono salvate da sole e prima della prima modifica viene archiviata una versione.' },
-  { key: 'ask', label: 'Domande con scelte', help: 'L\'assistente può farti domande con risposte cliccabili (a pagine, con "Altro" per scrivere la tua), invece di elencare le opzioni nel testo.' },
-  { key: 'vision', label: 'Immagini e schermate', help: 'Guardare schermate del documento e delle schede del browser, e immagini di pagine, collegamenti o file del progetto. Richiede un modello con vision; le immagini vengono inviate al provider scelto e, per quelle in rete, scaricate dal tuo computer (gli indirizzi locali sono bloccati).' },
-  { key: 'web', label: 'Navigazione web', help: 'Cercare con DuckDuckGo, aprire pagine e leggere le schede del Browser, comprese quelle che hai aperto tu (anche pagine in cui sei autenticato). Ricerche e indirizzi escono dal tuo computer; gli indirizzi locali non può aprirli.' },
+  { key: 'files', label: t('Project files'), help: t('List folders and read the project\'s files (the .ow folder is excluded).') },
+  { key: 'notes', label: t('Notes in the document'), help: t('Add notes and suggestions anchored to the text, which you accept or reject, and consult them.') },
+  { key: 'edit', label: t('Editing the open document'), help: t('Replace or insert text. Edits can be undone with Ctrl+Z, they are not saved on their own, and a version is archived before the first edit.') },
+  { key: 'ask', label: t('Questions with choices'), help: t('The assistant can ask you questions with clickable answers (paged, with "Other" to write your own), instead of listing the options in the text.') },
+  { key: 'vision', label: t('Images and screenshots'), help: t('Look at screenshots of the document and of the browser tabs, and at images from pages, links or project files. Requires a model with vision; images are sent to the chosen provider and, for those on the web, downloaded by your computer (local addresses are blocked).') },
+  { key: 'web', label: t('Web browsing'), help: t('Search with DuckDuckGo, open pages and read the Browser tabs, including the ones you opened yourself (even pages where you are signed in). Searches and addresses leave your computer; it cannot open local addresses.') },
 ]
 
 const fieldClass = 'mt-2 w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2.5 text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400 disabled:opacity-60'
@@ -110,7 +111,7 @@ export default function AiProviderSettings() {
     setLoggingIn(true)
     try {
       const result = await ai.login(provider)
-      if (result.started === false) throw new Error(result.error || 'Avvio del login non riuscito')
+      if (result.started === false) throw new Error(result.error || t('Could not start the sign-in'))
       setLoginInfo(result)
       for (let attempt = 0; attempt < 40; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 3000))
@@ -136,7 +137,7 @@ export default function AiProviderSettings() {
   }
 
   if (!ai) {
-    return <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-300">Il processo Electron è obsoleto: riavvia l'app (npm run dev) per caricare il nuovo preload.</p>
+    return <p className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-300">{t('The Electron process is out of date: restart the app (npm run dev) to load the new preload.')}</p>
   }
   if (!settings) return null
 
@@ -149,15 +150,15 @@ export default function AiProviderSettings() {
         <div>
           <div className="flex items-center gap-2">
             <Bot className="text-accent-400" size={20} />
-            <h2 className="text-lg font-semibold">Assistente AI</h2>
+            <h2 className="text-lg font-semibold">{t('AI assistant')}</h2>
           </div>
-          <p className="mt-2 max-w-xl text-sm leading-6 text-slate-400">Provider usato per la scrittura e la revisione dei testi.</p>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-slate-400">{t('Provider used for writing and reviewing texts.')}</p>
         </div>
         <button
           type="button"
           role="switch"
           aria-checked={settings.aiEnabled}
-          aria-label="Abilita assistente AI"
+          aria-label={t('Enable AI assistant')}
           className={`relative h-6 w-11 shrink-0 rounded-full transition ${settings.aiEnabled ? 'bg-accent-600' : 'bg-slate-700'}`}
           onClick={() => persist({ ...settings, aiEnabled: !settings.aiEnabled })}
         >
@@ -168,8 +169,8 @@ export default function AiProviderSettings() {
       {settings.aiEnabled && (
         <div className="mt-6 grid gap-4">
           <div className="grid gap-2">
-            <span className="text-sm text-slate-300">Provider</span>
-            <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Provider AI">
+            <span className="text-sm text-slate-300">{t('Provider')}</span>
+            <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t('AI provider')}>
               {providers.map((option) => {
                 const active = provider === option.value
                 return (
@@ -196,75 +197,67 @@ export default function AiProviderSettings() {
             <div className="flex items-center justify-between gap-3 text-sm">
               <span className={`flex items-center gap-2 ${connected ? 'text-emerald-400' : 'text-slate-400'}`}>
                 {connected ? <CheckCircle2 size={16} /> : <span className="h-2 w-2 rounded-full bg-current" />}
-                {!status ? 'Verifica in corso…' : !status.installed ? `CLI ${status.label} non trovata` : connected ? 'Autenticato' : 'Non autenticato'}
+                {!status ? t('Checking…') : !status.installed ? t('{label} CLI not found', { label: status.label }) : connected ? t('Signed in') : t('Not signed in')}
               </span>
               <div className="flex gap-2">
-                <button type="button" className={buttonClass} onClick={refreshStatus}>Verifica</button>
-                {status?.installed && !connected && <button type="button" className="rounded-md bg-accent-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-500" disabled={loggingIn} onClick={login}>{loggingIn ? 'In attesa del browser…' : 'Accedi'}</button>}
+                <button type="button" className={buttonClass} onClick={refreshStatus}>{t('Check')}</button>
+                {status?.installed && !connected && <button type="button" className="rounded-md bg-accent-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-500" disabled={loggingIn} onClick={login}>{loggingIn ? t('Waiting for the browser…') : t('Sign in')}</button>}
               </div>
             </div>
           )}
 
           {native && loggingIn && loginInfo?.needsCode && (
             <div className="grid gap-2 text-sm text-slate-300">
-              <p>Completa l'accesso nel browser, poi incolla qui il codice mostrato.</p>
+              <p>{t('Complete the sign-in in the browser, then paste the code shown here.')}</p>
               <div className="flex gap-2">
-                <input value={loginCode} onChange={(event) => setLoginCode(event.target.value)} className={fieldClass} placeholder="Codice di autorizzazione" />
-                <button type="button" className={`${buttonClass} mt-2`} disabled={!loginCode.trim()} onClick={sendCode}>Invia</button>
+                <input value={loginCode} onChange={(event) => setLoginCode(event.target.value)} className={fieldClass} placeholder={t('Authorization code')} />
+                <button type="button" className={`${buttonClass} mt-2`} disabled={!loginCode.trim()} onClick={sendCode}>{t('Send')}</button>
               </div>
             </div>
           )}
           {native && loggingIn && loginInfo?.url && (
-            <p className="break-all text-xs text-slate-500">Il browser non si è aperto? <a href={loginInfo.url} target="_blank" rel="noreferrer" className="text-accent-400 underline">Apri il link di accesso</a></p>
+            <p className="break-all text-xs text-slate-500">{t('Did the browser not open?')} <a href={loginInfo.url} target="_blank" rel="noreferrer" className="text-accent-400 underline">{t('Open the sign-in link')}</a></p>
           )}
 
           {cloud && (
-            <label className="text-sm text-slate-300">
-              API key Ollama Cloud {hasSavedKey && <span className="text-emerald-400">(salvata)</span>}
+            <label className="text-sm text-slate-300">{t('Ollama Cloud API key')} {hasSavedKey && <span className="text-emerald-400">{t('(saved)')}</span>}
               <div className="flex gap-2">
-                <input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} className={fieldClass} placeholder={hasSavedKey ? '••••••••' : 'Incolla la API key'} />
-                <button type="button" className={`${buttonClass} mt-2`} disabled={!apiKey.trim() && !hasSavedKey} onClick={saveKey}>{apiKey.trim() ? 'Salva' : 'Rimuovi'}</button>
+                <input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} className={fieldClass} placeholder={hasSavedKey ? '••••••••' : t('Paste the API key')} />
+                <button type="button" className={`${buttonClass} mt-2`} disabled={!apiKey.trim() && !hasSavedKey} onClick={saveKey}>{apiKey.trim() ? t('Save') : t('Remove')}</button>
               </div>
             </label>
           )}
 
           {provider === 'ollama' && (
-            <label className="text-sm text-slate-300">
-              Endpoint Ollama
-              <div className="flex gap-2">
+            <label className="text-sm text-slate-300">{t('Ollama endpoint')}<div className="flex gap-2">
                 <input value={config.endpoint || ''} onChange={(event) => updateConfig({ endpoint: event.target.value })} className={fieldClass} />
-                <button type="button" className={`${buttonClass} mt-2`} disabled={modelsLoading} onClick={() => loadModels()}>{modelsLoading ? 'Connessione…' : 'Connetti'}</button>
+                <button type="button" className={`${buttonClass} mt-2`} disabled={modelsLoading} onClick={() => loadModels()}>{modelsLoading ? t('Connecting…') : t('Connect')}</button>
               </div>
             </label>
           )}
 
-          <label className="text-sm text-slate-300">
-            Modello
-            <div className="flex gap-2">
+          <label className="text-sm text-slate-300">{t('Model')}<div className="flex gap-2">
               <select className={fieldClass} value={config.model || ''} onChange={(event) => updateConfig({ model: event.target.value })}>
-                <option value="">{modelsLoading ? 'Caricamento…' : native ? 'Predefinito del client' : 'Seleziona un modello'}</option>
+                <option value="">{modelsLoading ? t('Loading…') : native ? t('Client default') : t('Select a model')}</option>
                 {modelOptions.map((model) => <option key={model} value={model}>{model}</option>)}
               </select>
-              <button type="button" aria-label="Aggiorna modelli" title="Aggiorna modelli" className={`${buttonClass} mt-2`} disabled={modelsLoading} onClick={() => loadModels()}><RefreshCw size={16} className={modelsLoading ? 'animate-spin' : ''} /></button>
+              <button type="button" aria-label={t('Refresh models')} title={t('Refresh models')} className={`${buttonClass} mt-2`} disabled={modelsLoading} onClick={() => loadModels()}><RefreshCw size={16} className={modelsLoading ? 'animate-spin' : ''} /></button>
             </div>
           </label>
 
-          <label className="text-sm text-slate-300">
-            Lingua delle risposte
-            <select className={fieldClass} value={settings.language} onChange={(event) => persist({ ...settings, language: event.target.value })}>
-              {[...new Set([...languages, settings.language])].map((language) => <option key={language} value={language}>{language}</option>)}
+          <label className="text-sm text-slate-300">{t('Reply language')}<select className={fieldClass} value={settings.language} onChange={(event) => persist({ ...settings, language: event.target.value })}>
+              <option value="">{t('Same as the interface')}</option>
+              {[...new Set([...languages, settings.language].filter(Boolean))].map((language) => <option key={language} value={language}>{language}</option>)}
             </select>
           </label>
 
-          <label className="text-sm text-slate-300">
-            Ragionamento
-            <select className={fieldClass} value={config.reasoning || reasoningByProvider[provider][0].value} onChange={(event) => updateConfig({ reasoning: event.target.value })}>
+          <label className="text-sm text-slate-300">{t('Reasoning')}<select className={fieldClass} value={config.reasoning || reasoningByProvider[provider][0].value} onChange={(event) => updateConfig({ reasoning: event.target.value })}>
               {reasoningByProvider[provider].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </label>
 
           <fieldset className="grid gap-3 rounded-lg border border-slate-800 p-4">
-            <legend className="px-1 text-sm text-slate-300">Strumenti dell&apos;assistente</legend>
+            <legend className="px-1 text-sm text-slate-300">{t('Assistant tools')}</legend>
             {toolOptions.map(({ key, label, help }) => (
               <label key={key} className="flex items-start gap-3 text-sm text-slate-300">
                 <input
@@ -277,18 +270,16 @@ export default function AiProviderSettings() {
               </label>
             ))}
             <label className="flex items-start justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
-              <span>
-                Passaggi massimi con gli strumenti
-                <span className="block text-xs text-slate-500">Quante chiamate agli strumenti può concatenare l&apos;assistente per ogni richiesta. Al limite ti chiede se continuare.</span>
+              <span>{t('Maximum steps with the tools')}<span className="block text-xs text-slate-500">{t('How many tool calls the assistant can chain for each request. At the limit it asks whether to continue.')}</span>
               </span>
               <select className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-100 outline-none focus:border-accent-400" value={settings.maxToolSteps} onChange={(event) => persist({ ...settings, maxToolSteps: Number(event.target.value) })}>
                 {[...new Set([5, 8, 10, 15, 20, 30, 50, settings.maxToolSteps])].sort((left, right) => left - right).map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
             </label>
             {settings.tools?.vision && capabilities && !capabilities.vision && (
-              <p className="text-xs text-amber-400">{capabilities.known ? 'Il modello selezionato non supporta le immagini: gli strumenti per immagini e schermate restano disattivati.' : 'Non riesco a verificare se il modello supporta le immagini: gli strumenti per immagini e schermate restano disattivati.'}</p>
+              <p className="text-xs text-amber-400">{capabilities.known ? t('The selected model does not support images: the image and screenshot tools stay off.') : t('I cannot check whether the model supports images: the image and screenshot tools stay off.')}</p>
             )}
-            <p className="text-xs text-slate-500">Gli strumenti funzionano con tutti i provider, ma i modelli piccoli possono usarli in modo meno affidabile.</p>
+            <p className="text-xs text-slate-500">{t('The tools work with every provider, but small models may use them less reliably.')}</p>
           </fieldset>
 
           {error && <p className="text-sm text-rose-400">{error}</p>}

@@ -2,6 +2,7 @@ const { execFileSync } = require('node:child_process')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
+const { t } = require('./i18n.cjs')
 
 const DIRECTORY_NAME = '.ow'
 const FORMAT_VERSION = 1
@@ -22,7 +23,7 @@ const cleanLanguages = (value) => (Array.isArray(value) ? [...new Set(value.filt
 function createProjectFile({ getProjectPath }) {
   const root = () => {
     const project = getProjectPath()
-    if (!project) throw new Error('Nessun progetto aperto')
+    if (!project) throw new Error(t('No project open'))
     return path.join(project, DIRECTORY_NAME)
   }
   const settingsFile = () => path.join(root(), 'project.json')
@@ -50,7 +51,7 @@ function createProjectFile({ getProjectPath }) {
   // Un JSON corrotto blocca l'operazione: riscriverlo cancellerebbe il lavoro dell'utente.
   function readJson(file, fallback) {
     if (!fs.existsSync(file)) return fallback
-    try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { throw new Error(`${path.basename(file)} non è un JSON valido: correggilo o rimuovilo`) }
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { throw new Error(t('{basename} is not valid JSON: fix it or remove it', { basename: path.basename(file) })) }
   }
 
   function readSettings() {
@@ -163,7 +164,7 @@ function createProjectFile({ getProjectPath }) {
   function getVersion(document, id) {
     const key = documentKey(document)
     // L'id deve esistere nell'indice: così non si può uscire dalla cartella della cronologia.
-    if (!key || !readIndex(key).some((item) => item.id === id)) throw new Error('Versione non trovata')
+    if (!key || !readIndex(key).some((item) => item.id === id)) throw new Error(t('Version not found'))
     return fs.readFileSync(path.join(historyDirectory(key), `${id}.md`), 'utf8')
   }
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Loader2, RotateCw } from 'lucide-react'
+import { t } from '../i18n/index.js'
 
 const SETTLE_MS = 700
 const NAVIGATION_TIMEOUT_MS = 25000
@@ -56,8 +57,8 @@ export default function BrowserPane({ tab, active, onRegister, onTitle }) {
         await whenReady()
         await settle(() => view.loadURL(target).catch(() => {}))
       },
-      async back() { await whenReady(); if (!view.canGoBack()) throw new Error('Non c\'è una pagina precedente'); await settle(() => view.goBack()) },
-      async forward() { await whenReady(); if (!view.canGoForward()) throw new Error('Non c\'è una pagina successiva'); await settle(() => view.goForward()) },
+      async back() { await whenReady(); if (!view.canGoBack()) throw new Error(t('There is no previous page')); await settle(() => view.goBack()) },
+      async forward() { await whenReady(); if (!view.canGoForward()) throw new Error(t('There is no next page')); await settle(() => view.goForward()) },
       async reload() { await whenReady(); await settle(() => view.reload()) },
       async evaluate(code) {
         await whenReady()
@@ -96,13 +97,13 @@ export default function BrowserPane({ tab, active, onRegister, onTitle }) {
   return (
     <div className={active ? 'flex min-h-0 flex-1 flex-col' : 'pointer-events-none fixed left-[-12000px] top-0 flex h-[720px] w-[1100px] flex-col'}>
       <form className="flex items-center gap-1 border-b border-slate-800 bg-slate-950/40 p-2" onSubmit={submit}>
-        <button type="button" aria-label="Indietro" disabled={!history.back} className={buttonClass} onClick={() => viewRef.current.goBack()}><ArrowLeft size={16} /></button>
-        <button type="button" aria-label="Avanti" disabled={!history.forward} className={buttonClass} onClick={() => viewRef.current.goForward()}><ArrowRight size={16} /></button>
-        <button type="button" aria-label="Ricarica" className={buttonClass} onClick={() => viewRef.current.reload()}>{loading ? <Loader2 size={16} className="animate-spin" /> : <RotateCw size={16} />}</button>
+        <button type="button" aria-label={t('Back')} disabled={!history.back} className={buttonClass} onClick={() => viewRef.current.goBack()}><ArrowLeft size={16} /></button>
+        <button type="button" aria-label={t('Forward')} disabled={!history.forward} className={buttonClass} onClick={() => viewRef.current.goForward()}><ArrowRight size={16} /></button>
+        <button type="button" aria-label={t('Reload')} className={buttonClass} onClick={() => viewRef.current.reload()}>{loading ? <Loader2 size={16} className="animate-spin" /> : <RotateCw size={16} />}</button>
         <input
           value={address}
-          aria-label="Indirizzo"
-          placeholder="Cerca o digita un indirizzo"
+          aria-label={t('Address')}
+          placeholder={t('Search or type an address')}
           className="min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400"
           onChange={(event) => setAddress(event.target.value)}
           onFocus={(event) => event.target.select()}

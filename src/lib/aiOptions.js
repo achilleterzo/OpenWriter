@@ -1,15 +1,16 @@
+import { t } from '../i18n/index.js'
 // Livelli di ragionamento ("sforzo") offerti da ciascun provider; il primo è il predefinito.
 const ollamaReasoning = [
-  { value: 'instant', label: 'Istantaneo' },
-  { value: 'low', label: 'Basso' },
-  { value: 'medium', label: 'Medio' },
-  { value: 'high', label: 'Alto' },
+  { value: 'instant', label: t('Instant') },
+  { value: 'low', label: t('Low') },
+  { value: 'medium', label: t('Medium') },
+  { value: 'high', label: t('High') },
 ]
-const defaultReasoning = { value: 'default', label: 'Predefinito del client' }
+const defaultReasoning = { value: 'default', label: t('Client default') }
 
 export const reasoningByProvider = {
   ollama: ollamaReasoning,
   'ollama-cloud': ollamaReasoning,
-  codex: [defaultReasoning, ...ollamaReasoning.slice(1), { value: 'xhigh', label: 'Molto alto' }],
-  claude: [defaultReasoning, ...ollamaReasoning.slice(1), { value: 'xhigh', label: 'Molto alto' }, { value: 'max', label: 'Massimo' }],
+  codex: [defaultReasoning, ...ollamaReasoning.slice(1), { value: 'xhigh', label: t('Very high') }],
+  claude: [defaultReasoning, ...ollamaReasoning.slice(1), { value: 'xhigh', label: t('Very high') }, { value: 'max', label: t('Maximum') }],
 }

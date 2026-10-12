@@ -1,4 +1,5 @@
 import { useEditorState } from '@tiptap/react'
+import { t } from '../i18n/index.js'
 
 function headingsOf(editor) {
   const headings = []
@@ -15,7 +16,7 @@ function Outline({ editor }) {
   })
   const items = JSON.parse(serialized)
 
-  if (!items.length) return <p className="px-3 py-3 text-xs text-slate-500">Nessun titolo nel documento.</p>
+  if (!items.length) return <p className="px-3 py-3 text-xs text-slate-500">{t('No headings in the document.')}</p>
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto py-1">
@@ -35,5 +36,5 @@ function Outline({ editor }) {
 }
 
 export default function OutlinePanel({ editor }) {
-  return editor ? <Outline editor={editor} /> : <p className="px-3 py-3 text-xs text-slate-500">Nessun documento aperto.</p>
+  return editor ? <Outline editor={editor} /> : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>
 }

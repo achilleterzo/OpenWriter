@@ -1,6 +1,7 @@
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
+const { t } = require('./i18n.cjs')
 
 const KINDS = ['comment', 'suggestion']
 const STATUSES = ['open', 'accepted', 'rejected', 'resolved']
@@ -15,7 +16,7 @@ const AUTHORS = ['ai', 'user']
 function createNotesStore({ getProjectPath }) {
   const root = () => {
     const project = getProjectPath()
-    if (!project) throw new Error('Nessun progetto aperto')
+    if (!project) throw new Error(t('No project open'))
     return path.join(project, '.ow', 'notes')
   }
 
@@ -29,7 +30,7 @@ function createNotesStore({ getProjectPath }) {
 
   function fileFor(document) {
     const key = documentKey(document)
-    if (!key) throw new Error('Il documento deve trovarsi nella cartella del progetto')
+    if (!key) throw new Error(t('The document must be inside the project folder'))
     return path.join(root(), ...key.split('/')) + '.json'
   }
 
@@ -46,7 +47,7 @@ function createNotesStore({ getProjectPath }) {
       const notes = JSON.parse(fs.readFileSync(file, 'utf8'))
       return Array.isArray(notes) ? notes : []
     } catch {
-      throw new Error(`${path.basename(file)} non è un JSON valido: correggilo o rimuovilo`)
+      throw new Error(t('{basename} is not valid JSON: fix it or remove it', { basename: path.basename(file) }))
     }
   }
 
@@ -74,7 +75,7 @@ function createNotesStore({ getProjectPath }) {
   const list = (document) => readNotes(fileFor(document))
 
   function add(document, input) {
-    if (!input?.quote) throw new Error('La nota deve ancorarsi a un testo')
+    if (!input?.quote) throw new Error(t('The note must be anchored to some text'))
     const file = fileFor(document)
     const notes = readNotes(file)
     const note = normalize({ ...input, id: undefined, status: 'open' })
@@ -87,7 +88,7 @@ function createNotesStore({ getProjectPath }) {
     const file = fileFor(document)
     const notes = readNotes(file)
     const index = notes.findIndex((note) => note.id === id)
-    if (index === -1) throw new Error('Nota non trovata')
+    if (index === -1) throw new Error(t('Note not found'))
     // Il testo ancorato e l'autore non si modificano: cambiano contenuto, stato e (comment → suggestion) il tipo.
     const { body, replacement, status, kind } = changes || {}
     notes[index] = { ...normalize({ ...notes[index], body, replacement, status, kind }, notes[index]), updatedAt: new Date().toISOString() }

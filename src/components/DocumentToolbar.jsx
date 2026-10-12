@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { useEditorState } from '@tiptap/react'
 import { ToolbarButton, ToolbarDivider } from './ToolbarButton.jsx'
+import { t } from '../i18n/index.js'
 
 const headingLevels = [1, 2, 3, 4, 5, 6, 7]
 
@@ -42,16 +43,16 @@ export default function DocumentToolbar({ editor, onFind, findOpen }) {
       return
     }
 
-    const url = window.prompt('URL del collegamento')
+    const url = window.prompt(t('Link URL'))
     if (url) editor.chain().focus().setLink({ href: url }).run()
   }
 
   return (
     <div className="flex flex-wrap items-center gap-1 border-b border-slate-800 bg-slate-950/40 p-3">
-      <label className="sr-only" htmlFor="block-type">Tipo di blocco</label>
+      <label className="sr-only" htmlFor="block-type">{t('Block type')}</label>
       <select
         id="block-type"
-        aria-label="Tipo di blocco"
+        aria-label={t('Block type')}
         value={currentBlock}
         className="mr-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-2 text-sm text-slate-200 outline-none focus:border-accent-400"
         onChange={(event) => {
@@ -60,30 +61,30 @@ export default function DocumentToolbar({ editor, onFind, findOpen }) {
           else editor.chain().focus().setHeading({ level: Number(value.slice(1)) }).run()
         }}
       >
-        <option value="paragraph">Paragrafo</option>
+        <option value="paragraph">{t('Paragraph')}</option>
         {headingLevels.map((level) => <option key={level} value={`h${level}`}>H{level}</option>)}
       </select>
 
       <ToolbarDivider />
-      <ToolbarButton label="Grassetto" active={active.bold} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={17} /></ToolbarButton>
-      <ToolbarButton label="Corsivo" active={active.italic} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={17} /></ToolbarButton>
-      <ToolbarButton label="Barrato" active={active.strike} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={17} /></ToolbarButton>
-      <ToolbarButton label="Codice inline" active={active.code} onClick={() => editor.chain().focus().toggleCode().run()}><Code2 size={17} /></ToolbarButton>
-      <ToolbarButton label="Collegamento" active={active.link} onClick={setLink}><LinkIcon size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Bold')} active={active.bold} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Italic')} active={active.italic} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Strikethrough')} active={active.strike} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Inline code')} active={active.code} onClick={() => editor.chain().focus().toggleCode().run()}><Code2 size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Link')} active={active.link} onClick={setLink}><LinkIcon size={17} /></ToolbarButton>
 
       <ToolbarDivider />
-      <ToolbarButton label="Elenco puntato" active={active.bulletList} onClick={() => editor.chain().focus().toggleBulletList().run()}><List size={17} /></ToolbarButton>
-      <ToolbarButton label="Elenco numerato" active={active.orderedList} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered size={17} /></ToolbarButton>
-      <ToolbarButton label="Citazione" active={active.blockquote} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote size={17} /></ToolbarButton>
-      <ToolbarButton label="Blocco codice" active={active.codeBlock} onClick={() => editor.chain().focus().toggleCodeBlock().run()}><Code2 size={17} /></ToolbarButton>
-      <ToolbarButton label="Linea orizzontale" onClick={() => editor.chain().focus().setHorizontalRule().run()}><Minus size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Bulleted list')} active={active.bulletList} onClick={() => editor.chain().focus().toggleBulletList().run()}><List size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Numbered list')} active={active.orderedList} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Quote')} active={active.blockquote} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Code block')} active={active.codeBlock} onClick={() => editor.chain().focus().toggleCodeBlock().run()}><Code2 size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Horizontal rule')} onClick={() => editor.chain().focus().setHorizontalRule().run()}><Minus size={17} /></ToolbarButton>
 
       <ToolbarDivider />
-      <ToolbarButton label="Annulla" onClick={() => editor.chain().focus().undo().run()}><Undo2 size={17} /></ToolbarButton>
-      <ToolbarButton label="Ripeti" onClick={() => editor.chain().focus().redo().run()}><Redo2 size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Undo')} onClick={() => editor.chain().focus().undo().run()}><Undo2 size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Redo')} onClick={() => editor.chain().focus().redo().run()}><Redo2 size={17} /></ToolbarButton>
 
       <ToolbarDivider />
-      <ToolbarButton label="Trova e sostituisci (Ctrl+F)" active={findOpen} onClick={onFind}><Search size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Find and replace (Ctrl+F)')} active={findOpen} onClick={onFind}><Search size={17} /></ToolbarButton>
     </div>
   )
 }
