@@ -1,0 +1,225 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen, RefreshCw } from 'lucide-react'
+
+const electronAPI = window.electronAPI
+const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes('Files')
+
+// Campo di rinomina in linea: Invio conferma, Esc annulla, la perdita del focus conferma. Seleziona il nome senza estensione.
+function RenameInput({ entry, onCommit, onCancel }) {
+  const inputRef = useRef(null)
+  const finished = useRef(false)
+
+  useEffect(() => {
+    const input = inputRef.current
+    input.focus()
+    const dot = entry.isDirectory ? -1 : entry.name.lastIndexOf('.')
+    input.setSelectionRange(0, dot > 0 ? dot : entry.name.length)
+  }, [entry])
+
+  const finish = (commit) => {
+    if (finished.current) return
+    finished.current = true
+    if (commit) onCommit(entry, inputRef.current.value)
+    else onCancel()
+  }
+
+  return (
+    <input
+      ref={inputRef}
+      defaultValue={entry.name}
+      aria-label="Nuovo nome"
+      className="min-w-0 flex-1 rounded border border-accent-400 bg-slate-800 px-1.5 py-0.5 text-sm text-slate-50 outline-none"
+      onClick={(event) => event.stopPropagation()}
+      onBlur={() => finish(true)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') finish(true)
+        if (event.key === 'Escape') finish(false)
+      }}
+    />
+  )
+}
+
+function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onToggle, onOpenFile, drop, menu }) {
+  const expanded = expandedPaths.has(entry.path)
+  const [children, setChildren] = useState(null)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      setChildren(await electronAPI.listDirectory(entry.path))
+      setError('')
+    } catch (reason) {
+      setError(reason.message)
+    }
+  }, [entry.path])
+
+  useEffect(() => {
+    if (expanded) load()
+  }, [expanded, refreshToken, load])
+
+  const indent = { paddingLeft: 8 + depth * 14 }
+  const rowClass = 'flex w-full items-center gap-1.5 py-1 pr-2 text-left text-sm transition hover:bg-slate-800/70'
+
+  if (!entry.isDirectory) {
+    const active = entry.path === activePath
+    return (
+      <button
+        type="button"
+        style={indent}
+        title={entry.path}
+        className={`${rowClass} ${active ? 'bg-slate-800 text-slate-50' : 'text-slate-400'}`}
+        onClick={() => onOpenFile(entry.path)}
+        onContextMenu={(event) => menu.open(event, entry)}
+        onKeyDown={(event) => menu.key(event, entry)}
+      >
+        <span className="w-3.5 shrink-0" />
+        <FileText size={14} className="shrink-0 text-slate-500" />
+        {menu.renaming === entry.path ? <RenameInput entry={entry} onCommit={menu.commitRename} onCancel={menu.cancelRename} /> : <span className="truncate">{entry.name}</span>}
+      </button>
+    )
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        style={indent}
+        aria-expanded={expanded}
+        className={`${rowClass} text-slate-300 ${drop.target === entry.path ? 'bg-accent-500/20 ring-1 ring-inset ring-accent-400' : ''}`}
+        onClick={() => onToggle(entry.path)}
+        onContextMenu={(event) => menu.open(event, entry)}
+        onKeyDown={(event) => menu.key(event, entry)}
+        onDragOver={(event) => drop.over(event, entry.path)}
+        onDrop={(event) => drop.drop(event, entry.path)}
+      >
+        {expanded ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
+        {expanded ? <FolderOpen size={14} className="shrink-0 text-accent-400" /> : <Folder size={14} className="shrink-0 text-accent-400" />}
+        {menu.renaming === entry.path ? <RenameInput entry={entry} onCommit={menu.commitRename} onCancel={menu.cancelRename} /> : <span className="truncate">{entry.name}</span>}
+      </button>
+      {expanded && error && <p style={indent} className="py-1 text-xs text-rose-400">{error}</p>}
+      {expanded && children?.length === 0 && <p style={{ paddingLeft: 8 + (depth + 1) * 14 + 20 }} className="py-1 text-xs text-slate-600">Vuota</p>}
+      {expanded && children?.map((child) => (
+        <TreeNode key={child.path} entry={child} depth={depth + 1} activePath={activePath} refreshToken={refreshToken} expandedPaths={expandedPaths} onToggle={onToggle} onOpenFile={onOpenFile} drop={drop} menu={menu} />
+      ))}
+    </div>
+  )
+}
+
+export default function FileExplorer({ project, activePath, refreshToken, expandedPaths, onToggle, onChooseProject, onOpenFile, onStatus, onRenamed, onDeleted }) {
+  const [entries, setEntries] = useState([])
+  const [error, setError] = useState('')
+  const [localRefresh, setLocalRefresh] = useState(0)
+  const token = refreshToken + localRefresh
+  const [dropTarget, setDropTarget] = useState(null)
+
+  const [renaming, setRenaming] = useState(null)
+
+  const deleteEntry = async (entry) => {
+    try {
+      if (await electronAPI.deletePath(entry.path)) {
+        onDeleted(entry.path)
+        setLocalRefresh((value) => value + 1)
+      }
+    } catch (reason) {
+      onStatus(`Eliminazione non riuscita: ${reason.message}`)
+    }
+  }
+
+  // Menu contestuale nativo (Apri, Rinomina, Elimina, Mostra nel file manager) e scorciatoie F2 / Canc.
+  const menu = {
+    renaming,
+    async open(event, entry) {
+      event.preventDefault()
+      event.stopPropagation()
+      const action = await electronAPI.showExplorerMenu({ path: entry.path, isDirectory: entry.isDirectory })
+      if (action === 'open') onOpenFile(entry.path)
+      if (action === 'rename') setRenaming(entry.path)
+      if (action === 'delete') deleteEntry(entry)
+      if (action === 'reveal') electronAPI.revealPath(entry.path)
+    },
+    key(event, entry) {
+      if (renaming) return
+      if (event.key === 'F2') { event.preventDefault(); setRenaming(entry.path) }
+      if (event.key === 'Delete') { event.preventDefault(); deleteEntry(entry) }
+    },
+    cancelRename: () => setRenaming(null),
+    async commitRename(entry, newName) {
+      setRenaming(null)
+      const name = newName.trim()
+      if (!name || name === entry.name) return
+      try {
+        const destination = await electronAPI.renamePath({ path: entry.path, newName: name })
+        onRenamed(entry.path, destination)
+        setLocalRefresh((value) => value + 1)
+      } catch (reason) {
+        onStatus(`Rinomina non riuscita: ${reason.message}`)
+      }
+    },
+  }
+
+  // Trascinando file dal sistema si copiano nella cartella sotto il puntatore, o nella radice del progetto.
+  const drop = {
+    target: dropTarget,
+    over(event, directory) {
+      if (!hasFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      event.dataTransfer.dropEffect = 'copy'
+      setDropTarget(directory)
+    },
+    async drop(event, directory) {
+      if (!hasFiles(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      setDropTarget(null)
+      const paths = electronAPI.getDroppedPaths(Array.from(event.dataTransfer.files))
+      try {
+        const result = await electronAPI.importFiles({ paths, targetDirectory: directory })
+        if (directory !== project && !expandedPaths.has(directory)) onToggle(directory)
+        setLocalRefresh((value) => value + 1)
+        const skipped = result.skipped.length ? `, ${result.skipped.length} ignorati (formato non supportato)` : ''
+        onStatus(`${result.copied.length} copiati${skipped}`)
+      } catch (reason) {
+        onStatus(`Copia non riuscita: ${reason.message}`)
+      }
+    },
+  }
+
+  useEffect(() => {
+    if (!project) { setEntries([]); return }
+    electronAPI.listDirectory(project).then((list) => { setEntries(list); setError('') }).catch((reason) => setError(reason.message))
+  }, [project, token])
+
+  if (!project) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+        <FolderOpen size={32} className="text-slate-600" />
+        <p className="text-sm text-slate-400">Nessun progetto aperto. La cartella del progetto è la directory di lavoro.</p>
+        <button type="button" className="rounded-md bg-accent-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-accent-500" onClick={onChooseProject}>Apri cartella</button>
+      </div>
+    )
+  }
+
+  const name = project.split(/[\\/]/).filter(Boolean).at(-1) || project
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex items-center gap-1 border-b border-slate-800 px-3 py-2">
+        <button type="button" title={`${project}\nClicca per cambiare progetto`} className="min-w-0 flex-1 truncate text-left text-xs font-semibold uppercase tracking-wider text-slate-300 hover:text-slate-50" onClick={onChooseProject}>{name}</button>
+        <button type="button" aria-label="Aggiorna" title="Aggiorna" className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => setLocalRefresh((value) => value + 1)}><RefreshCw size={14} /></button>
+      </div>
+      <div
+        className={`min-h-0 flex-1 overflow-y-auto py-1 ${dropTarget === project ? 'bg-accent-500/10 ring-1 ring-inset ring-accent-400' : ''}`}
+        onDragOver={(event) => drop.over(event, project)}
+        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDropTarget(null) }}
+        onDrop={(event) => drop.drop(event, project)}
+      >
+        {error && <p className="px-3 py-2 text-xs text-rose-400">{error}</p>}
+        {!error && entries.length === 0 && <p className="px-3 py-2 text-xs text-slate-600">Nessun documento (.md, .docx, .pdf) in questa cartella. Trascina qui dei file per copiarli.</p>}
+        {entries.map((entry) => (
+          <TreeNode key={entry.path} entry={entry} depth={0} activePath={activePath} refreshToken={token} expandedPaths={expandedPaths} onToggle={onToggle} onOpenFile={onOpenFile} drop={drop} menu={menu} />
+        ))}
+      </div>
+    </div>
+  )
+}

@@ -1,52 +1,49 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 
 const electronAPI = window.electronAPI
 
-export default function useDocumentFileCommands(editor, onStatusChange) {
-  const [filePath, setFilePath] = useState(null)
-
+// Gestisce i comandi di menu relativi ai documenti, applicandoli alla scheda attiva.
+export default function useDocumentFileCommands({ activeTab, getEditor, workspace, onStatusChange }) {
   useEffect(() => {
-    if (!electronAPI || !editor) return undefined
+    if (!electronAPI) return undefined
 
     return electronAPI.onDocumentCommand(async (command) => {
       try {
+        if (command === 'new') return workspace.newTab()
+        if (command === 'close-tab') return activeTab && workspace.closeTab(activeTab.id)
         if (command === 'open') {
           const document = await electronAPI.openDocument()
-          if (!document) return
-          if (document.contentType === 'markdown') {
-            editor.commands.setContent(document.content, { contentType: 'markdown' })
-          } else {
-            editor.commands.setContent(document.content)
-          }
-          setFilePath(document.format === 'markdown' ? document.filePath : null)
-          onStatusChange('Aperto')
+          if (document) workspace.openDocument(document)
+          return undefined
         }
+
+        const editor = activeTab && getEditor(activeTab.id)
+        if (!editor) return undefined
 
         if (command === 'save' || command === 'save-as') {
           const savedPath = await electronAPI.saveMarkdown({
-            filePath,
+            filePath: activeTab.filePath,
             markdown: editor.getMarkdown(),
             saveAs: command === 'save-as',
           })
           if (savedPath) {
-            setFilePath(savedPath)
+            workspace.markSaved(activeTab.id, savedPath)
             onStatusChange('Salvato')
           }
         }
 
         if (command === 'export-docx') {
-          const exportedPath = await electronAPI.exportDocx(editor.getHTML())
-          if (exportedPath) onStatusChange('DOCX esportato')
+          if (await electronAPI.exportDocx(editor.getHTML())) onStatusChange('DOCX esportato')
         }
 
         if (command === 'export-pdf') {
-          const exportedPath = await electronAPI.exportPdf(editor.getHTML())
-          if (exportedPath) onStatusChange('PDF esportato')
+          if (await electronAPI.exportPdf(editor.getHTML())) onStatusChange('PDF esportato')
         }
       } catch (error) {
         console.error(error)
         onStatusChange("Errore durante l'operazione")
       }
+      return undefined
     })
-  }, [editor, filePath, onStatusChange])
+  }, [activeTab, getEditor, workspace, onStatusChange])
 }
