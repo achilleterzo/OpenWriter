@@ -2,7 +2,7 @@
 
 OpenWriter is a desktop Markdown editor with an integrated AI writing assistant.
 
-Every source file has its own reference page under [`docs/reference/`](reference/). The Project Structure section below lists all the documentation pages in their real directory hierarchy, each linked to its physical page; every entry also links the physical source file it documents.
+Documented source files have reference pages under [`docs/reference/`](reference/). The Project Structure section lists the documentation pages in their real directory hierarchy and links each page to the physical source file it documents.
 
 ## Technology Stack
 
@@ -27,7 +27,7 @@ Side panels are resizable and their dimensions are remembered. Side tabs switch 
 
 The context menu can open, rename, move to the trash, and reveal files and folders in the file manager. Drag and drop copies documents into the project without overwriting existing files.
 
-The session is restored per project, including open tabs, the active document, unsaved drafts, the selected side tab, and expanded folders. The window position and size are also remembered.
+The session is restored per project, including open tabs, unsaved drafts, the active document, expanded folders, and panel state.
 
 ## Project Settings and History
 
@@ -37,6 +37,7 @@ When a folder is opened, an `.ow` directory is created or reused at the project 
 .ow/
   project.json
   context.md
+  memory.json
   chat/
     attachments/
   notes/
@@ -46,7 +47,7 @@ When a folder is opened, an `.ow` directory is created or reused at the project 
       <id>.md
 ```
 
-The directory contains settings, assistant context, conversations, attachments, notes, and document versions. Its contents are plain text and can be committed to Git or ignored.
+The directory contains settings, assistant context, project memory, conversations, attachments, notes, and document versions. Its contents are plain text or JSON and can be committed to Git or ignored.
 
 A version is saved when the text changes. Manually labeled versions can also be created. Up to 100 versions are retained per document, with older automatic versions removed first.
 
@@ -110,11 +111,12 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
 
 - [docs/reference/electron/](reference/electron/)
   - [main.cjs.md](reference/electron/main.cjs.md) ([main.cjs](../electron/main.cjs)) — Window, menus, IPC, documents, projects, sessions
-  - [preload.cjs.md](reference/electron/preload.cjs.md) ([preload.cjs](../electron/preload.cjs)) — Secure bridge exposed as window.electronAPI
+  - [preload.cjs.md](reference/electron/preload.cjs.md) ([preload.cjs](../electron/preload.cjs)) — Secure bridge exposed as `window.electronAPI`
   - [ai-providers.cjs.md](reference/electron/ai-providers.cjs.md) ([ai-providers.cjs](../electron/ai-providers.cjs)) — AI provider connection layer
   - [project-file.cjs.md](reference/electron/project-file.cjs.md) ([project-file.cjs](../electron/project-file.cjs)) — `.ow` directory and document history
   - [chat-store.cjs.md](reference/electron/chat-store.cjs.md) ([chat-store.cjs](../electron/chat-store.cjs)) — Conversations and attachments
   - [notes-store.cjs.md](reference/electron/notes-store.cjs.md) ([notes-store.cjs](../electron/notes-store.cjs)) — Anchored notes and suggestions
+  - [memory-store.cjs.md](reference/electron/memory-store.cjs.md) ([memory-store.cjs](../electron/memory-store.cjs)) — Project memory entries and file references
   - [project-tools.cjs.md](reference/electron/project-tools.cjs.md) ([project-tools.cjs](../electron/project-tools.cjs)) — File tools for the assistant
   - [images.cjs.md](reference/electron/images.cjs.md) ([images.cjs](../electron/images.cjs)) — Image downloads, screenshots, normalization
   - [menu.cjs.md](reference/electron/menu.cjs.md) ([menu.cjs](../electron/menu.cjs)) — Native application menu
@@ -126,7 +128,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [appearance.js.md](reference/src/appearance.js.md) ([appearance.js](../src/appearance.js)) — Theme, colors, editor preferences
   - [styles.css.md](reference/src/styles.css.md) ([styles.css](../src/styles.css)) — Global stylesheet
   - [hooks.md](reference/src/hooks.md) ([useDocumentFileCommands.js](../src/hooks/useDocumentFileCommands.js)) — Document and file commands hook
-  - [i18n/](reference/src/i18n/i18n.md)
+  - [i18n/](reference/src/i18n/)
     - [i18n.md](reference/src/i18n/i18n.md) ([index.js](../src/i18n/index.js)) — Translation runtime index
     - [locales/](reference/src/i18n/locales/)
       - [de.json.md](reference/src/i18n/locales/de.json.md) ([de.json](../src/i18n/locales/de.json)) — German strings
@@ -148,50 +150,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [components/](reference/src/components/)
     - [components.md](reference/src/components/components.md) — Index of all components
     - [pages/](reference/src/components/pages/)
-      - [ActivityBar.jsx.md](reference/src/components/pages/ActivityBar.jsx.md) ([ActivityBar.jsx](../src/components/ActivityBar.jsx)) — Side rail switching explorer, outline, notes, history, assistant
-      - [AiChatPanel.jsx.md](reference/src/components/pages/AiChatPanel.jsx.md) ([AiChatPanel.jsx](../src/components/AiChatPanel.jsx)) — Assistant chat: threads, streaming, tool loop
-      - [AiProviderSettings.jsx.md](reference/src/components/pages/AiProviderSettings.jsx.md) ([AiProviderSettings.jsx](../src/components/AiProviderSettings.jsx)) — Provider selection, models, keys, login
-      - [AppearanceSettings.jsx.md](reference/src/components/pages/AppearanceSettings.jsx.md) ([AppearanceSettings.jsx](../src/components/AppearanceSettings.jsx)) — Theme, accent colors, typography
-      - [BrowserPane.jsx.md](reference/src/components/pages/BrowserPane.jsx.md) ([BrowserPane.jsx](../src/components/BrowserPane.jsx)) — Sandboxed webview tab
-      - [ContextMenu.jsx.md](reference/src/components/pages/ContextMenu.jsx.md) ([ContextMenu.jsx](../src/components/ContextMenu.jsx)) — Custom context menus
-      - [DocumentPane.jsx.md](reference/src/components/pages/DocumentPane.jsx.md) ([DocumentPane.jsx](../src/components/DocumentPane.jsx)) — Tiptap editor surface per document
-      - [DocumentToolbar.jsx.md](reference/src/components/pages/DocumentToolbar.jsx.md) ([DocumentToolbar.jsx](../src/components/DocumentToolbar.jsx)) — Formatting toolbar
-      - [FileExplorer.jsx.md](reference/src/components/pages/FileExplorer.jsx.md) ([FileExplorer.jsx](../src/components/FileExplorer.jsx)) — Project tree, rename, delete, import
-      - [FindBar.jsx.md](reference/src/components/pages/FindBar.jsx.md) ([FindBar.jsx](../src/components/FindBar.jsx)) — Find and replace with regex and counters
-      - [GeneralSettings.jsx.md](reference/src/components/pages/GeneralSettings.jsx.md) ([GeneralSettings.jsx](../src/components/GeneralSettings.jsx)) — Language, spell checking, AI tool toggles
-      - [HistoryPanel.jsx.md](reference/src/components/pages/HistoryPanel.jsx.md) ([HistoryPanel.jsx](../src/components/HistoryPanel.jsx)) — Version list, diff, restore, delete
-      - [MarkdownMessage.jsx.md](reference/src/components/pages/MarkdownMessage.jsx.md) ([MarkdownMessage.jsx](../src/components/MarkdownMessage.jsx)) — Markdown renderer for assistant messages
-      - [MemoryPanel.jsx.md](reference/src/components/pages/MemoryPanel.jsx.md) ([MemoryPanel.jsx](../src/components/MemoryPanel.jsx)) — Assistant memory entries management
-      - [NotesPanel.jsx.md](reference/src/components/pages/NotesPanel.jsx.md) ([NotesPanel.jsx](../src/components/NotesPanel.jsx)) — Anchored notes with accept/reject
-      - [OutlinePanel.jsx.md](reference/src/components/pages/OutlinePanel.jsx.md) ([OutlinePanel.jsx](../src/components/OutlinePanel.jsx)) — Heading outline navigation
-      - [PanelResizer.jsx.md](reference/src/components/pages/PanelResizer.jsx.md) ([PanelResizer.jsx](../src/components/PanelResizer.jsx)) — Draggable panel dividers
-      - [ProjectSettings.jsx.md](reference/src/components/pages/ProjectSettings.jsx.md) ([ProjectSettings.jsx](../src/components/ProjectSettings.jsx)) — Project name, AI languages, context
-      - [ProjectsPanel.jsx.md](reference/src/components/pages/ProjectsPanel.jsx.md) ([ProjectsPanel.jsx](../src/components/ProjectsPanel.jsx)) — Projects home: open, create, remove
-      - [SettingsScreen.jsx.md](reference/src/components/pages/SettingsScreen.jsx.md) ([SettingsScreen.jsx](../src/components/SettingsScreen.jsx)) — Settings container with all sections
-      - [SpellcheckLanguages.jsx.md](reference/src/components/pages/SpellcheckLanguages.jsx.md) ([SpellcheckLanguages.jsx](../src/components/SpellcheckLanguages.jsx)) — Spell-check language selection
-      - [TabBar.jsx.md](reference/src/components/pages/TabBar.jsx.md) ([TabBar.jsx](../src/components/TabBar.jsx)) — Document and browser tabs
-      - [ToolbarButton.jsx.md](reference/src/components/pages/ToolbarButton.jsx.md) ([ToolbarButton.jsx](../src/components/ToolbarButton.jsx)) — Shared toolbar button
-      - [VersionDiffDialog.jsx.md](reference/src/components/pages/VersionDiffDialog.jsx.md) ([VersionDiffDialog.jsx](../src/components/VersionDiffDialog.jsx)) — Line-level version diff dialog
-
-## Source tree with reference links
-
-The source files themselves, linked to their documentation pages:
-
-### electron
-
-### src
-
-### src/hooks
-
-### src/lib
-
-### src/i18n
-
-### src/components
-
-One reference page per component under `docs/reference/src/components/pages/`:
-
-### src/assets
+      - Each component page under `docs/reference/src/components/pages/` documents the corresponding React component.
 
 ## Privacy and Data
 
@@ -215,10 +174,6 @@ npm run dist:linux
 
 ## Archive Verification
 
-Every reference page was checked against its source file. Findings and fixes applied during the verification:
+Reference pages were checked against their source files. The archive includes pages for the Electron stores, renderer modules, libraries, and React components listed above. `memory-store.cjs` is documented in [memory-store.cjs.md](reference/electron/memory-store.cjs.md).
 
-- Pages rewritten from the actual source (behavior, limits, operations): `electron/images.cjs` (SSRF checks, redirects, normalization limits), `electron/menu.cjs` (exact command list), `electron/projects.cjs` (projects.json layout, missing flag), `electron/i18n.cjs` (shared English-key catalogs), `electron/preload.cjs` (full API surface including memory and AI login), `electron/project-file.cjs`, `electron/project-tools.cjs`, `electron/chat-store.cjs`, `electron/notes-store.cjs` (exact limits and operation sets).
-- Renderer pages rewritten against the code: `src/App.jsx` (tool bridge, notes, layout, screenshots), `src/main.jsx` (StrictMode, imports, `initLanguage`), `src/hooks` (full command list), `src/appearance.js` (exact option sets), `src/styles.css` (variable and decoration classes), `src/i18n` (t/tp, pseudo locale, reload flow), `lib/aiOptions.js` (provider-specific reasoning levels), `lib/aiTools.js` (complete tool catalog and protocol helpers), `lib/anchoring.js`, `lib/annotationExtension.js`, `lib/imageExtension.js`, `lib/imagePaths.js`, `lib/layout.js` (exact panel ranges), `lib/lineDiff.js`, `lib/searchExtension.js`.
-- Component pages spot-verified and corrected where content had drifted: `OutlinePanel`, `ToolbarButton`, `DocumentToolbar` (H1–H7 included), `TabBar`.
-- `components.md` index links fixed to `pages/` (the earlier relative links pointed to the index folder itself).
-
+The source tree also contains `src/app.js` and provider-logo assets, which currently have no dedicated reference pages and are therefore not listed as documented modules.

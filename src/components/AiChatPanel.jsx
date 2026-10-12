@@ -772,7 +772,9 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
             // Se il modello parla degli strumenti (ne cita il nome) invece di usarli, si richiama una volta: confronto sui nomi tecnici, non sul testo in lingua.
             if (anyTool && reply.reply.trim() && !parseToolCall(reply.reply)) {
               const mentioned = TOOL_DEFINITIONS.some((tool) => toolsOn[tool.group] && reply.reply.includes(tool.name))
-              if (mentioned) {
+              // Dopo il risultato di uno strumento una risposta molto breve senza chiamata è quasi sempre un abbandono prematuro: si richiama una volta.
+              const prematureStop = conversation.messages.at(-1)?.role === 'tool' && reply.reply.trim().length < 600
+              if (mentioned || prematureStop) {
                 reply = await streamReply([...modelMessages, { role: 'assistant', content: reply.reply }, { role: 'user', content: 'The OpenWriter tools ARE available and working right now: never say otherwise. If the task is not finished, write the <tool_call> block for the next step now. If it is finished, reply with a short summary of what was done, without mentioning tool names.' }], streamOptions)
               }
             }

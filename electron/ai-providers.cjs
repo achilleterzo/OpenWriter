@@ -453,7 +453,8 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
           }
           if (event.type === 'item.completed' && item) {
             if (item.type === 'reasoning' && item.text) onEvent({ type: 'thinking', delta: `${item.text}\n` })
-            else if (item.type === 'agent_message' && typeof item.text === 'string' && item.text.trim()) {
+            else if (item.type === 'agent_message' && typeof item.text === 'string' && item.text.trim() && !state.text.includes('</tool_call>')) {
+              // Una volta ricevuta una chiamata allo strumento, i messaggi successivi dello stesso turno si scartano (una chiamata per messaggio).
               // Codex può scrivere più messaggi nello stesso turno (un commento e poi la chiamata allo strumento, a volte un messaggio finale vuoto): si tengono tutti, non solo l'ultimo.
               const delta = state.text ? `\n\n${item.text}` : item.text
               state.text += delta
