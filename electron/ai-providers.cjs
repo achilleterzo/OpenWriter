@@ -298,7 +298,7 @@ function normalizeSettings(settings = {}) {
     // Vuota = la lingua dell'interfaccia (risolta nella chat); altrimenti il nome scelto, es. "Italiano".
     language: String(settings.language || ''),
     // Quante chiamate agli strumenti può concatenare l'assistente in una singola richiesta.
-    maxToolSteps: Math.min(50, Math.max(1, Math.round(Number(settings.maxToolSteps)) || 15)),
+    maxToolSteps: Math.min(50, Math.max(1, Math.round(Number(settings.maxToolSteps)) || 30)),
     // Strumenti messi a disposizione dell'assistente; la navigazione web è opt-in perché invia query all'esterno.
     tools: {
       files: settings.tools?.files !== false,
@@ -393,7 +393,8 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     const model = /^[A-Za-z0-9._:/-]+$/.test(rawModel) ? rawModel : ''
     const reasoning = providerConfig(provider).reasoning
     const effort = reasoning === 'default' ? '' : reasoning
-    const suffix = 'Do not modify files or alter the filesystem yourself: use only the tools described in the conversation, when any.'
+    // Le CLI sono agenti di programmazione: va detto che qui valgono solo gli strumenti di OpenWriter, chiamati scrivendo il blocco nella risposta.
+    const suffix = 'You are the assistant described in the conversation above, not a coding agent: do not run shell commands and do not modify files. The OpenWriter tools listed in the conversation (if any) ARE available to you: to use one, write its <tool_call>…</tool_call> block as plain text in your reply and stop there; the app runs it and sends the result in the next message. Never say that the tools are unavailable.'
     const cwd = getWorkingDirectory()
     const state = { text: '', result: '' }
 
@@ -534,7 +535,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     // Le CLI ricevono un unico prompt: ogni immagine lascia un segnaposto [Immagine N] e viene allegata nello stesso ordine.
     const attached = []
     const prompt = list.map((message) => {
-      const placeholders = (message.images || []).map((image) => { attached.push(image); return `[Immagine ${attached.length}]` })
+      const placeholders = (message.images || []).map((image) => { attached.push(image); return `[Image ${attached.length}]` })
       return `${message.role.toUpperCase()}:\n${message.content}${placeholders.length ? `\n${placeholders.join(' ')}` : ''}`
     }).join('\n\n')
     return streamCliPrompt(provider, prompt, onEvent, signal, attached)
