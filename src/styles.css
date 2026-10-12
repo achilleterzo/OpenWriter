@@ -2,10 +2,52 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Palette: lo scuro è lo slate di Tailwind; il chiaro lo inverte. */
+:root {
+  --slate-50: 248 250 252;
+  --slate-100: 241 245 249;
+  --slate-200: 226 232 240;
+  --slate-300: 203 213 225;
+  --slate-400: 148 163 184;
+  --slate-500: 100 116 139;
+  --slate-600: 71 85 105;
+  --slate-700: 51 65 85;
+  --slate-800: 30 41 59;
+  --slate-900: 15 23 42;
+  --slate-950: 2 6 23;
+}
+:root[data-theme='light'] {
+  --slate-50: 2 6 23;
+  --slate-100: 15 23 42;
+  --slate-200: 30 41 59;
+  --slate-300: 51 65 85;
+  --slate-400: 71 85 105;
+  --slate-500: 100 116 139;
+  --slate-600: 148 163 184;
+  --slate-700: 203 213 225;
+  --slate-800: 226 232 240;
+  --slate-900: 241 245 249;
+  --slate-950: 248 250 252;
+}
+
+:root {
+  --accent-300: 196 181 253; --accent-400: 167 139 250; --accent-500: 139 92 246; --accent-600: 124 58 237;
+  --editor-font: ui-sans-serif, system-ui, sans-serif;
+  --editor-size: 1.0625rem;
+  --editor-line-height: 1.75;
+  --editor-width: 56rem;
+}
+:root[data-theme='light'] { color-scheme: light; }
+:root[data-accent='violet'] { --accent-300: 196 181 253; --accent-400: 167 139 250; --accent-500: 139 92 246; --accent-600: 124 58 237; }
+:root[data-accent='cyan'] { --accent-300: 103 232 249; --accent-400: 34 211 238; --accent-500: 6 182 212; --accent-600: 8 145 178; }
+:root[data-accent='emerald'] { --accent-300: 110 231 183; --accent-400: 52 211 153; --accent-500: 16 185 129; --accent-600: 5 150 105; }
+:root[data-accent='rose'] { --accent-300: 253 164 175; --accent-400: 251 113 133; --accent-500: 244 63 94; --accent-600: 225 29 72; }
+:root[data-accent='amber'] { --accent-300: 252 211 77; --accent-400: 251 191 36; --accent-500: 245 158 11; --accent-600: 217 119 6; }
+
 :root {
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
   color-scheme: dark;
-  background: #020617;
+  background: rgb(var(--slate-950));
 }
 
 * {
@@ -19,14 +61,17 @@ body {
 
 .document-editor {
   min-height: 0;
+  max-width: var(--editor-width);
 }
 
 .document-editor .tiptap {
   min-height: 100%;
   padding: 2rem;
   outline: none;
-  color: #cbd5e1;
-  line-height: 1.75;
+  color: rgb(var(--slate-300));
+  font-family: var(--editor-font);
+  font-size: var(--editor-size);
+  line-height: var(--editor-line-height);
 }
 
 .document-editor .tiptap h1,
@@ -37,7 +82,7 @@ body {
 .document-editor .tiptap h6,
 .document-editor .tiptap h7 {
   margin: 0 0 1rem;
-  color: #f8fafc;
+  color: rgb(var(--slate-50));
   font-weight: 600;
   line-height: 1.25;
 }
@@ -66,22 +111,22 @@ body {
 
 .document-editor .tiptap blockquote {
   margin: 0 0 1rem;
-  border-left: 3px solid #22d3ee;
+  border-left: 3px solid rgb(var(--accent-400));
   padding-left: 1rem;
-  color: #94a3b8;
+  color: rgb(var(--slate-400));
 }
 
 .document-editor .tiptap pre {
   margin: 0 0 1rem;
   overflow-x: auto;
   border-radius: 0.5rem;
-  background: #020617;
+  background: rgb(var(--slate-950));
   padding: 1rem;
 }
 
 .document-editor .tiptap code {
   border-radius: 0.25rem;
-  background: #1e293b;
+  background: rgb(var(--slate-800));
   padding: 0.125rem 0.25rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.9em;
@@ -93,12 +138,12 @@ body {
 }
 
 .document-editor .tiptap a {
-  color: #67e8f9;
+  color: rgb(var(--accent-400));
   text-decoration: underline;
 }
 
 .document-editor .tiptap li::marker {
-  color: #22d3ee;
+  color: rgb(var(--accent-400));
 }
 
 @media (max-width: 640px) {
