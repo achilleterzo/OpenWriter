@@ -26,8 +26,8 @@ export const TOOL_DEFINITIONS = [
   { group: 'create', name: 'delete_file', required: ['path'], description: 'Moves a file or folder of the project to the trash. The user is always asked to confirm in a dialog, and can recover it from the trash. Use it only for mistakes you made (for example a duplicate you created) or when the user asks.', parameters: { path: 'path relative to the project root' } },
   { group: 'edit', name: 'open_document', required: ['path'], description: 'Opens an existing project document (.md, .txt, .docx, .pdf) in a tab, so that it can be edited with replace_text, insert_text or replace_document. A document that is not open cannot be edited: open it first.', parameters: { path: 'path of the document, relative to the project root' } },
   { group: 'edit', name: 'replace_document', required: ['content'], description: 'Replaces the WHOLE content of the open document with the given Markdown (a full rewrite). The user can undo it with Ctrl+Z and a version of the previous text is archived; the document is saved automatically when you finish your work. For small changes prefer replace_text.', parameters: { content: 'the complete new text of the document, in Markdown', allow_shrink: { type: 'boolean', description: 'optional: true only if the new text is meant to be much shorter than the current one' }, path: 'optional: document (default: the active one)' } },
-  { group: 'edit', name: 'replace_text', required: ['find', 'replace'], description: 'Replaces a passage of the open document. The user can undo the change with Ctrl+Z; the document is saved automatically when you finish your work (a version of the previous text is archived).', parameters: { find: 'EXACT text to replace (must appear only once)', replace: 'new text, empty to delete; may contain Markdown', path: 'optional: document (default: the active one)' } },
-  { group: 'edit', name: 'insert_text', required: ['text', 'position'], description: 'Inserts text into the open document, in an undoable way.', parameters: { text: 'text to insert; may contain Markdown', position: 'after | before | start | end', anchor: 'only for after/before: EXACT text next to which to insert (must appear only once)', path: 'optional: document (default: the active one)' } },
+  { group: 'edit', name: 'replace_text', required: ['find', 'replace'], description: 'Replaces a passage of the open document. The user can undo the change with Ctrl+Z; the document is saved automatically when you finish your work (a version of the previous text is archived).', parameters: { find: 'EXACT text to replace, as shown by read_file (plain text or Markdown source, e.g. a whole link [text](url)); it must appear only once', replace: 'new text, empty to delete; may contain Markdown', path: 'optional: document (default: the active one)' } },
+  { group: 'edit', name: 'insert_text', required: ['text', 'position'], description: 'Inserts text into the open document, in an undoable way.', parameters: { text: 'text to insert; may contain Markdown', position: 'after | before | start | end', anchor: 'only for after/before: EXACT text next to which to insert, as shown by read_file (plain text or Markdown source); it must appear only once', path: 'optional: document (default: the active one)' } },
   { group: 'web', name: 'browser_tabs', required: [], description: 'Lists the browser tabs of the app (including those opened by the user) with their current number, address and title.', parameters: {} },
   { group: 'web', name: 'browser_read', required: [], description: 'Reads the CURRENT content of a browser tab (even if the user opened or moved it): text and links. It does not change page.', parameters: { tab: 'optional: tab number or id (default: the foreground one or the last used)' } },
   { group: 'web', name: 'web_open', required: ['url'], description: 'Opens an http(s) address in a browser tab and returns its text and links.', parameters: { url: 'full address', tab: 'optional: number or id of the tab to navigate (default: the foreground one)', new_tab: 'optional: true to open it in a new tab' } },
@@ -355,6 +355,22 @@ export function createToolRunner(context) {
     return { index, hit: hits[0], range }
   }
 
+  // read_file returns the document as Markdown (links, **bold**, list markers…), but the editor text is plain: when a quote is not
+  // found in the plain text, it is looked for in the Markdown source and the edit is applied to the whole Markdown (one undoable step).
+  function locateInMarkdown(editor, quote, label) {
+    const markdown = editor.getMarkdown()
+    const hits = findAll(markdown, quote)
+    if (!hits.length) throw new Error(`${label} not found in the document. Copy the text exactly as read_file shows it.`)
+    if (hits.length > 1) throw new Error(`${label} appears ${hits.length} times: use a longer, unique passage.`)
+    return { markdown, hit: hits[0] }
+  }
+
+  function rewriteMarkdown(editor, markdown) {
+    editor.chain().insertContentAt({ from: 0, to: editor.state.doc.content.size }, markdown, { contentType: 'markdown' }).run()
+  }
+
+  const isNotFound = (error) => /not found in the document/.test(error.message)
+
   function insertAt(editor, from, to, content) {
     const value = text(content)
     if (value.includes('\n')) {
@@ -627,7 +643,16 @@ export function createToolRunner(context) {
     async replace_text(args) {
       const { tab, editor } = context.getDocument(args.path)
       if (!text(args.find).trim()) throw new Error('Missing parameter "find"')
-      const { range } = locateUnique(editor, text(args.find), 'The text to replace')
+      let located = null
+      try { located = locateUnique(editor, text(args.find), 'The text to replace') } catch (error) { if (!isNotFound(error)) throw error }
+      if (!located) {
+        const { markdown, hit } = locateInMarkdown(editor, text(args.find), 'The text to replace')
+        await context.beforeEdit(tab, editor)
+        context.onDocumentEdited?.(tab)
+        rewriteMarkdown(editor, markdown.slice(0, hit.index) + text(args.replace) + markdown.slice(hit.index + hit.length))
+        return `Replaced the passage in “${tab.title}” (matched in the Markdown source). The user can undo it with Ctrl+Z; the document is saved automatically when you finish.`
+      }
+      const { range } = located
       await context.beforeEdit(tab, editor)
       context.onDocumentEdited?.(tab)
       insertAt(editor, range.from, range.to, args.replace)
@@ -643,8 +668,17 @@ export function createToolRunner(context) {
       if (position === 'start') at = 1
       else if (position === 'end') at = editor.state.doc.content.size - 1
       else {
-        const { range } = locateUnique(editor, text(args.anchor), 'The anchor')
-        at = position === 'after' ? range.to : range.from
+        let located = null
+        try { located = locateUnique(editor, text(args.anchor), 'The anchor') } catch (error) { if (!isNotFound(error)) throw error }
+        if (!located) {
+          const { markdown, hit } = locateInMarkdown(editor, text(args.anchor), 'The anchor')
+          const point = position === 'after' ? hit.index + hit.length : hit.index
+          await context.beforeEdit(tab, editor)
+          context.onDocumentEdited?.(tab)
+          rewriteMarkdown(editor, markdown.slice(0, point) + text(args.text) + markdown.slice(point))
+          return `Text inserted in “${tab.title}” (anchor matched in the Markdown source). The user can undo it with Ctrl+Z; the document is saved automatically when you finish.`
+        }
+        at = position === 'after' ? located.range.to : located.range.from
       }
       await context.beforeEdit(tab, editor)
       context.onDocumentEdited?.(tab)

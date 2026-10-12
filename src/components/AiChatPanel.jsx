@@ -590,8 +590,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   }
 
   // Una singola richiesta in streaming: aggiorna `live` man mano e restituisce { reply, thinking }.
-  async function streamReply(messages, options) {
-    liveRef.current = { text: '', thinking: '', status: t('Waiting for the model…') }
+  async function streamReply(messages, options, status = t('Waiting for the model…')) {
+    liveRef.current = { text: '', thinking: '', status }
     scheduleLive()
     const request = ai.chatStream(messages, (event) => {
       const state = liveRef.current
@@ -775,7 +775,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
               // Dopo il risultato di uno strumento una risposta molto breve senza chiamata è quasi sempre un abbandono prematuro: si richiama una volta.
               const prematureStop = conversation.messages.at(-1)?.role === 'tool' && reply.reply.trim().length < 600
               if (mentioned || prematureStop) {
-                reply = await streamReply([...modelMessages, { role: 'assistant', content: reply.reply }, { role: 'user', content: 'The OpenWriter tools ARE available and working right now: never say otherwise. If the task is not finished, write the <tool_call> block for the next step now. If it is finished, reply with a short summary of what was done, without mentioning tool names.' }], streamOptions)
+                reply = await streamReply([...modelMessages, { role: 'assistant', content: reply.reply }, { role: 'user', content: 'The OpenWriter tools ARE available and working right now: never say otherwise. If the task is not finished, write the <tool_call> block for the next step now. If it is finished, reply with a short summary of what was done, without mentioning tool names.' }], streamOptions, t('The reply looked incomplete: asking again…'))
               }
             }
             return reply

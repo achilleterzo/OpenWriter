@@ -467,6 +467,7 @@
   "The project folder cannot be renamed from here": "Le dossier du projet ne peut pas être renommé d'ici",
   "The project folder is the working directory: the file explorer shows its documents and the AI assistant works from there. Each project remembers its own open tabs and unsaved drafts.": "Le dossier du projet est le répertoire de travail : l'explorateur de fichiers affiche ses documents et l'assistant IA travaille à partir de là. Chaque projet se souvient de ses propres onglets ouverts et brouillons non enregistrés.",
   "The project folder no longer exists": "Le dossier du projet n'existe plus",
+  "The reply looked incomplete: asking again…": "La réponse semblait incomplète : je redemande…",
   "The selected model does not support images: the image and screenshot tools stay off.": "Le modèle sélectionné ne prend pas en charge les images : les outils d'images et de captures restent désactivés.",
   "The spell checker is managed by the operating system.": "Le correcteur orthographique est géré par le système d'exploitation.",
   "The text is identical to the current one: there is nothing to correct": "Le texte est identique à l'actuel : il n'y a rien à corriger",
