@@ -137,3 +137,7 @@ src/
 ## Data and privacy
 
 OpenWriter keeps its settings, sessions, window state and the encrypted Ollama Cloud key in the Electron user data folder. Document text is only sent to the AI provider you enable, when you send a message. With Ollama (local) nothing leaves your machine.
+
+## Releases
+
+Pushing a tag such as `v0.2.0` runs the **Build Desktop App** workflow (`.github/workflows/build-desktop.yml`): it syncs the version in `package.json` on `main`, builds the Windows installer, the Linux AppImage and the macOS dmg, and attaches them to a GitHub Release. The same workflow can be started manually from the Actions tab, choosing a patch, minor or major bump. To build locally: `npm run dist:desktop` (Windows), `dist:mac` or `dist:linux`.
