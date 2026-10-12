@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import ActivityBar from './components/ActivityBar.jsx'
+import ActivityBar, { sideTabs } from './components/ActivityBar.jsx'
 import AiChatPanel from './components/AiChatPanel.jsx'
 import BrowserPane from './components/BrowserPane.jsx'
 import ContextMenu, { ContextMenuContext, modKey } from './components/ContextMenu.jsx'
@@ -7,6 +7,8 @@ import DocumentPane from './components/DocumentPane.jsx'
 import FileExplorer from './components/FileExplorer.jsx'
 import HistoryPanel from './components/HistoryPanel.jsx'
 import NotesPanel from './components/NotesPanel.jsx'
+import ProjectsPanel from './components/ProjectsPanel.jsx'
+import MemoryPanel from './components/MemoryPanel.jsx'
 import OutlinePanel from './components/OutlinePanel.jsx'
 import PanelResizer from './components/PanelResizer.jsx'
 import SettingsScreen from './components/SettingsScreen.jsx'
@@ -74,6 +76,7 @@ export default function App() {
   const [sideTab, setSideTab] = useState('files')
   const [expandedPaths, setExpandedPaths] = useState(() => new Set())
   const [explorerRefresh, setExplorerRefresh] = useState(0)
+  const [memoryVersion, setMemoryVersion] = useState(0)
   const [historyVersion, setHistoryVersion] = useState(0)
   const [status, setStatus] = useState('')
   const [screen, setScreen] = useState(() => {
@@ -83,6 +86,8 @@ export default function App() {
     return 'editor'
   })
   const [assistantOpen, setAssistantOpen] = useState(false)
+  // Documenti nel contesto della chat: il documento attivo (di default sì) e gli altri aperti, "pinnati" per id di scheda.
+  const [contextPins, setContextPins] = useState({ includeActive: true, pinnedIds: [] })
   const [chatRequest, setChatRequest] = useState(null)
   const [conversationId, setConversationId] = useState(null)
   const [settingsVersion, setSettingsVersion] = useState(0)
@@ -106,7 +111,7 @@ export default function App() {
 
   // Gli ultimi valori restano in un ref: serve a salvare la sessione anche dai timer e da beforeunload.
   const latest = useRef({})
-  latest.current = { ready, tabs, activeId, editors, project, sideTab, expandedPaths, assistantOpen, conversationId, contextTabId: contextTab?.id }
+  latest.current = { ready, tabs, activeId, editors, project, sideTab, expandedPaths, assistantOpen, conversationId, contextPins, contextTabId: contextTab?.id }
   const saveTimer = useRef(null)
 
   const buildSession = useCallback(() => {
@@ -117,6 +122,7 @@ export default function App() {
       expanded: [...currentExpanded],
       assistantOpen: latest.current.assistantOpen,
       conversationId: latest.current.conversationId,
+      chatContext: { includeActive: latest.current.contextPins.includeActive, pinnedIds: latest.current.contextPins.pinnedIds.filter((id) => currentTabs.some((tab) => tab.id === id)) },
       tabs: currentTabs.filter(isDocument).map((tab) => {
         const editor = currentEditors[tab.id]
         // Bozze e documenti mai salvati conservano il testo; gli altri si rileggono dal file.
@@ -153,6 +159,7 @@ export default function App() {
     setSideTab(session && 'sideTab' in session ? session.sideTab : 'files')
     setExpandedPaths(new Set(session?.expanded || []))
     setAssistantOpen(Boolean(session?.assistantOpen))
+    setContextPins({ includeActive: session?.chatContext?.includeActive !== false, pinnedIds: (session?.chatContext?.pinnedIds || []).filter((id) => restored.some((tab) => tab.id === id)) })
     // Le conversazioni ora stanno in .ow/chat: quella salvata nella sessione dalle versioni precedenti viene importata una volta.
     let activeConversation = session?.conversationId ?? null
     if (Array.isArray(session?.chat) && session.chat.length && (await electronAPI.getProject())) {
@@ -169,8 +176,11 @@ export default function App() {
   useEffect(() => {
     if (!electronAPI) return
     ;(async () => {
-      setProject(await electronAPI.getProject())
+      const initial = await electronAPI.getProject()
+      setProject(initial)
       await applySession(await electronAPI.loadSession())
+      // Senza progetto si parte dalla home dei progetti.
+      if (!initial) setSideTab('projects')
       setReady(true)
     })()
   }, [applySession])
@@ -178,7 +188,7 @@ export default function App() {
   // Qualsiasi cambio di stato persistente salva la sessione; le digitazioni passano da markDirty.
   useEffect(() => {
     if (ready) scheduleSave()
-  }, [ready, tabs, activeId, sideTab, expandedPaths, assistantOpen, conversationId, scheduleSave])
+  }, [ready, tabs, activeId, sideTab, expandedPaths, assistantOpen, conversationId, contextPins, scheduleSave])
 
   useEffect(() => {
     const flushBeforeUnload = () => {
@@ -222,16 +232,21 @@ export default function App() {
     return () => { window.removeEventListener('dragover', block); window.removeEventListener('drop', block) }
   }, [])
 
-  const chooseProject = useCallback(async () => {
-    // La sessione del progetto corrente viene salvata prima del cambio, poi si carica quella del nuovo progetto.
+  // Cambio progetto: la sessione del progetto corrente viene salvata prima, poi si carica quella del nuovo.
+  const switchProject = useCallback(async (pick) => {
     flushSession()
-    const chosen = await electronAPI.chooseProject()
-    if (chosen === latest.current.project) return
+    const chosen = await pick()
+    if (!chosen || chosen === latest.current.project) return chosen
     setReady(false)
     setProject(chosen)
     await applySession(await electronAPI.loadSession())
     setReady(true)
+    return chosen
   }, [flushSession, applySession])
+
+  const chooseProject = useCallback(() => switchProject(() => electronAPI.chooseProject()), [switchProject])
+  const openProject = useCallback((directory) => switchProject(() => electronAPI.openProject(directory)), [switchProject])
+  const createProject = useCallback((name) => switchProject(() => electronAPI.createProject(name)), [switchProject])
 
   useEffect(() => {
     if (!electronAPI) return undefined
@@ -453,6 +468,32 @@ export default function App() {
       }
     },
     onNotesChanged: () => setNotesVersion((value) => value + 1),
+    // Testo attuale (Markdown) di un documento aperto, per il contesto della chat; null se l'editor non è pronto.
+    documentMarkdown(id) {
+      const editor = latest.current.editors[id]
+      return editor ? editor.getMarkdown() : null
+    },
+    // Salva un documento già associato a un file Markdown (usato a fine lavoro dell'assistente); gli altri restano modificati.
+    async saveDocument(id) {
+      const { tabs: currentTabs, editors: currentEditors } = latest.current
+      const tab = currentTabs.find((item) => item.id === id)
+      const editor = currentEditors[id]
+      if (!tab?.filePath || !editor) return false
+      const savedPath = await electronAPI.saveMarkdown({ filePath: tab.filePath, markdown: editor.getMarkdown(), saveAs: false })
+      if (!savedPath) return false
+      workspaceRef.current.markSaved(id, savedPath)
+      setStatus(t('Saved'))
+      return true
+    },
+    onFilesChanged: () => setExplorerRefresh((value) => value + 1),
+    onMemoryChanged: () => setMemoryVersion((value) => value + 1),
+    // Un file è stato cestinato o spostato dall'assistente: le schede e l'esplora file si aggiornano come per il file manager.
+    onPathChanged({ deleted, from, to }) {
+      if (deleted) workspaceRef.current.pathDeleted(deleted)
+      else workspaceRef.current.pathRenamed(from, to)
+      setExplorerRefresh((value) => value + 1)
+    },
+    openFile: (absolutePath) => openFileRef.current?.(absolutePath),
     }
     return toolBridge
   }, [])
@@ -477,6 +518,10 @@ export default function App() {
 
   useDocumentFileCommands({ activeTab, getEditor, workspace, onStatusChange: setStatus })
 
+  const openFileRef = useRef(null)
+  const workspaceRef = useRef(null)
+  workspaceRef.current = workspace
+
   async function openFromExplorer(filePath) {
     try {
       workspace.openDocument(await electronAPI.openDocumentPath(filePath))
@@ -485,6 +530,10 @@ export default function App() {
       setStatus(t('Could not open the file'))
     }
   }
+
+  openFileRef.current = openFromExplorer
+
+  const openDocuments = useMemo(() => tabs.filter(isDocument).map((item) => ({ id: item.id, title: item.title })), [tabs])
 
   if (!ready || !activeTab) return <div className="h-screen bg-slate-950" />
 
@@ -512,7 +561,8 @@ export default function App() {
         {sideTab && (
           <aside style={{ width: widths.left }} className="relative flex shrink-0 flex-col border-r border-slate-800 bg-slate-900/60">
             <PanelResizer side="left" label={t('Side panel width')} width={widths.left} min={PANELS.left.min} max={maxWidthFor('left', resizeContext('left'))} defaultWidth={PANELS.left.default} onChange={resizePanel('left')} onCommit={commitLayout} />
-            <h2 className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{{ files: 'File', outline: 'Struttura', history: 'Cronologia', notes: 'Note' }[sideTab]}</h2>
+            <h2 className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{sideTabs.find((item) => item.id === sideTab)?.label}</h2>
+            {sideTab === 'projects' && <ProjectsPanel project={project} onOpen={openProject} onChoose={chooseProject} onCreate={createProject} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
             {sideTab === 'files' && (
               <FileExplorer project={project} activePath={contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} />
             )}
@@ -520,6 +570,7 @@ export default function App() {
             {sideTab === 'notes' && (editors[contextTab?.id]
               ? <NotesPanel tab={contextTab} editor={editors[contextTab.id]} project={project} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} />
               : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>)}
+            {sideTab === 'memory' && <MemoryPanel project={project} memoryVersion={memoryVersion} activePath={contextTab?.filePath ? relativeToProject(project, contextTab.filePath) : null} onOpenFile={(relative) => openFromExplorer(`${project}/${relative}`)} onStatus={setStatus} />}
             {sideTab === 'history' && (
               <HistoryPanel tab={contextTab} editor={editors[contextTab?.id]} project={project} historyVersion={historyVersion} onChanged={() => setHistoryVersion((value) => value + 1)} onStatus={setStatus} />
             )}
@@ -530,7 +581,7 @@ export default function App() {
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
             {tabs.map((tab) => (tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} />
-              : <DocumentPane key={tab.id} tab={tab} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onNoteSelect={selectNote} />))}
+              : <DocumentPane key={tab.id} tab={tab} project={project} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onNoteSelect={selectNote} />))}
           </section>
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>
@@ -543,6 +594,9 @@ export default function App() {
           <AiChatPanel
             editor={editors[contextTab?.id]}
             contextTab={contextTab}
+            openDocuments={openDocuments}
+            contextPins={contextPins}
+            onContextPinsChange={setContextPins}
             toolBridge={toolBridge}
             request={chatRequest}
             onOpenNote={selectNote}

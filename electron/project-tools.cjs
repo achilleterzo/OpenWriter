@@ -10,6 +10,8 @@ const MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'])
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 const MAX_LIST_ENTRIES = 300
+const TEXT_DOCUMENT_EXTENSIONS = new Set(['.md', '.markdown', '.txt'])
+const MAX_CREATED_CHARS = 500000
 
 // Rimuove i tag di un HTML già convertito (DOCX/PDF) mantenendo titoli e a capo leggibili.
 function htmlToText(html) {
@@ -86,7 +88,61 @@ function createProjectTools({ getProjectPath, readDocument }) {
     return fs.promises.readFile(target)
   }
 
-  return { listDirectory, readFile, readImage }
+  // Crea una cartella (e le cartelle mancanti) nel progetto; se esiste già non fa nulla.
+  async function createDirectory(relativePath) {
+    const { target, relative } = resolveInside(relativePath)
+    if (!relative) throw new Error(t('Invalid name'))
+    const existing = await fs.promises.stat(target).catch(() => null)
+    if (existing && !existing.isDirectory()) throw new Error(t('An item with this name already exists'))
+    await fs.promises.mkdir(target, { recursive: true })
+    return { path: relative, absolute: target, created: !existing }
+  }
+
+  // Documenti del progetto con lo stesso nome (senza distinguere maiuscole), in qualunque cartella: per non creare un doppione di un file già esistente altrove.
+  function findSameName(fileName, limit = 5) {
+    const project = getProjectPath()
+    const wanted = fileName.toLowerCase()
+    const found = []
+    let visited = 0
+    const walk = (directory, depth) => {
+      if (found.length >= limit || depth > 8 || visited > 5000) return
+      let entries = []
+      try { entries = fs.readdirSync(directory, { withFileTypes: true }) } catch { return }
+      for (const entry of entries) {
+        if (EXCLUDED_NAMES.has(entry.name)) continue
+        visited += 1
+        const full = path.join(directory, entry.name)
+        if (entry.isDirectory()) walk(full, depth + 1)
+        else if (entry.name.toLowerCase() === wanted) found.push(path.relative(project, full).split(path.sep).join('/'))
+      }
+    }
+    walk(project, 0)
+    return found
+  }
+
+  // Crea un nuovo documento di testo (.md, o .txt) con il contenuto dato; non sovrascrive mai un file esistente.
+  async function createFile(relativePath, content = '', { allowSameName = false } = {}) {
+    const requested = String(relativePath || '').trim()
+    if (!requested) throw new Error(t('Invalid name'))
+    const extension = path.extname(requested).toLowerCase()
+    if (extension && !TEXT_DOCUMENT_EXTENSIONS.has(extension)) throw new Error(t('Only .md and .txt documents can be created'))
+    const { target, relative } = resolveInside(extension ? requested : `${requested}.md`)
+    const text = String(content ?? '')
+    if (text.length > MAX_CREATED_CHARS) throw new Error(t('The content is too long'))
+    if (fs.existsSync(target)) throw new Error(t('A file with this name already exists'))
+    if (!allowSameName) {
+      const others = findSameName(path.basename(target)).filter((item) => item.toLowerCase() !== relative.toLowerCase())
+      if (others.length) throw new Error(`${t('A document with this name already exists in the project')}: ${others.join(', ')}`)
+    }
+    await fs.promises.mkdir(path.dirname(target), { recursive: true })
+    await fs.promises.writeFile(target, text, { encoding: 'utf8', flag: 'wx' })
+    return { path: relative, absolute: target }
+  }
+
+  // Percorso assoluto di un file/cartella del progetto (con gli stessi divieti degli altri strumenti).
+  const resolvePath = (relativePath) => resolveInside(relativePath)
+
+  return { listDirectory, readFile, readImage, createDirectory, createFile, resolvePath }
 }
 
 module.exports = { createProjectTools }

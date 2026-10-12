@@ -1,14 +1,16 @@
-const { app, BrowserWindow, dialog, ipcMain, safeStorage, screen, session, shell, webContents } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, net, protocol, safeStorage, screen, session, shell, webContents } = require('electron')
+const { pathToFileURL } = require('node:url')
 const fs = require('node:fs/promises')
 const fsSync = require('node:fs')
 const path = require('node:path')
 const mammoth = require('mammoth')
-const htmlToDocx = require('html-to-docx')
 const pdfParse = require('pdf-parse')
 const { createApplicationMenu } = require('./menu.cjs')
 const { createAiProviders } = require('./ai-providers.cjs')
 const { createProjectFile } = require('./project-file.cjs')
+const { createProjectsStore } = require('./projects.cjs')
 const { createChatStore } = require('./chat-store.cjs')
+const { createMemoryStore } = require('./memory-store.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
 const { createNotesStore } = require('./notes-store.cjs')
 const images = require('./images.cjs')
@@ -16,9 +18,16 @@ const { t, setLocale, getLocale } = require('./i18n.cjs')
 
 const isDevelopment = !app.isPackaged
 let mainWindow
+// Le immagini dei documenti (percorsi relativi al documento) si mostrano tramite ow-file://: solo file immagine, in sola lettura.
+protocol.registerSchemesAsPrivileged([{ scheme: 'ow-file', privileges: { standard: true, secure: true } }])
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
+
 let projectPath = null
+const projectsStore = createProjectsStore({ filePath: () => path.join(app.getPath('userData'), 'projects.json') })
 const projectFile = createProjectFile({ getProjectPath: () => projectPath })
 const chatStore = createChatStore({ getProjectPath: () => projectPath })
+const memoryStore = createMemoryStore({ getProjectPath: () => projectPath })
+const projectRelative = (absolute) => path.relative(projectPath, absolute).split(path.sep).join('/')
 const notesStore = createNotesStore({ getProjectPath: () => projectPath })
 const projectTools = createProjectTools({ getProjectPath: () => projectPath, readDocument: (filePath) => readDocument(filePath) })
 const aiRequests = new Map()
@@ -134,6 +143,8 @@ async function loadProject() {
     if (project && (await fs.stat(project)).isDirectory()) projectPath = project
   } catch {}
   initializeProject()
+  // Il progetto di un avvio precedente entra nell'elenco anche se è stato aperto prima che l'elenco esistesse.
+  if (projectPath && !projectsStore.list().some((item) => item.path.toLowerCase() === path.resolve(projectPath).toLowerCase())) projectsStore.touch(projectPath)
 }
 
 // Prepara la cartella .ow all'apertura del progetto; un errore (es. cartella in sola lettura) non deve impedire di lavorare.
@@ -146,6 +157,7 @@ async function setProject(directory) {
   initializeProject()
   await fs.mkdir(app.getPath('userData'), { recursive: true })
   await fs.writeFile(workspaceFilePath(), JSON.stringify({ project: projectPath }, null, 2))
+  projectsStore.touch(projectPath)
   applySpellcheck()
   return projectPath
 }
@@ -202,6 +214,7 @@ async function renamePath({ path: target, newName }) {
   await fs.rename(source, destination)
   try { projectFile.moveHistory(source, destination) } catch (error) { console.error('Cronologia non spostata:', error) }
   try { notesStore.move(source, destination) } catch (error) { console.error('Note non spostate:', error) }
+  try { memoryStore.renameFile(projectRelative(source), projectRelative(destination)) } catch (error) { console.error('Memoria non aggiornata:', error) }
   return destination
 }
 
@@ -483,6 +496,80 @@ ipcMain.handle('workspace:choose-project', async () => {
   const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openDirectory', 'createDirectory'] })
   return result.canceled ? projectPath : setProject(result.filePaths[0])
 })
+ipcMain.handle('workspace:list-projects', () => projectsStore.list())
+ipcMain.handle('workspace:open-project', async (_event, directory) => {
+  const target = path.resolve(String(directory || ''))
+  if (!(await fs.stat(target).then((stat) => stat.isDirectory(), () => false))) throw new Error(t('The project folder no longer exists'))
+  return setProject(target)
+})
+// Crea una cartella di progetto con il nome dato: la posizione si sceglie con la finestra di sistema.
+ipcMain.handle('workspace:create-project', async (_event, name) => {
+  const folderName = String(name || '').trim()
+  if (!folderName || /[\\/:*?"<>|]/.test(folderName) || folderName === '.' || folderName === '..') throw new Error(t('Invalid name'))
+  const result = await dialog.showOpenDialog(mainWindow, { title: t('Choose where to create the project'), defaultPath: path.dirname(projectPath || app.getPath('documents')), properties: ['openDirectory', 'createDirectory'] })
+  if (result.canceled) return null
+  const target = path.join(result.filePaths[0], folderName)
+  if (fsSync.existsSync(target)) throw new Error(t('An item with this name already exists'))
+  await fs.mkdir(target)
+  return setProject(target)
+})
+ipcMain.handle('workspace:remove-project', (_event, directory) => { projectsStore.remove(String(directory || '')); return projectsStore.list() })
+// Per l'assistente: sposta nel cestino (con la conferma dell'utente) o sposta/rinomina dentro il progetto.
+ipcMain.handle('memory:list', () => (projectPath ? memoryStore.list() : []))
+ipcMain.handle('memory:add', (_event, entry) => memoryStore.add(entry))
+ipcMain.handle('memory:update', (_event, { id, changes } = {}) => memoryStore.update(id, changes))
+ipcMain.handle('memory:delete', (_event, id) => memoryStore.remove(id))
+ipcMain.handle('tools:delete-path', async (_event, relativePath) => {
+  const { target, relative } = projectTools.resolvePath(relativePath)
+  if (!relative) throw new Error(t('The project folder cannot be deleted from here'))
+  if (!fsSync.existsSync(target)) throw new Error(t('This path is not accessible'))
+  return { deleted: await deletePath(target), absolute: target, path: relative }
+})
+ipcMain.handle('tools:move-path', async (_event, { from, to } = {}) => {
+  const source = projectTools.resolvePath(from)
+  const destination = projectTools.resolvePath(to)
+  if (!source.relative || !destination.relative) throw new Error(t('Invalid name'))
+  if (!fsSync.existsSync(source.target)) throw new Error(t('This path is not accessible'))
+  if (fsSync.existsSync(destination.target)) throw new Error(t('An item with this name already exists'))
+  await fs.mkdir(path.dirname(destination.target), { recursive: true })
+  await fs.rename(source.target, destination.target)
+  try { projectFile.moveHistory(source.target, destination.target) } catch (error) { console.error('Cronologia non spostata:', error) }
+  try { notesStore.move(source.target, destination.target) } catch (error) { console.error('Note non spostate:', error) }
+  try { memoryStore.renameFile(source.relative, destination.relative) } catch (error) { console.error('Memoria non aggiornata:', error) }
+  return { from: source.target, to: destination.target, path: destination.relative }
+})
+ipcMain.handle('tools:create-directory', (_event, relativePath) => projectTools.createDirectory(relativePath))
+ipcMain.handle('tools:create-file', (_event, { path: relativePath, content, allowSameName } = {}) => projectTools.createFile(relativePath, content, { allowSameName: allowSameName === true }))
+// Dal file manager: nuova cartella o nuovo documento Markdown vuoto dentro `parent`; restituisce il percorso assoluto creato.
+ipcMain.handle('workspace:create-entry', async (_event, { parent, name, type } = {}) => {
+  const base = resolveInProject(parent)
+  const clean = String(name || '').trim()
+  if (!clean || clean === '.' || clean === '..' || /[\\/:*?"<>|]/.test(clean)) throw new Error(t('Invalid name'))
+  const relative = path.relative(projectPath, path.join(base, clean)).split(path.sep).join('/')
+  const directory = type === 'directory'
+  const final = directory || path.extname(clean) ? relative : `${relative}.md`
+  if (fsSync.existsSync(path.join(projectPath, final))) throw new Error(t('An item with this name already exists'))
+  return (directory ? await projectTools.createDirectory(final) : await projectTools.createFile(final, '')).absolute
+})
+ipcMain.handle('images:pick', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openFile'], filters: [{ name: t('Image'), extensions: IMAGE_EXTENSIONS.map((extension) => extension.slice(1)) }] })
+  return result.canceled ? null : result.filePaths[0]
+})
+// Porta un'immagine (file esistente o dati incollati) nella cartella images/ del progetto e restituisce il percorso assoluto.
+ipcMain.handle('images:import', async (_event, { sourcePath, data, mime, name } = {}) => {
+  if (!projectPath) throw new Error(t('No project open'))
+  const fromMime = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/bmp': '.bmp' }[mime]
+  const extension = (sourcePath ? path.extname(sourcePath) : fromMime || '').toLowerCase()
+  if (!IMAGE_EXTENSIONS.includes(extension)) throw new Error(t('Unsupported format: png, jpg, gif, webp and bmp are allowed'))
+  const directory = path.join(projectPath, 'images')
+  await fs.mkdir(directory, { recursive: true })
+  const base = (sourcePath ? path.basename(sourcePath, extension) : String(name || '').replace(/\.[^.]*$/, '') || `image-${Date.now()}`).replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '') || 'image'
+  let target = path.join(directory, `${base}${extension}`)
+  for (let counter = 2; fsSync.existsSync(target); counter += 1) target = path.join(directory, `${base}-${counter}${extension}`)
+  if (sourcePath) await fs.copyFile(sourcePath, target)
+  else await fs.writeFile(target, Buffer.from(String(data || ''), 'base64'))
+  return target
+})
 ipcMain.handle('workspace:import-files', (_event, request) => importFiles(request || {}))
 ipcMain.handle('edit:action', (event, action) => {
   const contents = event.sender
@@ -522,6 +609,8 @@ ipcMain.handle('document:export-docx', async (_event, { html }) => {
   })
   if (!targetPath) return null
   const docxPath = /\.docx$/i.test(targetPath) ? targetPath : `${targetPath}.docx`
+  // Caricato solo all'esportazione: html-to-docx dipende da un modulo che emette l'avviso di deprecazione di punycode.
+  const htmlToDocx = require('html-to-docx')
   const document = await htmlToDocx(`<html><body>${html}</body></html>`, null, { title: t('New document') })
   await fs.writeFile(docxPath, document)
   return docxPath
@@ -582,6 +671,11 @@ ipcMain.handle('i18n:set-locale', (_event, code) => {
 })
 
 app.whenReady().then(async () => {
+  protocol.handle('ow-file', (request) => {
+    const file = path.normalize(decodeURIComponent(new URL(request.url).pathname.slice(1)))
+    if (!IMAGE_EXTENSIONS.includes(path.extname(file).toLowerCase())) return new Response('Forbidden', { status: 403 })
+    return net.fetch(pathToFileURL(file).toString())
+  })
   const browserSession = session.fromPartition(BROWSER_PARTITION)
   browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   browserSession.on('will-download', (event) => event.preventDefault())
