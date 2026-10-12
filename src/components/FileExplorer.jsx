@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronRight, FilePlus, FileText, Folder, FolderOpen, FolderPlus, RefreshCw } from 'lucide-react'
 
 import { ContextMenuContext } from './ContextMenu.jsx'
 import { t } from '../i18n/index.js'
@@ -117,6 +117,9 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   const [dropTarget, setDropTarget] = useState(null)
 
   const [renaming, setRenaming] = useState(null)
+  // Nuova cartella o nuovo documento: { parent, type: 'directory' | 'file' } con il nome in corso di digitazione.
+  const [creating, setCreating] = useState(null)
+  const [newName, setNewName] = useState('')
   const openMenu = useContext(ContextMenuContext)
 
   const deleteEntry = async (entry) => {
@@ -127,6 +130,26 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       }
     } catch (reason) {
       onStatus(t('Delete failed: {message}', { message: reason.message }))
+    }
+  }
+
+  function startCreate(parent, type) {
+    setCreating({ parent, type })
+    setNewName('')
+  }
+
+  async function commitCreate() {
+    const name = newName.trim()
+    if (!name || !creating) return
+    const { parent, type } = creating
+    try {
+      const created = await electronAPI.createEntry({ parent, name, type })
+      setCreating(null)
+      if (parent !== project && !expandedPaths.has(parent)) onToggle(parent)
+      setLocalRefresh((value) => value + 1)
+      if (type === 'file') onOpenFile(created)
+    } catch (reason) {
+      onStatus(t('Could not create: {message}', { message: reason.message }))
     }
   }
 
@@ -141,6 +164,9 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
         y: event.clientY,
         items: [
           !entry.isDirectory && { label: t('Open'), onClick: () => onOpenFile(entry.path) },
+          entry.isDirectory && { label: t('New folder…'), onClick: () => startCreate(entry.path, 'directory') },
+          entry.isDirectory && { label: t('New document…'), onClick: () => startCreate(entry.path, 'file') },
+          entry.isDirectory && { separator: true },
           { label: t('Rename'), hint: 'F2', onClick: () => setRenaming(entry.path) },
           { label: t('Delete'), hint: t('Del'), danger: true, onClick: () => deleteEntry(entry) },
           { separator: true },
@@ -218,8 +244,18 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-1 border-b border-slate-800 px-3 py-2">
         <button type="button" title={t('{project}\nClick to change project', { project })} className="min-w-0 flex-1 truncate text-left text-xs font-semibold uppercase tracking-wider text-slate-300 hover:text-slate-50" onClick={onChooseProject}>{name}</button>
+        <button type="button" aria-label={t('New folder…')} title={t('New folder…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => startCreate(project, 'directory')}><FolderPlus size={14} /></button>
+        <button type="button" aria-label={t('New document…')} title={t('New document…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => startCreate(project, 'file')}><FilePlus size={14} /></button>
         <button type="button" aria-label={t('Refresh')} title={t('Refresh')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => setLocalRefresh((value) => value + 1)}><RefreshCw size={14} /></button>
       </div>
+      {creating && (
+        <form className="grid gap-1 border-b border-slate-800 px-3 py-2" onSubmit={(event) => { event.preventDefault(); commitCreate() }}>
+          <label htmlFor="new-entry-name" className="truncate text-xs text-slate-400">
+            {creating.type === 'directory' ? t('New folder in {folder}', { folder: creating.parent === project ? name : creating.parent.split(/[\\/]/).filter(Boolean).at(-1) }) : t('New document in {folder}', { folder: creating.parent === project ? name : creating.parent.split(/[\\/]/).filter(Boolean).at(-1) })}
+          </label>
+          <input id="new-entry-name" autoFocus value={newName} maxLength={120} className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100 outline-none focus:border-accent-400" onChange={(event) => setNewName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') setCreating(null) }} />
+        </form>
+      )}
       <div
         className={`min-h-0 flex-1 overflow-y-auto py-1 ${dropTarget === project ? 'bg-accent-500/10 ring-1 ring-inset ring-accent-400' : ''}`}
         onDragOver={(event) => drop.over(event, project)}
