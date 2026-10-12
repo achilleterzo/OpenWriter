@@ -8,9 +8,20 @@
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "electron ."
+    "start": "electron .",
+    "lint": "node --check electron/main.cjs && node --check electron/ai-providers.cjs && node --check electron/chat-store.cjs && node --check electron/notes-store.cjs && node --check electron/project-file.cjs && node --check electron/project-tools.cjs && node --check electron/images.cjs && node --check electron/menu.cjs && node --check electron/i18n.cjs && node --check electron/preload.cjs",
+    "test": "npm run build",
+    "dist:desktop": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "build:desktop:ci": "npm run build && electron-builder"
   },
   "dependencies": {
+    "html-to-docx": "^1.8.0",
+    "mammoth": "^1.12.1",
+    "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
     "@tiptap/core": "^3.29.2",
     "@tiptap/extension-heading": "^3.29.2",
     "@tiptap/extension-link": "^3.29.2",
@@ -19,22 +30,49 @@
     "@tiptap/react": "^3.29.2",
     "@tiptap/starter-kit": "^3.29.2",
     "@vitejs/plugin-react": "latest",
+    "autoprefixer": "latest",
+    "concurrently": "latest",
     "electron": "latest",
-    "html-to-docx": "^1.8.0",
+    "electron-builder": "^26.15.3",
     "lucide-react": "^1.31.0",
-    "mammoth": "^1.12.1",
-    "pdf-parse": "^1.1.1",
+    "postcss": "latest",
     "react": "latest",
     "react-dom": "latest",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "vite": "latest"
-  },
-  "devDependencies": {
-    "autoprefixer": "latest",
-    "concurrently": "latest",
-    "postcss": "latest",
     "tailwindcss": "^3.4.17",
+    "vite": "latest",
     "wait-on": "latest"
+  },
+  "build": {
+    "appId": "local.openwriter.app",
+    "productName": "OpenWriter",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "src/i18n/locales/*.json",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office"
+    }
   }
 }
