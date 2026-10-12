@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createDirectoryForAi: (path) => ipcRenderer.invoke('tools:create-directory', path),
   createFileForAi: (request) => ipcRenderer.invoke('tools:create-file', request),
   createEntry: (request) => ipcRenderer.invoke('workspace:create-entry', request),
+  openLink: (url) => ipcRenderer.invoke('app:open-link', url),
   pickImage: () => ipcRenderer.invoke('images:pick'),
   importImage: (request) => ipcRenderer.invoke('images:import', request),
   listProjects: () => ipcRenderer.invoke('workspace:list-projects'),

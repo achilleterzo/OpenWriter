@@ -551,6 +551,7 @@ ipcMain.handle('workspace:create-entry', async (_event, { parent, name, type } =
   if (fsSync.existsSync(path.join(projectPath, final))) throw new Error(t('An item with this name already exists'))
   return (directory ? await projectTools.createDirectory(final) : await projectTools.createFile(final, '')).absolute
 })
+ipcMain.handle('app:open-link', (_event, url) => (/^https?:\/\//i.test(String(url)) ? shell.openExternal(String(url)) : false))
 ipcMain.handle('images:pick', async () => {
   const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openFile'], filters: [{ name: t('Image'), extensions: IMAGE_EXTENSIONS.map((extension) => extension.slice(1)) }] })
   return result.canceled ? null : result.filePaths[0]

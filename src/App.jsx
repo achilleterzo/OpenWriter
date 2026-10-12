@@ -519,6 +519,13 @@ export default function App() {
   useDocumentFileCommands({ activeTab, getEditor, workspace, onStatusChange: setStatus })
 
   const openFileRef = useRef(null)
+
+  // Ctrl+clic su un collegamento del documento: file locale (si apre in una scheda), indirizzo web (nel browser di sistema) o ancora.
+  function openLink(target) {
+    if (target.kind === 'file') openFromExplorer(target.path)
+    else if (target.kind === 'external') electronAPI.openLink(target.url)
+    else if (target.kind === 'unresolved') setStatus(t('Save the document first to follow relative links'))
+  }
   const workspaceRef = useRef(null)
   workspaceRef.current = workspace
 
@@ -581,7 +588,7 @@ export default function App() {
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
             {tabs.map((tab) => (tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} />
-              : <DocumentPane key={tab.id} tab={tab} project={project} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onNoteSelect={selectNote} />))}
+              : <DocumentPane key={tab.id} tab={tab} project={project} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onNoteSelect={selectNote} />))}
           </section>
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>

@@ -55,3 +55,26 @@ export function displaySource(src, documentPath) {
   }
   return `ow-file://local/${encodeURIComponent(absolute)}`
 }
+
+/**
+ * Destinazione di un collegamento del documento:
+ *   { kind: 'external', url }   indirizzo http(s)
+ *   { kind: 'file', path }      file locale (relativo al documento, assoluto o file:///), senza #ancora né ?query
+ *   { kind: 'anchor' }          riferimento interno (#titolo)
+ *   { kind: 'unresolved' }      percorso relativo in un documento mai salvato, o schema non gestito
+ */
+export function resolveDocumentLink(href, documentPath) {
+  const value = String(href || '').trim()
+  if (!value || value.startsWith('#')) return { kind: 'anchor' }
+  if (/^https?:\/\//i.test(value)) return { kind: 'external', url: value }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value) && !/^file:\/\//i.test(value) && !/^[A-Za-z]:[\\/]/.test(value)) return { kind: 'unresolved' }
+  const clean = value.replace(/[?#].*$/, '')
+  if (/^file:\/\//i.test(clean)) {
+    let absolute = safeDecode(clean.replace(/^file:\/\//i, ''))
+    if (/^\/[A-Za-z]:/.test(absolute)) absolute = absolute.slice(1)
+    return { kind: 'file', path: absolute }
+  }
+  if (/^([A-Za-z]:)?[\\/]/.test(clean)) return { kind: 'file', path: normalize(safeDecode(clean)) }
+  if (!documentPath) return { kind: 'unresolved' }
+  return { kind: 'file', path: joinPath(dirname(documentPath), safeDecode(clean)) }
+}

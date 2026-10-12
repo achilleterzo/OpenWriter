@@ -9,7 +9,9 @@ import FindBar from './FindBar.jsx'
 import { Annotations } from '../lib/annotationExtension.js'
 import { Search } from '../lib/searchExtension.js'
 import { DocumentImage } from '../lib/imageExtension.js'
-import { displaySource, isInside, dirname, sourceForImage } from '../lib/imagePaths.js'
+import Link from '@tiptap/extension-link'
+import { mergeAttributes } from '@tiptap/core'
+import { displaySource, isInside, dirname, resolveDocumentLink, sourceForImage } from '../lib/imagePaths.js'
 import { t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
@@ -23,7 +25,14 @@ const toBase64 = (file) => new Promise((resolve, reject) => {
 })
 
 // Ogni scheda monta il proprio editor: così cronologia di annullamento e scroll restano per documento.
-export default function DocumentPane({ tab, project, active, findRequest, onReady, onDirty, onNoteSelect, onStatus }) {
+// Il collegamento mostra dove punta (tooltip) e si apre con Ctrl+clic: il clic semplice resta per posizionare il cursore e modificare il testo.
+const DocumentLink = Link.configure({ openOnClick: false }).extend({
+  renderHTML({ HTMLAttributes }) {
+    return ['a', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, { title: t('{target} — Ctrl+click to open', { target: HTMLAttributes.href }) }), 0]
+  },
+})
+
+export default function DocumentPane({ tab, project, active, findRequest, onReady, onDirty, onNoteSelect, onStatus, onOpenLink }) {
   const [findOpen, setFindOpen] = useState(false)
   const [replaceMode, setReplaceMode] = useState(false)
   const [focusToken, setFocusToken] = useState(0)
@@ -50,6 +59,14 @@ export default function DocumentPane({ tab, project, active, findRequest, onRead
 
   const editor = useEditor({
     editorProps: {
+      handleClick(view, pos, event) {
+        if (!(event.ctrlKey || event.metaKey)) return false
+        const anchor = event.target?.closest?.('a[href]')
+        if (!anchor) return false
+        event.preventDefault()
+        onOpenLink?.(resolveDocumentLink(anchor.getAttribute('href'), context.current.documentPath))
+        return true
+      },
       handlePaste(view, event) {
         const file = Array.from(event.clipboardData?.files || []).find((item) => item.type.startsWith('image/'))
         if (!file) return false
@@ -71,7 +88,8 @@ export default function DocumentPane({ tab, project, active, findRequest, onRead
     },
     extensions: [
       DocumentImage.configure({ resolveSource: (src) => displaySource(src, context.current.documentPath) }),
-      StarterKit.configure({ heading: false, code: false, link: { openOnClick: false } }),
+      StarterKit.configure({ heading: false, code: false, link: false }),
+      DocumentLink,
       // Un link può racchiudere codice in linea ([`file.md`](url)): nello schema predefinito il codice esclude ogni altro marchio e il Markdown non sarebbe valido.
       Code.extend({ excludes: 'bold italic strike' }),
       Heading.configure({ levels: [1, 2, 3, 4, 5, 6, 7] }),
