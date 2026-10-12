@@ -33,6 +33,9 @@ function createApplicationMenu(sendCommand) {
         { role: 'copy' },
         { role: 'paste' },
         { role: 'selectAll' },
+        { type: 'separator' },
+        { label: 'Trova…', accelerator: 'CmdOrCtrl+F', click: command('find') },
+        { label: 'Sostituisci…', accelerator: 'CmdOrCtrl+H', click: command('replace') },
       ],
     },
   ]))
