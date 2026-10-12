@@ -83,6 +83,7 @@ export default function App() {
     return 'editor'
   })
   const [assistantOpen, setAssistantOpen] = useState(false)
+  const [chatRequest, setChatRequest] = useState(null)
   const [conversationId, setConversationId] = useState(null)
   const [settingsVersion, setSettingsVersion] = useState(0)
   const [notes, setNotes] = useState([])
@@ -517,7 +518,7 @@ export default function App() {
             )}
             {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} />}
             {sideTab === 'notes' && (editors[contextTab?.id]
-              ? <NotesPanel tab={contextTab} editor={editors[contextTab.id]} project={project} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} />
+              ? <NotesPanel tab={contextTab} editor={editors[contextTab.id]} project={project} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} />
               : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>)}
             {sideTab === 'history' && (
               <HistoryPanel tab={contextTab} editor={editors[contextTab?.id]} project={project} historyVersion={historyVersion} onChanged={() => setHistoryVersion((value) => value + 1)} onStatus={setStatus} />
@@ -543,6 +544,8 @@ export default function App() {
             editor={editors[contextTab?.id]}
             contextTab={contextTab}
             toolBridge={toolBridge}
+            request={chatRequest}
+            onOpenNote={selectNote}
             project={project}
             settingsVersion={settingsVersion}
             conversationId={conversationId}

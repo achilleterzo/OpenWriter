@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { useEditorState } from '@tiptap/react'
-import { Bot, Check, MessageSquarePlus, Pencil, Trash2, User, X } from 'lucide-react'
+import { Bot, Check, MessageSquarePlus, SearchCheck, Pencil, Trash2, User, X } from 'lucide-react'
 import { anchorContext, buildTextIndex, locateQuote } from '../lib/anchoring.js'
 import { formatDateTime } from '../i18n/index.js'
 import { t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
-const STATUS_LABELS = { open: 'Aperta', accepted: 'Accettata', rejected: 'Rifiutata', resolved: 'Risolta' }
+const statusLabel = (status) => ({ open: t('Open|note'), accepted: t('Accepted'), rejected: t('Rejected'), resolved: t('Resolved') })[status]
 
-export default function NotesPanel({ tab, editor, project, notes, activeNoteId, onSelectNote, onChanged, onStatus }) {
+export default function NotesPanel({ tab, editor, project, notes, activeNoteId, onSelectNote, onChanged, onStatus, onAskAi }) {
   const [filter, setFilter] = useState('open')
   const [draft, setDraft] = useState({ body: '', replacement: '' })
   const [error, setError] = useState('')
@@ -35,6 +35,40 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
     } catch (reason) {
       setError(reason.message)
     }
+  }
+
+  // Per un commento la correzione la scrive l'assistente, seguendo il suggerimento della nota, e la applica al documento.
+  function askAi(note) {
+    onAskAi(t('Apply the correction suggested by this note'), {
+      noteId: note.id,
+      label: `${note.kind === 'suggestion' ? t('Suggestion') : t('Comment')} · “${note.quote.slice(0, 70)}${note.quote.length > 70 ? '…' : ''}”`,
+      detail: [
+        `Note ${note.id} on the document "${tab.title}" (${note.kind}, by ${note.author}).`,
+        `Note text: ${note.body}`,
+        `Quoted passage (copy it exactly): ${note.quote}`,
+        'Rewrite the passage following the note and apply it directly with replace_text, replacing the whole quoted passage with the complete corrected text.',
+        note.author === 'ai' ? `Then mark the note as resolved with update_note (id ${note.id}).` : '',
+        'Do not ask for confirmation and keep your final reply to one short sentence.',
+      ].filter(Boolean).join('\n'),
+    })
+  }
+
+  // Nota il cui testo non c'è più: l'assistente verifica se serve ancora; se no la archivia, altrimenti la riallinea al testo attuale.
+  function verifyWithAi(note) {
+    onAskAi(t('Verify whether this note still applies'), {
+      noteId: note.id,
+      label: `${note.kind === 'suggestion' ? t('Suggestion') : t('Comment')} · “${note.quote.slice(0, 70)}${note.quote.length > 70 ? '…' : ''}”`,
+      detail: [
+        `Note ${note.id} on the document "${tab.title}" (${note.kind}, by ${note.author}). Its quoted text can no longer be found in the document, which was probably edited since.`,
+        `Note text: ${note.body}`,
+        `Original quoted passage: ${note.quote}`,
+        note.kind === 'suggestion' ? `Proposed replacement: ${note.replacement ?? ''}` : '',
+        `Read the current text of the document (read_file "${tab.title}" if needed) and check whether the remark or suggestion of the note still applies to what is written now.`,
+        `If it no longer applies (already fixed, or the passage is gone), archive the note with update_note (id ${note.id}, status "resolved").`,
+        `Otherwise align it: call update_note (id ${note.id}) with "quote" set to the exact current passage it refers to and, for a suggestion, "replacement" set to the complete updated corrected passage (also "body" if you are the author and it needs rewording).`,
+        'Do not ask for confirmation and keep your final reply to one short sentence saying what you did.',
+      ].filter(Boolean).join('\n'),
+    })
   }
 
   const setStatus = (note, status) => run(() => electronAPI.updateNote({ filePath: tab.filePath, id: note.id, changes: { status } }))
@@ -105,7 +139,7 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
               <button type="button" className="block w-full text-left" onClick={() => focusNote(note)}>
                 <span className="flex items-center gap-1.5 text-xs text-slate-500">
                   {note.author === 'ai' ? <Bot size={12} /> : <User size={12} />}
-                  {note.kind === 'suggestion' ? t('Suggestion') : t('Comment')} · {STATUS_LABELS[note.status]}
+                  {note.kind === 'suggestion' ? t('Suggestion') : t('Comment')} · {statusLabel(note.status)}
                   {note.updatedAt && <span className="text-slate-500" title={t('Revised on {formatDateTime}', { formatDateTime: formatDateTime(note.updatedAt, { dateStyle: 'medium', timeStyle: 'short' }) })}>{t('· revised')}</span>}
                   {orphan && <span className="text-amber-400">{t('· text not found')}</span>}
                 </span>
@@ -140,15 +174,21 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {note.status === 'open' && note.kind === 'suggestion' && (
                   <>
-                    <button type="button" disabled={orphan} className={`${smallButton} bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 disabled:opacity-40`} onClick={() => applyCorrection(note, note.replacement ?? '')}><Check size={12} /> {t('Accept')}</button>
-                    <button type="button" disabled={orphan} className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600 disabled:opacity-40`} onClick={() => setEditing({ id: note.id, text: note.replacement ?? '' })}><Pencil size={12} /> {t('Edit…')}</button>
+                    {!orphan && <button type="button" className={`${smallButton} bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25`} onClick={() => applyCorrection(note, note.replacement ?? '')}><Check size={12} /> {t('Accept')}</button>}
+                    {!orphan && <button type="button" className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600`} onClick={() => setEditing({ id: note.id, text: note.replacement ?? '' })}><Pencil size={12} /> {t('Edit…')}</button>}
                     <button type="button" className={`${smallButton} bg-rose-500/15 text-rose-300 hover:bg-rose-500/25`} onClick={() => setStatus(note, 'rejected')}><X size={12} /> {t('Reject')}</button>
                   </>
                 )}
                 {note.status === 'open' && note.kind === 'comment' && (
                   <>
-                    <button type="button" disabled={orphan} className={`${smallButton} bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 disabled:opacity-40`} onClick={() => setEditing({ id: note.id, text: note.quote })}><Pencil size={12} /> {t('Apply correction…')}</button>
+                    {!orphan && <button type="button" className={`${smallButton} bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25`} onClick={() => askAi(note)}><Pencil size={12} /> {t('Apply correction…')}</button>}
                     <button type="button" className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600`} title={t('Closes the note without changing the document')} onClick={() => setStatus(note, 'resolved')}><Check size={12} /> {t('Resolve without changing')}</button>
+                  </>
+                )}
+                {note.status === 'open' && orphan && (
+                  <>
+                    <button type="button" className={`${smallButton} bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25`} title={t('Ask the assistant to check whether the note still applies: if not it is archived, otherwise it is aligned to the current text')} onClick={() => verifyWithAi(note)}><SearchCheck size={12} /> {t('Verify')}</button>
+                    <button type="button" className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600`} title={t('Archives the note without changing the document')} onClick={() => setStatus(note, 'resolved')}><Check size={12} /> {t('Resolve')}</button>
                   </>
                 )}
                 {note.status !== 'open' && (
