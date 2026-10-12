@@ -78,6 +78,19 @@ export const getSearchState = (editor) => searchKey.getState(editor.state)
 export function setSearch(editor, params) {
   if (!editor || editor.isDestroyed) return
   editor.view.dispatch(editor.state.tr.setMeta(searchKey, { params: { ...emptyParams, ...params }, current: 'nearest' }))
+  reveal(editor)
+}
+
+// Seleziona l'occorrenza corrente e la porta in vista (la barra di ricerca tiene il focus: la selezione resta comunque visibile come evidenziazione).
+function reveal(editor) {
+  const { matches, current } = getSearchState(editor)
+  const match = matches[current]
+  if (!match) return
+  const { tr } = editor.state
+  editor.view.dispatch(tr.setSelection(TextSelection.create(tr.doc, match.from, match.to)).scrollIntoView())
+  const node = editor.view.domAtPos(match.from).node
+  const element = node.nodeType === 1 ? node : node.parentElement
+  element?.scrollIntoView({ block: 'center', inline: 'nearest' })
 }
 
 export function goToMatch(editor, delta) {
@@ -87,6 +100,8 @@ export function goToMatch(editor, delta) {
   const match = matches[target]
   const { tr } = editor.state
   editor.view.dispatch(tr.setMeta(searchKey, { current: target }).setSelection(TextSelection.create(tr.doc, match.from, match.to)).scrollIntoView())
+  const node = editor.view.domAtPos(match.from).node
+  ;(node.nodeType === 1 ? node : node.parentElement)?.scrollIntoView({ block: 'center', inline: 'nearest' })
 }
 
 function replacementFor(match, params, replacement) {
@@ -102,6 +117,7 @@ export function replaceCurrent(editor, replacement) {
   const match = matches[current]
   if (!match) return false
   editor.view.dispatch(editor.state.tr.insertText(replacementFor(match, params, replacement), match.from, match.to))
+  reveal(editor)
   return true
 }
 
