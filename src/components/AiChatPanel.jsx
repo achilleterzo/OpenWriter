@@ -1,6 +1,7 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { Brain, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Copy, CornerDownLeft, FolderOpen, GitBranch, Loader2, Pencil, Pin, Plus, RotateCcw, Send, Settings, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import MarkdownMessage from './MarkdownMessage.jsx'
+import { useDialogs } from './Dialogs.jsx'
 import { reasoningByProvider } from '../lib/aiOptions.js'
 import { formatDateTime, languageEnglishName } from '../i18n/index.js'
 import { DEFAULT_MAX_TOOL_STEPS, TOOL_DEFINITIONS, createToolRunner, describeCall, parseToolCall, splitNextPrompt, toolSchemas, toolsPrompt, visibleText } from '../lib/aiTools.js'
@@ -436,6 +437,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const setIncludeDocument = (value) => onContextPinsChange({ ...contextPins, includeActive: value })
   const setPinnedIds = (value) => onContextPinsChange({ ...contextPins, pinnedIds: value })
   const [busy, setBusy] = useState(false)
+  const dialogs = useDialogs()
   const [live, setLive] = useState(null)
   const [error, setError] = useState('')
   const endRef = useRef(null)
@@ -551,7 +553,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   }
 
   async function removeConversation() {
-    if (!current.id || busy || !window.confirm(t('Delete the conversation "{title}"? The file in .ow/chat will be removed.', { title: current.title }))) return
+    if (!current.id || busy) return
+    if (!(await dialogs.confirm(t('Delete the conversation "{title}"? The file in .ow/chat will be removed.', { title: current.title }), { danger: true, confirmLabel: t('Delete') }))) return
     try {
       await api.deleteConversation(current.id)
       const list = await api.listConversations()
@@ -632,11 +635,29 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
 
   handlers.current = { branchFrom, startEdit }
 
-  async function send(text, attachment = null, { resume = false } = {}) {
+  // Qualunque cosa succeda durante la richiesta (anche un errore prima dell'avvio vero e proprio), `busy` torna falso:
+  // altrimenti la scelta della conversazione e l'invio resterebbero bloccati.
+  async function send(text, attachment = null, options = {}) {
     const content = text.trim()
-    if ((!resume && !content) || busy || !enabled) return
-    setError('')
+    if ((!options.resume && !content) || busy || !enabled) return
     setBusy(true)
+    try {
+      await runConversation(content, attachment, options)
+    } catch (reason) {
+      console.error(reason)
+      setError(reason.message)
+    } finally {
+      cancelAnimationFrame(frameRef.current)
+      frameRef.current = null
+      pendingAskRef.current = null
+      setPendingAsk(null)
+      setLive(null)
+      setBusy(false)
+    }
+  }
+
+  async function runConversation(content, attachment, { resume = false }) {
+    setError('')
     composer.current?.setValue('')
     runRef.current = { cancelled: false, cancel: null }
 

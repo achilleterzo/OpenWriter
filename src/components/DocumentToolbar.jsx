@@ -16,6 +16,7 @@ import {
 import { useEditorState } from '@tiptap/react'
 import { ToolbarButton, ToolbarDivider } from './ToolbarButton.jsx'
 import { t } from '../i18n/index.js'
+import { useDialogs } from './Dialogs.jsx'
 
 const headingLevels = [1, 2, 3, 4, 5, 6, 7]
 
@@ -38,13 +39,15 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen }) {
   const headingLevel = active.headingLevel
   const currentBlock = headingLevel ? `h${headingLevel}` : 'paragraph'
 
-  function setLink() {
+  const dialogs = useDialogs()
+
+  async function setLink() {
     if (active.link) {
       editor.chain().focus().unsetLink().run()
       return
     }
 
-    const url = window.prompt(t('Link URL'))
+    const url = (await dialogs.prompt(t('Link URL')))?.trim()
     if (url) editor.chain().focus().setLink({ href: url }).run()
   }
 
