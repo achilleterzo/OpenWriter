@@ -23,7 +23,7 @@ export default function ProjectSettings({ project }) {
     if (!project) { setInfo({ available: false }); setForm(null); return }
     electronAPI.getProjectSettings().then((settings) => {
       setInfo(settings)
-      setForm({ name: settings.name, language: settings.ai.language, context: settings.ai.context, autoVersions: settings.options.autoVersions, spellcheck: settings.spellcheck.languages })
+      setForm({ name: settings.name, language: settings.ai.language, documentLanguage: settings.ai.documentLanguage || '', context: settings.ai.context, autoVersions: settings.options.autoVersions, spellcheck: settings.spellcheck.languages })
     }).catch((reason) => setError(reason.message))
   }, [project])
 
@@ -34,7 +34,7 @@ export default function ProjectSettings({ project }) {
 
   async function save() {
     try {
-      const result = await electronAPI.saveProjectSettings({ name: form.name, ai: { context: form.context, language: form.language }, options: { autoVersions: form.autoVersions }, spellcheck: { languages: form.spellcheck } })
+      const result = await electronAPI.saveProjectSettings({ name: form.name, ai: { context: form.context, language: form.language, documentLanguage: form.documentLanguage }, options: { autoVersions: form.autoVersions }, spellcheck: { languages: form.spellcheck } })
       setInfo(result)
       setSaved(true)
       setError('')

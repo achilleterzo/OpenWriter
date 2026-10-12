@@ -11,7 +11,7 @@ const MAX_CONTEXT_CHARS = 20000
 
 /**
  * La directory `.ow` nella radice del progetto contiene:
- *   project.json                         { name, ai: { language }, options: { autoVersions } }
+ *   project.json                         { name, ai: { language, documentLanguage }, options: { autoVersions } }
  *   context.md                           contesto per l'assistente AI (testo libero)
  *   history/<documento>/index.json       metadati delle versioni di un documento
  *   history/<documento>/<id>.md          contenuto di ogni versione
@@ -60,7 +60,7 @@ function createProjectFile({ getProjectPath }) {
       ...parsed,
       format: FORMAT_VERSION,
       name: typeof parsed.name === 'string' ? parsed.name : '',
-      ai: { language: '', ...(parsed.ai && typeof parsed.ai === 'object' ? parsed.ai : {}) },
+      ai: { language: '', documentLanguage: '', ...(parsed.ai && typeof parsed.ai === 'object' ? parsed.ai : {}) },
       options: { autoVersions: true, ...(parsed.options && typeof parsed.options === 'object' ? parsed.options : {}) },
       spellcheck: { languages: [], ...(parsed.spellcheck && typeof parsed.spellcheck === 'object' ? parsed.spellcheck : {}) },
     }
@@ -82,6 +82,18 @@ function createProjectFile({ getProjectPath }) {
     return Array.isArray(index) ? index : []
   }
 
+  // Altri file di istruzioni per l'assistente: i .md nella radice di .ow (oltre a context.md), in ordine alfabetico.
+  function readExtraContext() {
+    try {
+      return fs.readdirSync(root(), { withFileTypes: true })
+        .filter((entry) => entry.isFile() && /\.md$/i.test(entry.name) && entry.name.toLowerCase() !== 'context.md')
+        .map((entry) => entry.name)
+        .sort((left, right) => left.localeCompare(right))
+        .slice(0, 10)
+        .map((name) => ({ name, text: fs.readFileSync(path.join(root(), name), 'utf8').slice(0, MAX_CONTEXT_CHARS) }))
+    } catch { return [] }
+  }
+
   function getSettings() {
     if (!getProjectPath()) return { available: false }
     const settings = readSettings()
@@ -91,7 +103,7 @@ function createProjectFile({ getProjectPath }) {
       exists: fs.existsSync(root()),
       path: root(),
       name: settings.name,
-      ai: { context, language: String(settings.ai.language || '') },
+      ai: { context, extraContext: readExtraContext(), language: String(settings.ai.language || ''), documentLanguage: String(settings.ai.documentLanguage || '') },
       options: { autoVersions: settings.options.autoVersions !== false },
       spellcheck: { languages: cleanLanguages(settings.spellcheck.languages) },
     }
@@ -100,7 +112,7 @@ function createProjectFile({ getProjectPath }) {
   function saveSettings({ name, ai, options, spellcheck } = {}) {
     const settings = readSettings()
     settings.name = String(name || '').slice(0, 200)
-    settings.ai = { ...settings.ai, language: String(ai?.language || '').slice(0, 50) }
+    settings.ai = { ...settings.ai, language: String(ai?.language || '').slice(0, 50), documentLanguage: String(ai?.documentLanguage || '').slice(0, 50) }
     settings.options = { ...settings.options, autoVersions: options?.autoVersions !== false }
     settings.spellcheck = { ...settings.spellcheck, languages: cleanLanguages(spellcheck?.languages) }
     writeAtomic(settingsFile(), JSON.stringify(settings, null, 2))

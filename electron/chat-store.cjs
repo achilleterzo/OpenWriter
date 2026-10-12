@@ -59,6 +59,7 @@ function createChatStore({ getProjectPath }) {
           ...(message.role === 'user' && message.attachment && typeof message.attachment === 'object'
             ? { attachment: { label: text(message.attachment.label, 300), detail: text(message.attachment.detail, MAX_MESSAGE_CHARS), ...(message.attachment.noteId ? { noteId: text(message.attachment.noteId, 80) } : {}) } }
             : {}),
+          ...(message.role === 'assistant' && message.nextPrompt ? { nextPrompt: text(message.nextPrompt, 300) } : {}),
           ...(message.thinking ? { thinking: text(message.thinking, MAX_MESSAGE_CHARS) } : {}),
           ...(message.role === 'tool' ? { name: text(message.name, 60) } : {}),
           // Le immagini restano su disco (.ow/chat/attachments): nel JSON ci sono solo riferimenti.
