@@ -2,6 +2,7 @@ const { execFile, execFileSync, spawn } = require('node:child_process')
 const http = require('node:http')
 const https = require('node:https')
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
 
 const PROVIDERS = ['ollama', 'ollama-cloud', 'codex', 'claude']
@@ -66,7 +67,7 @@ function cliCommand(provider) {
 function cliInvocation(provider, args) {
   const command = cliCommand(provider)
   if (process.platform === 'win32') {
-    return { command: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', [`& ${quotePowerShellArg(command)}`, ...args.map(quotePowerShellArg)].join(' ')] }
+    return { command: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', [`& ${quotePowerShellArg(command)}`, ...args.map((arg) => (arg === '' ? '\'""\'' : quotePowerShellArg(arg)))].join(' ')] }
   }
   return { command, args, shell: true }
 }
@@ -80,6 +81,62 @@ function cliEnvironment(provider) {
     delete environment.ANTHROPIC_AUTH_TOKEN
   }
   return environment
+}
+
+// Su Windows la CLI gira dentro PowerShell: terminare solo il processo padre lascerebbe vivo il figlio, quindi si chiude l'intero albero.
+function killTree(child) {
+  if (!child?.pid) return
+  if (process.platform === 'win32') {
+    try { spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }) } catch {}
+  } else {
+    try { child.kill('SIGTERM') } catch {}
+  }
+}
+
+const abortError = () => Object.assign(new Error('Richiesta interrotta'), { name: 'AbortError' })
+
+// Come runCli, ma passa ogni riga di stdout a `onLine` appena arriva e si può interrompere con `signal`.
+function runCliStream(provider, args, { cwd, input = '', timeout = CLI_TIMEOUT_MS, onLine = () => {}, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(abortError())
+    const invocation = cliInvocation(provider, args)
+    const child = spawn(invocation.command, invocation.args, { cwd: cwd || undefined, env: cliEnvironment(provider), windowsHide: true, shell: invocation.shell, stdio: ['pipe', 'pipe', 'pipe'] })
+    let buffer = ''
+    let stderr = ''
+    let settled = false
+    const finish = (error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      error ? reject(error) : resolve()
+    }
+    const onAbort = () => { killTree(child); finish(abortError()) }
+    // Il timeout è di inattività: si riavvia a ogni riga ricevuta.
+    let timer
+    const arm = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => { killTree(child); finish(new Error(`${LABELS[provider]} non ha risposto entro ${Math.round(timeout / 1000)} secondi`)) }, timeout)
+    }
+    arm()
+    signal?.addEventListener('abort', onAbort)
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      arm()
+      buffer += chunk
+      const lines = buffer.split(/\r?\n/)
+      buffer = lines.pop() ?? ''
+      for (const line of lines) if (line.trim()) onLine(line)
+    })
+    child.stderr.on('data', (chunk) => { stderr += chunk })
+    child.once('error', (error) => finish(error.code === 'ENOENT' ? new Error(`Client ${LABELS[provider]} non trovato. Installalo e riprova.`) : error))
+    child.once('close', (code) => {
+      if (buffer.trim()) onLine(buffer)
+      finish(code !== 0 ? new Error(stderr.trim() || `${LABELS[provider]} terminato con codice ${code}`) : null)
+    })
+    child.stdin.end(input)
+  })
 }
 
 function runCli(provider, args, { cwd, input = '', timeout = CLI_TIMEOUT_MS } = {}) {
@@ -116,12 +173,24 @@ function runCli(provider, args, { cwd, input = '', timeout = CLI_TIMEOUT_MS } = 
   })
 }
 
+// La CLI è installata? Si controlla il percorso, non il testo dell'errore del sistema (che cambia con la lingua).
+function cliInstalled(provider) {
+  const command = cliCommand(provider)
+  if (path.isAbsolute(command)) return fs.existsSync(command)
+  try {
+    if (process.platform === 'win32') execFileSync('where.exe', [command], { windowsHide: true, timeout: 5000, stdio: 'ignore' })
+    else execFileSync('/bin/sh', ['-c', `command -v ${command}`], { timeout: 5000, stdio: 'ignore' })
+    return true
+  } catch { return false }
+}
+
 function runCliStatus(provider, args) {
   return new Promise((resolve) => {
+    if (!cliInstalled(provider)) { resolve({ ok: false, missing: true, output: '' }); return }
     const invocation = cliInvocation(provider, args)
     execFile(invocation.command, invocation.args, { env: cliEnvironment(provider), windowsHide: true, shell: invocation.shell, timeout: 30000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
       const output = String(stdout || stderr || error?.message || '').trim()
-      resolve({ ok: !error, missing: error?.code === 'ENOENT' || error?.code === 9009 || /not recognized|not found/i.test(output), output })
+      resolve({ ok: !error, missing: error?.code === 'ENOENT' || error?.code === 9009, output })
     })
   })
 }
@@ -164,6 +233,54 @@ function requestJson(urlString, { method = 'GET', headers = {} } = {}, body = nu
   })
 }
 
+// POST con risposta NDJSON (Ollama con stream:true): chiama `onLine` per ogni riga JSON appena arriva.
+function streamJson(urlString, { headers = {} } = {}, body, onObject, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(abortError())
+    const url = new URL(urlString)
+    const client = url.protocol === 'https:' ? https : http
+    let settled = false
+    const finish = (error) => {
+      if (settled) return
+      settled = true
+      signal?.removeEventListener('abort', onAbort)
+      error ? reject(error) : resolve()
+    }
+    const request = client.request(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, timeout: HTTP_TIMEOUT_MS }, (response) => {
+      response.setEncoding('utf8')
+      let buffer = ''
+      let errorBody = ''
+      const failed = response.statusCode < 200 || response.statusCode >= 300
+      response.on('data', (chunk) => {
+        if (failed) { errorBody += chunk; return }
+        buffer += chunk
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try { onObject(JSON.parse(line)) } catch (error) { if (error?.fatal) { request.destroy(error); return } }
+        }
+      })
+      response.on('end', () => {
+        if (failed) {
+          let detail = errorBody
+          try { detail = JSON.parse(errorBody)?.error || detail } catch {}
+          return finish(Object.assign(new Error(`HTTP ${response.statusCode}${detail ? `: ${String(detail).slice(0, 200)}` : ''}`), { httpStatus: response.statusCode }))
+        }
+        if (buffer.trim()) { try { onObject(JSON.parse(buffer)) } catch {} }
+        finish(null)
+      })
+      response.on('error', finish)
+    })
+    const onAbort = () => { request.destroy(); finish(abortError()) }
+    signal?.addEventListener('abort', onAbort)
+    request.on('error', finish)
+    request.on('timeout', () => request.destroy(new Error(`Nessuna risposta da Ollama per ${HTTP_TIMEOUT_MS / 1000} secondi`)))
+    request.write(JSON.stringify(body))
+    request.end()
+  })
+}
+
 function normalizeProviderConfig(provider, value = {}) {
   const config = value && typeof value === 'object' ? value : {}
   const normalized = { model: String(config.model || ''), reasoning: REASONING_LEVELS[provider].includes(config.reasoning) ? config.reasoning : REASONING_LEVELS[provider][0] }
@@ -178,6 +295,17 @@ function normalizeSettings(settings = {}) {
     provider: PROVIDERS.includes(settings.provider) ? settings.provider : 'ollama',
     providers: Object.fromEntries(PROVIDERS.map((provider) => [provider, normalizeProviderConfig(provider, saved[provider])])),
     language: String(settings.language || 'Italiano'),
+    // Quante chiamate agli strumenti può concatenare l'assistente in una singola richiesta.
+    maxToolSteps: Math.min(50, Math.max(1, Math.round(Number(settings.maxToolSteps)) || 15)),
+    // Strumenti messi a disposizione dell'assistente; la navigazione web è opt-in perché invia query all'esterno.
+    tools: {
+      files: settings.tools?.files !== false,
+      notes: settings.tools?.notes !== false,
+      vision: settings.tools?.vision !== false,
+      ask: settings.tools?.ask !== false,
+      edit: settings.tools?.edit !== false,
+      web: settings.tools?.web === true,
+    },
   }
 }
 
@@ -256,38 +384,184 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     if (activeProvider() === 'ollama-cloud' && !(apiKey() && config.model)) throw new Error('Configura API key e modello Ollama Cloud nelle impostazioni')
   }
 
-  async function requestCliPrompt(provider, prompt) {
+  // Invia il prompt alla CLI in modalità streaming e traduce i suoi eventi in { type: 'text' | 'thinking' | 'status', ... }.
+  // `images`: [{ mime, data(base64) }] allegate al prompt, nello stesso ordine dei segnaposto [Immagine N] nel testo.
+  async function streamCliPrompt(provider, prompt, onEvent, signal, images = []) {
     const rawModel = String(providerConfig(provider).model || '').trim()
     const model = /^[A-Za-z0-9._:/-]+$/.test(rawModel) ? rawModel : ''
     const reasoning = providerConfig(provider).reasoning
     const effort = reasoning === 'default' ? '' : reasoning
-    const suffix = 'Return only the final answer. Do not modify files or alter the filesystem.'
+    const suffix = 'Do not modify files or alter the filesystem yourself: use only the tools described in the conversation, when any.'
     const cwd = getWorkingDirectory()
+    const state = { text: '', result: '' }
+
     if (provider === 'codex') {
-      const args = ['exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check', ...(model ? ['--model', model] : []), ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : []), '-']
-      return extractCliText(await runCli(provider, args, { cwd, input: `${prompt}\n\n${suffix}` }))
+      // Le immagini vanno su file temporanei (Codex le legge con --image); `--` chiude l'elenco dei file prima del prompt da stdin.
+      const imageDirectory = images.length ? fs.mkdtempSync(path.join(os.tmpdir(), 'ow-img-')) : null
+      const imageFiles = images.map((image, index) => {
+        const file = path.join(imageDirectory, `${index + 1}.${image.mime === 'image/jpeg' ? 'jpg' : 'png'}`)
+        fs.writeFileSync(file, Buffer.from(image.data, 'base64'))
+        return file
+      })
+      const args = ['exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check', ...(model ? ['--model', model] : []), ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : []), ...(imageFiles.length ? ['--image', ...imageFiles, '--'] : []), '-']
+      try {
+      await runCliStream(provider, args, {
+        cwd,
+        input: `${prompt}\n\n${suffix}`,
+        signal,
+        onLine(line) {
+          let event
+          try { event = JSON.parse(line) } catch { return }
+          const item = event.item
+          // Codex riporta il motivo reale dei fallimenti negli eventi: lo stderr contiene spesso solo rumore (es. server MCP non autenticati).
+          if (event.type === 'turn.failed' || event.type === 'error') {
+            let message = event.error?.message || event.message || ''
+            try { message = JSON.parse(message)?.error?.message || message } catch {}
+            if (message) state.error = String(message)
+          }
+          if (event.type === 'item.completed' && item) {
+            if (item.type === 'reasoning' && item.text) onEvent({ type: 'thinking', delta: `${item.text}\n` })
+            else if (item.type === 'agent_message' && typeof item.text === 'string') { state.text = item.text; onEvent({ type: 'text', delta: item.text }) }
+          } else if (event.type === 'item.started' && item?.type === 'command_execution') {
+            onEvent({ type: 'status', text: `Codex esegue: ${String(item.command || '').slice(0, 80)}` })
+          }
+        },
+      })
+      return state.text.trim()
+      } catch (error) {
+        if (state.error && error.name !== 'AbortError') throw new Error(state.error)
+        throw error
+      } finally {
+        if (imageDirectory) fs.rmSync(imageDirectory, { recursive: true, force: true })
+      }
     }
-    const args = ['-p', '--output-format', 'json', '--permission-mode', 'plan', '--tools', 'Read', ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : [])]
-    return extractCliText(await runCli(provider, args, { cwd, input: `${prompt}\n\n${suffix}` }))
+
+    const args = ['-p', ...(images.length ? ['--input-format', 'stream-json'] : []), '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', '', ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : [])]
+    // Con immagini il prompt viaggia come messaggio "stream-json" con blocchi di testo e immagine.
+    const claudeInput = images.length
+      ? `${JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `${prompt}\n\n${suffix}` }, ...images.map((image) => ({ type: 'image', source: { type: 'base64', media_type: image.mime, data: image.data } }))] } })}\n`
+      : `${prompt}\n\n${suffix}`
+    await runCliStream(provider, args, {
+      cwd,
+      input: claudeInput,
+      signal,
+      onLine(line) {
+        let event
+        try { event = JSON.parse(line) } catch { return }
+        if (event.type === 'stream_event' && event.event?.type === 'content_block_delta') {
+          const delta = event.event.delta
+          if (delta?.type === 'text_delta' && delta.text) { state.text += delta.text; onEvent({ type: 'text', delta: delta.text }) }
+          else if (delta?.type === 'thinking_delta' && delta.thinking) onEvent({ type: 'thinking', delta: delta.thinking })
+        } else if (event.type === 'system' && event.subtype === 'thinking_tokens') {
+          onEvent({ type: 'status', text: `Sta ragionando… (~${event.estimated_tokens} token)` })
+        } else if (event.type === 'result' && typeof event.result === 'string') {
+          state.result = event.result
+        }
+      },
+    })
+    return (state.result || state.text).trim()
   }
 
-  /** Invia una conversazione `[{ role, content }]` al provider attivo e restituisce il testo della risposta. */
-  async function chat(messages) {
+  // Ollama in streaming: ragionamento (message.thinking) e testo (message.content) arrivano a pezzi.
+  // Con `tools` si usa la chiamata nativa agli strumenti: una `tool_calls` del modello viene tradotta nel blocco
+  // <tool_call> che il renderer già sa leggere, così il protocollo resta uno solo per tutti i provider.
+  async function streamOllama(endpoint, body, provider, options, onEvent, signal, tools = []) {
+    const attempt = async (extra) => {
+      let text = ''
+      let nativeCall = null
+      await streamJson(`${endpoint}/api/chat`, options, { ...body, ...extra, stream: true }, (line) => {
+        if (line.error) throw Object.assign(new Error(String(line.error)), { fatal: true })
+        if (line.message?.thinking) onEvent({ type: 'thinking', delta: line.message.thinking })
+        if (line.message?.content) { text += line.message.content; onEvent({ type: 'text', delta: line.message.content }) }
+        const call = line.message?.tool_calls?.[0]?.function
+        if (call?.name && !nativeCall) nativeCall = { name: call.name, arguments: call.arguments ?? {} }
+      }, signal)
+      if (nativeCall) {
+        const block = `${text && !text.endsWith('\n') ? '\n' : ''}<tool_call>${JSON.stringify(nativeCall)}</tool_call>`
+        text += block
+        onEvent({ type: 'text', delta: block })
+      }
+      return text
+    }
+
+    const withTools = tools.length ? { tools } : {}
+    const tryThinking = async (extraTools) => {
+      try {
+        return await attempt({ ...thinkingPayload(provider), ...extraTools })
+      } catch (error) {
+        // Come prima: se il modello non accetta il livello di ragionamento si riprova con think:true.
+        if (error.name === 'AbortError' || providerConfig(provider).reasoning === 'instant' || !error.httpStatus) throw error
+        return attempt({ think: true, ...extraTools })
+      }
+    }
+    try {
+      return await tryThinking(withTools)
+    } catch (error) {
+      // Un modello senza supporto agli strumenti rifiuta la richiesta: si riprova senza, col solo formato testuale.
+      if (error.name === 'AbortError' || !tools.length || !error.httpStatus) throw error
+      // Il chiamante rifà la richiesta col formato testuale: serve un prompt diverso, quindi qui non si ritenta in silenzio.
+      throw new Error(`TOOLS_UNSUPPORTED: ${error.message}`)
+    }
+  }
+
+  /**
+   * Invia una conversazione `[{ role, content }]` al provider attivo in streaming.
+   * `onEvent` riceve { type: 'text' | 'thinking' | 'status', delta | text }; `signal` interrompe la richiesta.
+   * Restituisce il testo finale della risposta.
+   */
+  async function chatStream(messages, { onEvent = () => {}, signal, tools = [] } = {}) {
     assertConfigured()
     const provider = activeProvider()
     const config = providerConfig(provider)
-    const list = (Array.isArray(messages) ? messages : []).map((message) => ({ role: message?.role || 'user', content: String(message?.content ?? '') }))
+    const list = (Array.isArray(messages) ? messages : []).map((message) => ({
+      role: message?.role || 'user',
+      content: String(message?.content ?? ''),
+      ...(Array.isArray(message?.tool_calls) ? { tool_calls: message.tool_calls } : {}),
+      ...(message?.tool_name ? { tool_name: String(message.tool_name) } : {}),
+      // Immagini come { mime, data }; chi le riceve come stringhe base64 le tratta come PNG.
+      ...(Array.isArray(message?.images) && message.images.length ? { images: message.images.map((image) => (typeof image === 'string' ? { mime: 'image/png', data: image } : image)) } : {}),
+    }))
     log(`[AI] ${LABELS[provider]} richiesta (${list.length} messaggi)`)
+    const ollamaMessages = list.map((message) => (message.images ? { ...message, images: message.images.map((image) => image.data) } : message))
     if (provider === 'ollama') {
-      const result = await ollamaChat(config.endpoint, { model: config.model, messages: list, stream: false }, provider)
-      return String(result?.message?.content || '').trim()
+      return (await streamOllama(config.endpoint, { model: config.model, messages: ollamaMessages }, provider, {}, onEvent, signal, tools)).trim()
     }
     if (provider === 'ollama-cloud') {
-      const result = await ollamaChat(OLLAMA_CLOUD_URL, { model: config.model, messages: list, stream: false }, provider, cloudOptions())
-      return String(result?.message?.content || '').trim()
+      return (await streamOllama(OLLAMA_CLOUD_URL, { model: config.model, messages: ollamaMessages }, provider, cloudOptions(), onEvent, signal, tools)).trim()
     }
-    const prompt = list.map((message) => `${message.role.toUpperCase()}:\n${message.content}`).join('\n\n')
-    return requestCliPrompt(provider, prompt)
+    // Le CLI ricevono un unico prompt: ogni immagine lascia un segnaposto [Immagine N] e viene allegata nello stesso ordine.
+    const attached = []
+    const prompt = list.map((message) => {
+      const placeholders = (message.images || []).map((image) => { attached.push(image); return `[Immagine ${attached.length}]` })
+      return `${message.role.toUpperCase()}:\n${message.content}${placeholders.length ? `\n${placeholders.join(' ')}` : ''}`
+    }).join('\n\n')
+    return streamCliPrompt(provider, prompt, onEvent, signal, attached)
+  }
+
+  const chat = (messages) => chatStream(messages)
+
+  // Cosa sa fare il modello selezionato. Per Ollama si legge `capabilities` da /api/show (es. "vision", "tools");
+  // per Claude e Codex si dà per scontato che supportino le immagini.
+  const capabilityCache = new Map()
+  async function getCapabilities(modelOverride) {
+    const provider = activeProvider()
+    if (provider === 'claude' || provider === 'codex') return { known: true, vision: true, tools: true }
+    const config = providerConfig(provider)
+    const model = String(modelOverride || config.model || '')
+    if (!model) return { known: false, vision: false, tools: false }
+    const key = `${provider}:${model}:${config.endpoint || ''}`
+    if (capabilityCache.has(key)) return capabilityCache.get(key)
+    try {
+      const options = provider === 'ollama-cloud' ? cloudOptions() : {}
+      const endpoint = provider === 'ollama-cloud' ? OLLAMA_CLOUD_URL : config.endpoint
+      const data = await requestJson(`${endpoint}/api/show`, { ...options, method: 'POST' }, { model })
+      const list = Array.isArray(data?.capabilities) ? data.capabilities : []
+      const result = { known: true, vision: list.includes('vision'), tools: list.includes('tools') }
+      capabilityCache.set(key, result)
+      return result
+    } catch {
+      return { known: false, vision: false, tools: false }
+    }
   }
 
   async function getStatus(provider = activeProvider()) {
@@ -416,7 +690,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     return names(await requestJson(`${target}/api/tags`))
   }
 
-  return { getSettings, saveSettings, hasApiKey: () => Boolean(loadApiKey()), saveApiKey, getStatus, login, submitLoginCode, stopLogin, listModels, chat }
+  return { getSettings, saveSettings, hasApiKey: () => Boolean(loadApiKey()), saveApiKey, getStatus, login, submitLoginCode, stopLogin, listModels, chat, chatStream, getCapabilities }
 }
 
 module.exports = { createAiProviders }

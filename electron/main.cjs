@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, screen, shell } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, safeStorage, screen, session, shell, webContents } = require('electron')
 const fs = require('node:fs/promises')
 const fsSync = require('node:fs')
 const path = require('node:path')
@@ -9,12 +9,19 @@ const { createApplicationMenu } = require('./menu.cjs')
 const { createAiProviders } = require('./ai-providers.cjs')
 const { createProjectFile } = require('./project-file.cjs')
 const { createChatStore } = require('./chat-store.cjs')
+const { createProjectTools } = require('./project-tools.cjs')
+const { createNotesStore } = require('./notes-store.cjs')
+const images = require('./images.cjs')
 
 const isDevelopment = !app.isPackaged
 let mainWindow
 let projectPath = null
 const projectFile = createProjectFile({ getProjectPath: () => projectPath })
 const chatStore = createChatStore({ getProjectPath: () => projectPath })
+const notesStore = createNotesStore({ getProjectPath: () => projectPath })
+const projectTools = createProjectTools({ getProjectPath: () => projectPath, readDocument: (filePath) => readDocument(filePath) })
+const aiRequests = new Map()
+const BROWSER_PARTITION = 'persist:openwriter-browser'
 const aiProviders = createAiProviders({
   app,
   safeStorage,
@@ -192,6 +199,7 @@ async function renamePath({ path: target, newName }) {
   if (!caseOnlyChange && fsSync.existsSync(destination)) throw new Error('Esiste già un elemento con questo nome')
   await fs.rename(source, destination)
   try { projectFile.moveHistory(source, destination) } catch (error) { console.error('Cronologia non spostata:', error) }
+  try { notesStore.move(source, destination) } catch (error) { console.error('Note non spostate:', error) }
   return destination
 }
 
@@ -212,21 +220,6 @@ async function deletePath(target) {
   return true
 }
 
-// Menu nativo del file explorer: risolve con l'azione scelta, o null se viene chiuso senza scegliere.
-function showExplorerMenu({ isDirectory }) {
-  return new Promise((resolve) => {
-    const choose = (action) => () => resolve(action)
-    Menu.buildFromTemplate([
-      { label: 'Apri', visible: !isDirectory, click: choose('open') },
-      { label: 'Rinomina', click: choose('rename') },
-      { label: 'Elimina', click: choose('delete') },
-      { type: 'separator' },
-      { label: process.platform === 'win32' ? 'Mostra in Esplora risorse' : 'Mostra nel file manager', click: choose('reveal') },
-    ]).popup({ window: mainWindow, callback: () => setTimeout(() => resolve(null), 150) })
-  })
-}
-
-// Menu dell'editor: correzioni ortografiche, aggiunta al dizionario e modifica di base.
 // Lingue del correttore: quelle del progetto, se impostate, altrimenti quelle generali (spellcheck.json).
 function spellcheckFilePath() {
   return path.join(app.getPath('userData'), 'spellcheck.json')
@@ -264,22 +257,17 @@ function applySpellcheck() {
   if (languages.length) session.setSpellCheckerLanguages(languages)
 }
 
-function showEditMenu(webContents, params) {
+// Il menu contestuale di editor e campi di testo lo disegna il renderer (HTML, stile piatto): qui si inviano i dati del correttore.
+function sendEditContextMenu(webContents, params) {
   if (!params.isEditable && !params.selectionText) return
-  const template = []
-  if (params.misspelledWord) {
-    const suggestions = params.dictionarySuggestions.slice(0, 5)
-    template.push(...suggestions.map((suggestion) => ({ label: suggestion, click: () => webContents.replaceMisspelling(suggestion) })))
-    if (!suggestions.length) template.push({ label: 'Nessun suggerimento', enabled: false })
-    template.push(
-      { label: `Aggiungi "${params.misspelledWord}" al dizionario`, click: () => webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord) },
-      { type: 'separator' },
-    )
-  }
-  if (params.isEditable) template.push({ role: 'cut', label: 'Taglia' })
-  template.push({ role: 'copy', label: 'Copia' })
-  if (params.isEditable) template.push({ role: 'paste', label: 'Incolla' }, { type: 'separator' }, { role: 'selectAll', label: 'Seleziona tutto' })
-  Menu.buildFromTemplate(template).popup({ window: mainWindow })
+  webContents.send('edit:context-menu', {
+    x: params.x,
+    y: params.y,
+    isEditable: params.isEditable,
+    misspelledWord: params.misspelledWord,
+    suggestions: params.dictionarySuggestions.slice(0, 5),
+    flags: params.editFlags,
+  })
 }
 
 async function listDirectory(directory) {
@@ -381,14 +369,25 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: true,
     },
   })
 
   applySpellcheck()
-  mainWindow.webContents.on('context-menu', (_event, params) => showEditMenu(mainWindow.webContents, params))
+  mainWindow.webContents.on('context-menu', (_event, params) => sendEditContextMenu(mainWindow.webContents, params))
 
   if (windowState.maximized) mainWindow.maximize()
   trackWindowState(mainWindow, windowState)
+
+  // La scheda del browser è un <webview> isolato: niente preload, niente Node, partizione dedicata, solo http(s).
+  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    params.partition = BROWSER_PARTITION
+    if (params.src && !/^(https?:|about:blank)/i.test(params.src)) event.preventDefault()
+  })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//.test(url)) shell.openExternal(url)
@@ -396,7 +395,8 @@ function createWindow() {
   })
 
   if (isDevelopment) {
-    mainWindow.loadURL('http://127.0.0.1:5173')
+    // OPENWRITER_DEV_URL permette di puntare a un altro dev server (es. per le prove automatiche).
+    mainWindow.loadURL(process.env.OPENWRITER_DEV_URL || 'http://127.0.0.1:5173')
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
@@ -417,6 +417,47 @@ ipcMain.handle('project:save-settings', (_event, settings) => {
   applySpellcheck()
   return saved
 })
+// Chat in streaming: gli eventi (testo, ragionamento, stato) arrivano al renderer man mano, e la richiesta si può interrompere.
+ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools }) => {
+  const controller = new AbortController()
+  aiRequests.set(requestId, controller)
+  try {
+    return await aiProviders.chatStream(messages, {
+      signal: controller.signal,
+      tools: Array.isArray(tools) ? tools : [],
+      onEvent: (payload) => { if (!event.sender.isDestroyed()) event.sender.send('ai:stream', { requestId, event: payload }) },
+    })
+  } catch (error) {
+    // Un'interruzione voluta non è un errore: si risponde null e il preload la riconverte in un rifiuto lato renderer.
+    if (error.name === 'AbortError') return null
+    throw error
+  } finally {
+    aiRequests.delete(requestId)
+  }
+})
+ipcMain.handle('ai:cancel', (_event, requestId) => { aiRequests.get(requestId)?.abort(); return true })
+ipcMain.handle('tools:list-directory', (_event, relativePath) => projectTools.listDirectory(relativePath))
+ipcMain.handle('tools:read-file', (_event, { path: relativePath, offset, limit } = {}) => projectTools.readFile(relativePath, { offset, limit }))
+ipcMain.handle('ai:capabilities', (_event, model) => aiProviders.getCapabilities(model))
+ipcMain.handle('images:fetch', (_event, url) => images.fetchImage(String(url)))
+ipcMain.handle('images:read-file', async (_event, relativePath) => images.prepareBuffer(await projectTools.readImage(relativePath)))
+// Schermate: solo la finestra dell'app o le sue schede browser (webview), mai altro.
+ipcMain.handle('images:capture-page', async (_event, rect) => {
+  const area = { x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)), width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)) }
+  return images.prepareImage(await mainWindow.webContents.capturePage(area))
+})
+ipcMain.handle('images:capture-webview', async (_event, contentsId) => {
+  const contents = webContents.fromId(Number(contentsId))
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) throw new Error('Scheda browser non valida')
+  return images.prepareImage(await contents.capturePage())
+})
+ipcMain.handle('chat:save-attachment', (_event, attachment) => chatStore.saveAttachment(attachment || {}))
+ipcMain.handle('chat:get-attachment', (_event, id) => chatStore.getAttachment(id))
+ipcMain.handle('notes:list', (_event, filePath) => notesStore.list(filePath))
+ipcMain.handle('notes:list-all', () => (projectPath ? notesStore.listAll() : []))
+ipcMain.handle('notes:add', (_event, { filePath, note }) => notesStore.add(filePath, note))
+ipcMain.handle('notes:update', (_event, { filePath, id, changes }) => notesStore.update(filePath, id, changes))
+ipcMain.handle('notes:delete', (_event, { filePath, id }) => notesStore.remove(filePath, id))
 ipcMain.handle('chat:list', () => (projectPath ? chatStore.list() : []))
 ipcMain.handle('chat:get', (_event, id) => chatStore.get(id))
 ipcMain.handle('chat:create', (_event, conversation) => chatStore.create(conversation || {}))
@@ -441,7 +482,15 @@ ipcMain.handle('workspace:choose-project', async () => {
   return result.canceled ? projectPath : setProject(result.filePaths[0])
 })
 ipcMain.handle('workspace:import-files', (_event, request) => importFiles(request || {}))
-ipcMain.handle('explorer:context-menu', (_event, request) => showExplorerMenu(request || {}))
+ipcMain.handle('edit:action', (event, action) => {
+  const contents = event.sender
+  if (action === 'cut') contents.cut()
+  else if (action === 'copy') contents.copy()
+  else if (action === 'paste') contents.paste()
+  else if (action === 'selectAll') contents.selectAll()
+})
+ipcMain.handle('edit:replace-misspelling', (event, text) => event.sender.replaceMisspelling(String(text)))
+ipcMain.handle('edit:add-dictionary', (event, word) => event.sender.session.addWordToSpellCheckerDictionary(String(word)))
 ipcMain.handle('workspace:rename-path', (_event, request) => renamePath(request || {}))
 ipcMain.handle('workspace:delete-path', (_event, target) => deletePath(target))
 ipcMain.handle('workspace:reveal-path', (_event, target) => { shell.showItemInFolder(resolveInProject(target)) })
@@ -497,7 +546,19 @@ ipcMain.handle('ai:has-api-key', () => aiProviders.hasApiKey())
 ipcMain.handle('ai:save-api-key', (_event, value) => aiProviders.saveApiKey(value))
 ipcMain.handle('ai:chat', (_event, messages) => aiProviders.chat(messages))
 
+app.on('web-contents-created', (_event, contents) => {
+  if (contents.getType() !== 'webview') return
+  contents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) contents.loadURL(url)
+    return { action: 'deny' }
+  })
+  contents.on('will-navigate', (event, url) => { if (!/^(https?:|about:blank)/i.test(url)) event.preventDefault() })
+})
+
 app.whenReady().then(async () => {
+  const browserSession = session.fromPartition(BROWSER_PARTITION)
+  browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  browserSession.on('will-download', (event) => event.preventDefault())
   await loadProject()
   createWindow()
   createApplicationMenu((command) => {

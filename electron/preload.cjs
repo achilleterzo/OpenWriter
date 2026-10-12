@@ -15,7 +15,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getVersion: (filePath, id) => ipcRenderer.invoke('history:get', { filePath, id }),
   addVersion: (filePath, markdown, label) => ipcRenderer.invoke('history:add', { filePath, markdown, label }),
   deleteVersion: (filePath, id) => ipcRenderer.invoke('history:delete', { filePath, id }),
-  showExplorerMenu: (request) => ipcRenderer.invoke('explorer:context-menu', request),
+  editAction: (action) => ipcRenderer.invoke('edit:action', action),
+  replaceMisspelling: (text) => ipcRenderer.invoke('edit:replace-misspelling', text),
+  addToDictionary: (word) => ipcRenderer.invoke('edit:add-dictionary', word),
+  onEditContextMenu: (callback) => {
+    const listener = (_event, info) => callback(info)
+    ipcRenderer.on('edit:context-menu', listener)
+    return () => ipcRenderer.removeListener('edit:context-menu', listener)
+  },
   renamePath: (request) => ipcRenderer.invoke('workspace:rename-path', request),
   deletePath: (target) => ipcRenderer.invoke('workspace:delete-path', target),
   revealPath: (target) => ipcRenderer.invoke('workspace:reveal-path', target),
@@ -27,6 +34,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveConversation: (conversation) => ipcRenderer.invoke('chat:save', conversation),
   deleteConversation: (id) => ipcRenderer.invoke('chat:delete', id),
   openChatFolder: () => ipcRenderer.invoke('chat:open-folder'),
+  listDirectoryForAi: (path) => ipcRenderer.invoke('tools:list-directory', path),
+  readFileForAi: (request) => ipcRenderer.invoke('tools:read-file', request),
+  listNotes: (filePath) => ipcRenderer.invoke('notes:list', filePath),
+  listAllNotes: () => ipcRenderer.invoke('notes:list-all'),
+  addNote: (request) => ipcRenderer.invoke('notes:add', request),
+  updateNote: (request) => ipcRenderer.invoke('notes:update', request),
+  deleteNote: (request) => ipcRenderer.invoke('notes:delete', request),
+  fetchImage: (url) => ipcRenderer.invoke('images:fetch', url),
+  readImageFile: (path) => ipcRenderer.invoke('images:read-file', path),
+  captureRect: (rect) => ipcRenderer.invoke('images:capture-page', rect),
+  captureWebview: (contentsId) => ipcRenderer.invoke('images:capture-webview', contentsId),
+  saveAttachment: (attachment) => ipcRenderer.invoke('chat:save-attachment', attachment),
+  getAttachment: (id) => ipcRenderer.invoke('chat:get-attachment', id),
   getProject: () => ipcRenderer.invoke('workspace:get-project'),
   chooseProject: () => ipcRenderer.invoke('workspace:choose-project'),
   listDirectory: (directory) => ipcRenderer.invoke('workspace:list-directory', directory),
@@ -43,6 +63,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     hasApiKey: () => ipcRenderer.invoke('ai:has-api-key'),
     saveApiKey: (value) => ipcRenderer.invoke('ai:save-api-key', value),
     chat: (messages) => ipcRenderer.invoke('ai:chat', messages),
+    getCapabilities: (model) => ipcRenderer.invoke('ai:capabilities', model),
+    // Risposta in streaming: onEvent riceve { type: 'text' | 'thinking' | 'status', delta | text }; cancel() interrompe.
+    chatStream: (messages, onEvent, options = {}) => {
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      const listener = (_event, payload) => { if (payload.requestId === requestId) onEvent(payload.event) }
+      ipcRenderer.on('ai:stream', listener)
+      const promise = ipcRenderer.invoke('ai:chat-stream', { requestId, messages, tools: options.tools }).then((result) => {
+        if (result === null) throw new Error('Richiesta interrotta')
+        return result
+      }).finally(() => ipcRenderer.removeListener('ai:stream', listener))
+      return { promise, cancel: () => ipcRenderer.invoke('ai:cancel', requestId) }
+    },
   },
   onAppCommand: (callback) => {
     const listener = (_event, command) => callback(command)
