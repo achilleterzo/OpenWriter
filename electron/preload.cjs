@@ -5,18 +5,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveMarkdown: (payload) => ipcRenderer.invoke('document:save-markdown', payload),
   exportDocx: (html) => ipcRenderer.invoke('document:export-docx', { html }),
   exportPdf: (html) => ipcRenderer.invoke('document:export-pdf', { html }),
-  getCodexStatus: () => ipcRenderer.invoke('codex:status'),
-  connectCodex: (executable) => ipcRenderer.invoke('codex:connect', { executable }),
-  disconnectCodex: () => ipcRenderer.invoke('codex:disconnect'),
-  onCodexStatus: (callback) => {
-    const listener = (_event, status) => callback(status)
-    ipcRenderer.on('codex:status', listener)
-    return () => ipcRenderer.removeListener('codex:status', listener)
-  },
-  onCodexLog: (callback) => {
-    const listener = (_event, message) => callback(message)
-    ipcRenderer.on('codex:log', listener)
-    return () => ipcRenderer.removeListener('codex:log', listener)
+  ai: {
+    getSettings: () => ipcRenderer.invoke('ai:get-settings'),
+    saveSettings: (settings) => ipcRenderer.invoke('ai:save-settings', settings),
+    getStatus: (provider) => ipcRenderer.invoke('ai:status', provider),
+    login: (provider) => ipcRenderer.invoke('ai:login', provider),
+    submitLoginCode: (code) => ipcRenderer.invoke('ai:login-code', code),
+    listModels: (request) => ipcRenderer.invoke('ai:models', request),
+    hasApiKey: () => ipcRenderer.invoke('ai:has-api-key'),
+    saveApiKey: (value) => ipcRenderer.invoke('ai:save-api-key', value),
+    chat: (messages) => ipcRenderer.invoke('ai:chat', messages),
   },
   onAppCommand: (callback) => {
     const listener = (_event, command) => callback(command)

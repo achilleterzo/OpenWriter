@@ -1,15 +1,18 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require('electron')
 const fs = require('node:fs/promises')
 const path = require('node:path')
 const mammoth = require('mammoth')
 const htmlToDocx = require('html-to-docx')
 const pdfParse = require('pdf-parse')
 const { createApplicationMenu } = require('./menu.cjs')
-const { CodexAppServer } = require('./codex-app-server.cjs')
+const { createAiProviders } = require('./ai-providers.cjs')
 
 const isDevelopment = !app.isPackaged
 let mainWindow
-const codexAppServer = new CodexAppServer()
+const aiProviders = createAiProviders({
+  app,
+  safeStorage,
+  })
 
 const markdownFilter = {
   name: 'Markdown',
@@ -114,6 +117,11 @@ function createWindow() {
     },
   })
 
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//.test(url)) shell.openExternal(url)
+    return { action: 'deny' }
+  })
+
   if (isDevelopment) {
     mainWindow.loadURL('http://127.0.0.1:5173')
   } else {
@@ -155,11 +163,17 @@ ipcMain.handle('document:export-pdf', async (_event, { html }) => {
   await exportPdf(html, pdfPath)
   return pdfPath
 })
-ipcMain.handle('codex:status', () => codexAppServer.getStatus())
-ipcMain.handle('codex:connect', async (_event, { executable }) => codexAppServer.connect(executable || 'codex'))
-ipcMain.handle('codex:disconnect', () => codexAppServer.disconnect())
-codexAppServer.onStatus((status) => mainWindow?.webContents.send('codex:status', status))
-codexAppServer.onLog((message) => mainWindow?.webContents.send('codex:log', message))
+ipcMain.handle('ai:get-settings', () => aiProviders.getSettings())
+ipcMain.handle('ai:save-settings', (_event, settings) => aiProviders.saveSettings(settings))
+ipcMain.handle('ai:status', (_event, provider) => aiProviders.getStatus(provider))
+ipcMain.handle('ai:login', (_event, provider) => aiProviders.login(provider, {
+  openExternal: (url) => (/^https:\/\//.test(url) ? shell.openExternal(url) : false),
+}))
+ipcMain.handle('ai:login-code', (_event, code) => aiProviders.submitLoginCode(code))
+ipcMain.handle('ai:models', (_event, request) => aiProviders.listModels(request || {}))
+ipcMain.handle('ai:has-api-key', () => aiProviders.hasApiKey())
+ipcMain.handle('ai:save-api-key', (_event, value) => aiProviders.saveApiKey(value))
+ipcMain.handle('ai:chat', (_event, messages) => aiProviders.chat(messages))
 
 app.whenReady().then(() => {
   createWindow()
