@@ -5,7 +5,7 @@ export function ToolbarButton({ active = false, label, children, onClick }) {
       aria-label={label}
       title={label}
       className={`rounded-md p-2 transition ${
-        active ? 'bg-cyan-400 text-slate-950' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+        active ? 'bg-accent-400 text-slate-950' : 'text-slate-300 hover:bg-slate-700 hover:text-slate-50'
       }`}
       onClick={onClick}
     >

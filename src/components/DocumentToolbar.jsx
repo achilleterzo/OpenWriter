@@ -52,7 +52,7 @@ export default function DocumentToolbar({ editor }) {
         id="block-type"
         aria-label="Tipo di blocco"
         value={currentBlock}
-        className="mr-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-2 text-sm text-slate-200 outline-none focus:border-cyan-400"
+        className="mr-1 rounded-md border border-slate-700 bg-slate-800 px-2 py-2 text-sm text-slate-200 outline-none focus:border-accent-400"
         onChange={(event) => {
           const value = event.target.value
           if (value === 'paragraph') editor.chain().focus().setParagraph().run()
