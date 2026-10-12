@@ -31,13 +31,43 @@
 }
 
 :root {
+  --emerald-300: 110 231 183;
+  --emerald-400: 52 211 153;
+  --rose-300: 253 164 175;
+  --rose-400: 251 113 133;
+  --amber-300: 252 211 77;
+  --amber-400: 251 191 36;
+  --teal-200: 153 246 228;
+  --teal-300: 94 234 212;
+  --teal-900: 19 78 74;
+  --teal-950: 4 47 46;
   --accent-300: 196 181 253; --accent-400: 167 139 250; --accent-500: 139 92 246; --accent-600: 124 58 237;
   --editor-font: ui-sans-serif, system-ui, sans-serif;
   --editor-size: 1.0625rem;
   --editor-line-height: 1.75;
   --editor-width: 56rem;
 }
-:root[data-theme='light'] { color-scheme: light; }
+:root[data-theme='light'] {
+  color-scheme: light;
+  --emerald-300: 6 95 70;
+  --emerald-400: 4 120 87;
+  --rose-300: 159 18 57;
+  --rose-400: 190 18 60;
+  --amber-300: 146 64 14;
+  --amber-400: 180 83 9;
+  --teal-200: 17 94 89;
+  --teal-300: 15 118 110;
+  --teal-900: 94 234 212;
+  --teal-950: 204 251 241;
+}
+
+/* Tema chiaro: tonalità d'accento più scure, altrimenti testo e bordi chiari sparirebbero sullo sfondo. */
+:root[data-theme='light'] { --accent-300: 109 40 217; --accent-400: 124 58 237; }
+:root[data-theme='light'][data-accent='violet'] { --accent-300: 109 40 217; --accent-400: 124 58 237; }
+:root[data-theme='light'][data-accent='cyan'] { --accent-300: 14 116 144; --accent-400: 8 145 178; }
+:root[data-theme='light'][data-accent='emerald'] { --accent-300: 4 120 87; --accent-400: 5 150 105; }
+:root[data-theme='light'][data-accent='rose'] { --accent-300: 190 18 60; --accent-400: 225 29 72; }
+:root[data-theme='light'][data-accent='amber'] { --accent-300: 180 83 9; --accent-400: 217 119 6; }
 :root[data-accent='violet'] { --accent-300: 196 181 253; --accent-400: 167 139 250; --accent-500: 139 92 246; --accent-600: 124 58 237; }
 :root[data-accent='cyan'] { --accent-300: 103 232 249; --accent-400: 34 211 238; --accent-500: 6 182 212; --accent-600: 8 145 178; }
 :root[data-accent='emerald'] { --accent-300: 110 231 183; --accent-400: 52 211 153; --accent-500: 16 185 129; --accent-600: 5 150 105; }
@@ -150,4 +180,38 @@ body {
   .document-editor .tiptap {
     padding: 1.25rem;
   }
+}
+
+/* Note ancorate al testo: commenti in tinta d'accento, suggerimenti con sottolineatura ondulata ambra. */
+.document-editor .tiptap .ow-note {
+  cursor: pointer;
+  border-radius: 0.125rem;
+  transition: background-color 0.15s;
+}
+
+.document-editor .tiptap .ow-note-comment {
+  background: rgb(var(--accent-500) / 0.18);
+  border-bottom: 2px solid rgb(var(--accent-400));
+}
+
+.document-editor .tiptap .ow-note-suggestion {
+  background: rgb(245 158 11 / 0.14);
+  text-decoration: underline wavy rgb(245 158 11);
+  text-underline-offset: 3px;
+}
+
+.document-editor .tiptap .ow-note-active {
+  background: rgb(var(--accent-500) / 0.4);
+  outline: 1px solid rgb(var(--accent-400));
+}
+
+/* Risultati della ricerca nel documento. */
+.document-editor .tiptap .ow-find {
+  border-radius: 0.125rem;
+  background: rgb(245 158 11 / 0.35);
+}
+
+.document-editor .tiptap .ow-find-current {
+  background: rgb(245 158 11 / 0.75);
+  outline: 1px solid rgb(251 191 36);
 }
