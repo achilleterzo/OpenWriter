@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Bot, CheckCircle2, RefreshCw } from 'lucide-react'
+import { reasoningByProvider } from '../lib/aiOptions.js'
 import ollamaLogo from '../assets/provider-logos/ollama.svg'
 import codexLogo from '../assets/provider-logos/codex.svg'
 import claudeCodeLogo from '../assets/provider-logos/claude-code.svg'
@@ -13,20 +14,15 @@ const providers = [
   { value: 'claude', label: 'Claude', description: 'CLI nativa con OAuth Claude' },
 ]
 const logos = { ollama: ollamaLogo, 'ollama-cloud': ollamaLogo, codex: codexLogo, claude: claudeCodeLogo }
-const ollamaReasoning = [
-  { value: 'instant', label: 'Istantaneo' },
-  { value: 'low', label: 'Basso' },
-  { value: 'medium', label: 'Medio' },
-  { value: 'high', label: 'Alto' },
-]
 const languages = ['Italiano', 'English', 'Español', 'Français', 'Deutsch', 'Português']
-const defaultReasoning = { value: 'default', label: 'Predefinito del client' }
-const reasoningByProvider = {
-  ollama: ollamaReasoning,
-  'ollama-cloud': ollamaReasoning,
-  codex: [defaultReasoning, ...ollamaReasoning.slice(1), { value: 'xhigh', label: 'Molto alto' }],
-  claude: [defaultReasoning, ...ollamaReasoning.slice(1), { value: 'xhigh', label: 'Molto alto' }, { value: 'max', label: 'Massimo' }],
-}
+const toolOptions = [
+  { key: 'files', label: 'File del progetto', help: 'Elencare le cartelle e leggere i file del progetto (la cartella .ow è esclusa).' },
+  { key: 'notes', label: 'Note nel documento', help: 'Aggiungere note e suggerimenti ancorati al testo, che tu accetti o rifiuti, e consultarli.' },
+  { key: 'edit', label: 'Modifica del documento aperto', help: 'Sostituire o inserire testo. Le modifiche sono annullabili con Ctrl+Z, non vengono salvate da sole e prima della prima modifica viene archiviata una versione.' },
+  { key: 'ask', label: 'Domande con scelte', help: 'L\'assistente può farti domande con risposte cliccabili (a pagine, con "Altro" per scrivere la tua), invece di elencare le opzioni nel testo.' },
+  { key: 'vision', label: 'Immagini e schermate', help: 'Guardare schermate del documento e delle schede del browser, e immagini di pagine, collegamenti o file del progetto. Richiede un modello con vision; le immagini vengono inviate al provider scelto e, per quelle in rete, scaricate dal tuo computer (gli indirizzi locali sono bloccati).' },
+  { key: 'web', label: 'Navigazione web', help: 'Cercare con DuckDuckGo, aprire pagine e leggere le schede del Browser, comprese quelle che hai aperto tu (anche pagine in cui sei autenticato). Ricerche e indirizzi escono dal tuo computer; gli indirizzi locali non può aprirli.' },
+]
 
 const fieldClass = 'mt-2 w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2.5 text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400 disabled:opacity-60'
 const buttonClass = 'rounded-md bg-slate-700 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-slate-600 disabled:cursor-wait disabled:opacity-60'
@@ -38,6 +34,7 @@ export default function AiProviderSettings() {
   const [status, setStatus] = useState(null)
   const [apiKey, setApiKey] = useState('')
   const [hasSavedKey, setHasSavedKey] = useState(false)
+  const [capabilities, setCapabilities] = useState(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -85,6 +82,12 @@ export default function AiProviderSettings() {
     if (provider !== 'ollama-cloud' || hasSavedKey) loadModels()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings?.aiEnabled, provider, hasSavedKey])
+
+  // Il modello scelto sa guardare le immagini? Serve per l'opzione "Immagini e schermate".
+  useEffect(() => {
+    if (!settings?.aiEnabled || !provider) return
+    ai.getCapabilities().then(setCapabilities).catch(() => setCapabilities(null))
+  }, [settings?.aiEnabled, provider, config.model])
 
   async function saveKey() {
     try {
@@ -259,6 +262,34 @@ export default function AiProviderSettings() {
               {reasoningByProvider[provider].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </label>
+
+          <fieldset className="grid gap-3 rounded-lg border border-slate-800 p-4">
+            <legend className="px-1 text-sm text-slate-300">Strumenti dell&apos;assistente</legend>
+            {toolOptions.map(({ key, label, help }) => (
+              <label key={key} className="flex items-start gap-3 text-sm text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.tools?.[key])}
+                  className="mt-1 accent-accent-500"
+                  onChange={(event) => persist({ ...settings, tools: { ...settings.tools, [key]: event.target.checked } })}
+                />
+                <span>{label}<span className="block text-xs text-slate-500">{help}</span></span>
+              </label>
+            ))}
+            <label className="flex items-start justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
+              <span>
+                Passaggi massimi con gli strumenti
+                <span className="block text-xs text-slate-500">Quante chiamate agli strumenti può concatenare l&apos;assistente per ogni richiesta. Al limite ti chiede se continuare.</span>
+              </span>
+              <select className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-100 outline-none focus:border-accent-400" value={settings.maxToolSteps} onChange={(event) => persist({ ...settings, maxToolSteps: Number(event.target.value) })}>
+                {[...new Set([5, 8, 10, 15, 20, 30, 50, settings.maxToolSteps])].sort((left, right) => left - right).map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
+            {settings.tools?.vision && capabilities && !capabilities.vision && (
+              <p className="text-xs text-amber-400">{capabilities.known ? 'Il modello selezionato non supporta le immagini: gli strumenti per immagini e schermate restano disattivati.' : 'Non riesco a verificare se il modello supporta le immagini: gli strumenti per immagini e schermate restano disattivati.'}</p>
+            )}
+            <p className="text-xs text-slate-500">Gli strumenti funzionano con tutti i provider, ma i modelli piccoli possono usarli in modo meno affidabile.</p>
+          </fieldset>
 
           {error && <p className="text-sm text-rose-400">{error}</p>}
         </div>
