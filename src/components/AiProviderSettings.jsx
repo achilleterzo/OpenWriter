@@ -19,6 +19,7 @@ const ollamaReasoning = [
   { value: 'medium', label: 'Medio' },
   { value: 'high', label: 'Alto' },
 ]
+const languages = ['Italiano', 'English', 'Español', 'Français', 'Deutsch', 'Português']
 const defaultReasoning = { value: 'default', label: 'Predefinito del client' }
 const reasoningByProvider = {
   ollama: ollamaReasoning,
@@ -27,8 +28,8 @@ const reasoningByProvider = {
   claude: [defaultReasoning, ...ollamaReasoning.slice(1), { value: 'xhigh', label: 'Molto alto' }, { value: 'max', label: 'Massimo' }],
 }
 
-const fieldClass = 'mt-2 w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2.5 text-slate-100 outline-none placeholder:text-slate-500 focus:border-violet-400 disabled:opacity-60'
-const buttonClass = 'rounded-md bg-slate-700 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-600 disabled:cursor-wait disabled:opacity-60'
+const fieldClass = 'mt-2 w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2.5 text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400 disabled:opacity-60'
+const buttonClass = 'rounded-md bg-slate-700 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-slate-600 disabled:cursor-wait disabled:opacity-60'
 
 export default function AiProviderSettings() {
   const [settings, setSettings] = useState(null)
@@ -144,7 +145,7 @@ export default function AiProviderSettings() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <Bot className="text-cyan-400" size={20} />
+            <Bot className="text-accent-400" size={20} />
             <h2 className="text-lg font-semibold">Assistente AI</h2>
           </div>
           <p className="mt-2 max-w-xl text-sm leading-6 text-slate-400">Provider usato per la scrittura e la revisione dei testi.</p>
@@ -154,7 +155,7 @@ export default function AiProviderSettings() {
           role="switch"
           aria-checked={settings.aiEnabled}
           aria-label="Abilita assistente AI"
-          className={`relative h-6 w-11 shrink-0 rounded-full transition ${settings.aiEnabled ? 'bg-violet-600' : 'bg-slate-700'}`}
+          className={`relative h-6 w-11 shrink-0 rounded-full transition ${settings.aiEnabled ? 'bg-accent-600' : 'bg-slate-700'}`}
           onClick={() => persist({ ...settings, aiEnabled: !settings.aiEnabled })}
         >
           <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${settings.aiEnabled ? 'left-[22px]' : 'left-0.5'}`} />
@@ -196,7 +197,7 @@ export default function AiProviderSettings() {
               </span>
               <div className="flex gap-2">
                 <button type="button" className={buttonClass} onClick={refreshStatus}>Verifica</button>
-                {status?.installed && !connected && <button type="button" className="rounded-md bg-violet-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-500" disabled={loggingIn} onClick={login}>{loggingIn ? 'In attesa del browser…' : 'Accedi'}</button>}
+                {status?.installed && !connected && <button type="button" className="rounded-md bg-accent-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-500" disabled={loggingIn} onClick={login}>{loggingIn ? 'In attesa del browser…' : 'Accedi'}</button>}
               </div>
             </div>
           )}
@@ -211,7 +212,7 @@ export default function AiProviderSettings() {
             </div>
           )}
           {native && loggingIn && loginInfo?.url && (
-            <p className="break-all text-xs text-slate-500">Il browser non si è aperto? <a href={loginInfo.url} target="_blank" rel="noreferrer" className="text-cyan-400 underline">Apri il link di accesso</a></p>
+            <p className="break-all text-xs text-slate-500">Il browser non si è aperto? <a href={loginInfo.url} target="_blank" rel="noreferrer" className="text-accent-400 underline">Apri il link di accesso</a></p>
           )}
 
           {cloud && (
@@ -243,6 +244,13 @@ export default function AiProviderSettings() {
               </select>
               <button type="button" aria-label="Aggiorna modelli" title="Aggiorna modelli" className={`${buttonClass} mt-2`} disabled={modelsLoading} onClick={() => loadModels()}><RefreshCw size={16} className={modelsLoading ? 'animate-spin' : ''} /></button>
             </div>
+          </label>
+
+          <label className="text-sm text-slate-300">
+            Lingua delle risposte
+            <select className={fieldClass} value={settings.language} onChange={(event) => persist({ ...settings, language: event.target.value })}>
+              {[...new Set([...languages, settings.language])].map((language) => <option key={language} value={language}>{language}</option>)}
+            </select>
           </label>
 
           <label className="text-sm text-slate-300">
