@@ -9,6 +9,7 @@ export default function useDocumentFileCommands({ activeTab, getEditor, workspac
 
     return electronAPI.onDocumentCommand(async (command) => {
       try {
+        if (command === 'find' || command === 'replace') return workspace.requestFind(command === 'replace')
         if (command === 'new') return workspace.newTab()
         if (command === 'close-tab') return activeTab && workspace.closeTab(activeTab.id)
         if (command === 'open') {

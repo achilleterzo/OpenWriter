@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, FileText, Folder, FolderOpen, RefreshCw } from 'lucide-react'
 
+import { ContextMenuContext } from './ContextMenu.jsx'
+
 const electronAPI = window.electronAPI
+const revealLabel = /Win/.test(navigator.platform) ? 'Mostra in Esplora risorse' : /Mac/.test(navigator.platform) ? 'Mostra nel Finder' : 'Mostra nel file manager'
 const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes('Files')
 
 // Campo di rinomina in linea: Invio conferma, Esc annulla, la perdita del focus conferma. Seleziona il nome senza estensione.
@@ -97,7 +100,7 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
         {menu.renaming === entry.path ? <RenameInput entry={entry} onCommit={menu.commitRename} onCancel={menu.cancelRename} /> : <span className="truncate">{entry.name}</span>}
       </button>
       {expanded && error && <p style={indent} className="py-1 text-xs text-rose-400">{error}</p>}
-      {expanded && children?.length === 0 && <p style={{ paddingLeft: 8 + (depth + 1) * 14 + 20 }} className="py-1 text-xs text-slate-600">Vuota</p>}
+      {expanded && children?.length === 0 && <p style={{ paddingLeft: 8 + (depth + 1) * 14 + 20 }} className="py-1 text-xs text-slate-500">Vuota</p>}
       {expanded && children?.map((child) => (
         <TreeNode key={child.path} entry={child} depth={depth + 1} activePath={activePath} refreshToken={refreshToken} expandedPaths={expandedPaths} onToggle={onToggle} onOpenFile={onOpenFile} drop={drop} menu={menu} />
       ))}
@@ -113,6 +116,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   const [dropTarget, setDropTarget] = useState(null)
 
   const [renaming, setRenaming] = useState(null)
+  const openMenu = useContext(ContextMenuContext)
 
   const deleteEntry = async (entry) => {
     try {
@@ -125,17 +129,23 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     }
   }
 
-  // Menu contestuale nativo (Apri, Rinomina, Elimina, Mostra nel file manager) e scorciatoie F2 / Canc.
+  // Menu contestuale (Apri, Rinomina, Elimina, Mostra nel file manager) e scorciatoie F2 / Canc.
   const menu = {
     renaming,
-    async open(event, entry) {
+    open(event, entry) {
       event.preventDefault()
       event.stopPropagation()
-      const action = await electronAPI.showExplorerMenu({ path: entry.path, isDirectory: entry.isDirectory })
-      if (action === 'open') onOpenFile(entry.path)
-      if (action === 'rename') setRenaming(entry.path)
-      if (action === 'delete') deleteEntry(entry)
-      if (action === 'reveal') electronAPI.revealPath(entry.path)
+      openMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items: [
+          !entry.isDirectory && { label: 'Apri', onClick: () => onOpenFile(entry.path) },
+          { label: 'Rinomina', hint: 'F2', onClick: () => setRenaming(entry.path) },
+          { label: 'Elimina', hint: 'Canc', danger: true, onClick: () => deleteEntry(entry) },
+          { separator: true },
+          { label: revealLabel, onClick: () => electronAPI.revealPath(entry.path) },
+        ].filter(Boolean),
+      })
     },
     key(event, entry) {
       if (renaming) return
@@ -193,7 +203,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   if (!project) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-        <FolderOpen size={32} className="text-slate-600" />
+        <FolderOpen size={32} className="text-slate-500" />
         <p className="text-sm text-slate-400">Nessun progetto aperto. La cartella del progetto è la directory di lavoro.</p>
         <button type="button" className="rounded-md bg-accent-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-accent-500" onClick={onChooseProject}>Apri cartella</button>
       </div>
@@ -215,7 +225,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
         onDrop={(event) => drop.drop(event, project)}
       >
         {error && <p className="px-3 py-2 text-xs text-rose-400">{error}</p>}
-        {!error && entries.length === 0 && <p className="px-3 py-2 text-xs text-slate-600">Nessun documento (.md, .docx, .pdf) in questa cartella. Trascina qui dei file per copiarli.</p>}
+        {!error && entries.length === 0 && <p className="px-3 py-2 text-xs text-slate-500">Nessun documento (.md, .docx, .pdf) in questa cartella. Trascina qui dei file per copiarli.</p>}
         {entries.map((entry) => (
           <TreeNode key={entry.path} entry={entry} depth={0} activePath={activePath} refreshToken={token} expandedPaths={expandedPaths} onToggle={onToggle} onOpenFile={onOpenFile} drop={drop} menu={menu} />
         ))}

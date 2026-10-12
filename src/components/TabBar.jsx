@@ -1,6 +1,6 @@
-import { FileText, PanelRight, Plus, X } from 'lucide-react'
+import { FileText, Globe, PanelRight, Plus, X } from 'lucide-react'
 
-export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, assistantOpen, onToggleAssistant }) {
+export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, onNewBrowser, assistantOpen, onToggleAssistant }) {
   return (
     <div role="tablist" aria-label="Documenti aperti" className="flex shrink-0 items-stretch overflow-x-auto border-b border-slate-800 bg-slate-950">
       {tabs.map((tab) => {
@@ -15,7 +15,7 @@ export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, assis
             onClick={() => onSelect(tab.id)}
             onAuxClick={(event) => { if (event.button === 1) onClose(tab.id) }}
           >
-            <FileText size={14} className="shrink-0" />
+            {tab.kind === 'browser' ? <Globe size={14} className="shrink-0" /> : <FileText size={14} className="shrink-0" />}
             <span className="truncate">{tab.title}</span>
             <button
               type="button"
@@ -31,6 +31,9 @@ export default function TabBar({ tabs, activeId, onSelect, onClose, onNew, assis
       })}
       <button type="button" aria-label="Nuovo documento" title="Nuovo documento (Ctrl+N)" className="px-3 text-slate-500 transition hover:bg-slate-900 hover:text-slate-50" onClick={onNew}>
         <Plus size={16} />
+      </button>
+      <button type="button" aria-label="Apri il browser" title="Nuova scheda browser" className="px-3 text-slate-500 transition hover:bg-slate-900 hover:text-slate-50" onClick={onNewBrowser}>
+        <Globe size={16} />
       </button>
       <button
         type="button"

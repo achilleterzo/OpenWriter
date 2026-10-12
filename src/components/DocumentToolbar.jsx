@@ -8,6 +8,7 @@ import {
   Minus,
   Quote,
   Redo2,
+  Search,
   Strikethrough,
   Undo2,
 } from 'lucide-react'
@@ -16,7 +17,7 @@ import { ToolbarButton, ToolbarDivider } from './ToolbarButton.jsx'
 
 const headingLevels = [1, 2, 3, 4, 5, 6, 7]
 
-export default function DocumentToolbar({ editor }) {
+export default function DocumentToolbar({ editor, onFind, findOpen }) {
   const active = useEditorState({
     editor,
     selector: ({ editor: currentEditor }) => ({
@@ -80,6 +81,9 @@ export default function DocumentToolbar({ editor }) {
       <ToolbarDivider />
       <ToolbarButton label="Annulla" onClick={() => editor.chain().focus().undo().run()}><Undo2 size={17} /></ToolbarButton>
       <ToolbarButton label="Ripeti" onClick={() => editor.chain().focus().redo().run()}><Redo2 size={17} /></ToolbarButton>
+
+      <ToolbarDivider />
+      <ToolbarButton label="Trova e sostituisci (Ctrl+F)" active={findOpen} onClick={onFind}><Search size={17} /></ToolbarButton>
     </div>
   )
 }

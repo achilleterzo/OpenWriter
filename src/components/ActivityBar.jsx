@@ -1,8 +1,9 @@
-import { Files, History, ListTree, Settings } from 'lucide-react'
+import { Files, History, ListTree, MessageSquareText, Settings } from 'lucide-react'
 
 export const sideTabs = [
   { id: 'files', label: 'File', icon: Files },
   { id: 'outline', label: 'Struttura', icon: ListTree },
+  { id: 'notes', label: 'Note', icon: MessageSquareText },
   { id: 'history', label: 'Cronologia', icon: History },
 ]
 

@@ -55,9 +55,9 @@ export default function HistoryPanel({ tab, editor, project, historyVersion, onC
     onStatus('Versione ripristinata (non ancora salvata)')
   })
 
-  if (!project) return <p className="px-3 py-3 text-xs text-slate-600">Apri un progetto per usare la cronologia delle versioni.</p>
-  if (!filePath) return <p className="px-3 py-3 text-xs text-slate-600">Salva il documento come Markdown dentro il progetto per iniziare a storicizzarne le versioni.</p>
-  if (!state.available) return <p className="px-3 py-3 text-xs text-slate-600">Questo documento è fuori dalla cartella del progetto: la cronologia non è disponibile.</p>
+  if (!project) return <p className="px-3 py-3 text-xs text-slate-500">Apri un progetto per usare la cronologia delle versioni.</p>
+  if (!filePath) return <p className="px-3 py-3 text-xs text-slate-500">Salva il documento come Markdown dentro il progetto per iniziare a storicizzarne le versioni.</p>
+  if (!state.available) return <p className="px-3 py-3 text-xs text-slate-500">Questo documento è fuori dalla cartella del progetto: la cronologia non è disponibile.</p>
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -76,7 +76,7 @@ export default function HistoryPanel({ tab, editor, project, historyVersion, onC
       <div className="min-h-0 flex-1 overflow-y-auto">
         {!state.versions.length && (
           <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
-            <History size={26} className="text-slate-600" />
+            <History size={26} className="text-slate-500" />
             <p className="text-xs text-slate-500">Nessuna versione. Ne viene salvata una a ogni salvataggio del documento.</p>
           </div>
         )}
@@ -87,7 +87,7 @@ export default function HistoryPanel({ tab, editor, project, historyVersion, onC
               <span className="shrink-0 text-xs text-slate-500">{formatter.format(new Date(version.at))}</span>
             </div>
             <div className="mt-1 flex items-center justify-between">
-              <span className="text-xs text-slate-600">{version.size.toLocaleString('it')} caratteri</span>
+              <span className="text-xs text-slate-500">{version.size.toLocaleString('it')} caratteri</span>
               <span className="flex gap-0.5 opacity-60 transition group-hover:opacity-100">
                 <button type="button" title="Confronta con il testo attuale" aria-label="Confronta" className="rounded p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-50" onClick={() => openComparison(version)}><GitCompare size={14} /></button>
                 <button type="button" title="Ripristina" aria-label="Ripristina" className="rounded p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-50" onClick={() => restore(version)}><RotateCcw size={14} /></button>
