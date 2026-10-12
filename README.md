@@ -11,11 +11,13 @@ Built with Electron, React, Vite, Tailwind CSS and [Tiptap](https://tiptap.dev).
 - Rich-text editing with Markdown as the native format: headings (H1–H7), bold, italic, strikethrough, inline code, links, bullet and numbered lists, blockquotes, code blocks, horizontal rules, undo/redo.
 - Opens `.md`, `.markdown`, `.mdown`, `.docx` and `.pdf` files. Markdown files are saved back in place; DOCX and PDF are imported as new documents and saved as Markdown.
 - Exports to **DOCX** and **PDF**.
+- **Find and replace** (`Ctrl/Cmd + F`, or `Ctrl/Cmd + H` to open it with replace; also the magnifier in the toolbar): live highlighting, match counter, next/previous (`Enter` / `Shift+Enter`), match case, whole word and regular expressions (with `$1` capture groups in the replacement). *Replace all* is a single undo step.
 
 ### Projects and tabs
 
 - **Project = working directory.** Open any folder as the project. The file explorer shows its folders and documents, and the AI CLIs run from it.
 - **Multiple documents** in tabs at the top, each with its own editor, undo history and scroll position. A dot marks unsaved changes.
+- **Resizable panels:** drag the edge of the left panel or of the assistant (double-click to reset, or focus the handle and use the arrow keys, `Shift` for bigger steps). Widths have fixed minimums (180 px and 280 px), the document always keeps at least 280 px, and your sizes are remembered. On a narrow window the panels shrink temporarily and return to your sizes when it grows.
 - **Side tabs** switch the left panel between the file explorer (default), a heading outline and the version history of the active document.
 - **Context menu** on files and folders: open, rename (also `F2`), move to the trash (also `Del`), reveal in the file manager. Open tabs and version history follow a rename.
 - **Drag and drop** documents from your system onto the explorer to copy them into the project or into a specific folder. Existing files are never overwritten (`name (1).md`).
@@ -30,6 +32,8 @@ Opening a folder as a project creates (or reuses) a `.ow` directory at its root,
   project.json      Project name, reply language, options
   context.md        Context for the AI assistant (audience, tone, glossary, style rules…)
   chat/             One JSON file per AI conversation (log, branches, extra context)
+    attachments/    Images and screenshots the assistant looked at
+  notes/            Notes and suggestions anchored to document text (one file per document)
   history/          One folder per document, mirroring the project tree
     chapters/intro.md/
       index.json    Version metadata (time, label, automatic or manual)
@@ -49,8 +53,17 @@ A right-hand panel (toggle it from the icon at the end of the tab bar) provides 
 - Works on your current selection, or on the whole active document as context.
 - Quick actions: proofread, rewrite, summarize, review.
 - Conversations are saved with the project (`.ow/chat/`): switch between them, **branch** from any message, and attach previous conversations as context.
+- **Streaming:** the reply appears as it is written, with the model's reasoning (or its progress) and a **Stop** button.
+- **Tools** (each can be switched off in **Settings → AI**):
+  - *Project files:* list a directory and read a file (`.ow` is never exposed). A file that is open in a tab is read **from the editor**, so unsaved changes (yours or the assistant's) are what it sees, never a stale copy from disk.
+  - *Notes:* add actionable notes anchored to the text. A note with a proposed replacement is a **suggestion** you can accept (applies it, undoable) or reject; the assistant can query notes and their status to remember what you accepted or declined. Asked to review or reconsider the notes, it can revise **its own** open notes (text and proposed correction, marked *revised*) or reopen/resolve them, and answers your notes by adding new ones; accepting or rejecting is always up to you. Notes live in `.ow/notes/`, so the Markdown stays clean.
+  - *Edit the open document:* replace or insert text. Edits go through the editor (undo with `Ctrl+Z`), are not saved automatically, and a version is archived before the first one.
+  - *Web browsing (off by default):* search with DuckDuckGo, open pages, and **read the Browser tabs you have open** (it can list them, read the current content of any tab, navigate a tab or open a new one, go back/forward/reload). The tabs are real, so you can watch and use them yourself. The assistant cannot open local or private-network addresses. Note that it can read any page open in those tabs, including ones you are signed in to.
+  - *Images and screenshots (for vision models):* take a screenshot of the visible part of the document (with highlights and notes) or of a Browser tab, and look at images found in pages (`<img>` tags and direct links), at any URL, or in project files. Images are stored as attachments in `.ow/chat/attachments/` and shown as thumbnails in the chat (click to enlarge). Only the latest few are re-sent to the model to save tokens. It needs a model with vision: for Ollama the capability is read from the model (`/api/show`); Claude and Codex are assumed to support it. Remote images are downloaded by the app, with local and private-network addresses blocked (including through redirects and DNS).
+  - *Questions with choices:* the assistant can ask you a question with clickable options (paged, multi-select when useful, plus an *Other* field for a free answer and *Skip*) and waits for your reply, which comes back to it as the tool result. A short **questionnaire** can be asked in sequence (one question at a time, with *Back* and progress), and a choice can be **ordered** (the numbers show the order you picked, which the assistant receives). Digits `1`–`9` pick an option.
+  - *Step limit:* how many tools the assistant may chain per request is set in **Settings → AI** (default 15). At the limit it asks whether to continue instead of just stopping.
 - Insert a reply into the document (replacing the selection) or copy it.
-- Per-provider model and reasoning level, and a configurable reply language.
+- Per-provider model and reasoning level, switchable right from the chat (below the message box) or in Settings, and a configurable reply language.
 
 Supported providers:
 
@@ -99,6 +112,7 @@ npm start
 | `Ctrl/Cmd + S` | Save |
 | `Ctrl/Cmd + Shift + S` | Save as |
 | `Ctrl/Cmd + W` | Close the current tab |
+| `Ctrl/Cmd + F` / `Ctrl/Cmd + H` | Find / Find and replace |
 | `Ctrl/Cmd + ,` | Settings |
 
 ## Project structure
@@ -109,6 +123,10 @@ electron/
   preload.cjs        Safe bridge exposed to the renderer as window.electronAPI
   ai-providers.cjs   Ollama / Ollama Cloud / Codex / Claude connection layer
   project-file.cjs   The .ow directory: project settings, AI context, version history
+  chat-store.cjs     Conversations in .ow/chat
+  notes-store.cjs    Notes and suggestions in .ow/notes
+  project-tools.cjs  Read-only file tools exposed to the assistant
+  images.cjs         Image download (SSRF-safe), screenshots and normalization
   menu.cjs           Native application menu
 src/
   App.jsx            Workspace state: tabs, panels, session persistence
