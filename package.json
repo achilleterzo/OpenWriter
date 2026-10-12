@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "start": "electron .",
-    "lint": "node --check electron/main.cjs && node --check electron/ai-providers.cjs && node --check electron/chat-store.cjs && node --check electron/notes-store.cjs && node --check electron/project-file.cjs && node --check electron/project-tools.cjs && node --check electron/images.cjs && node --check electron/menu.cjs && node --check electron/i18n.cjs && node --check electron/preload.cjs",
+    "lint": "node --check electron/main.cjs && node --check electron/ai-providers.cjs && node --check electron/chat-store.cjs && node --check electron/notes-store.cjs && node --check electron/project-file.cjs && node --check electron/project-tools.cjs && node --check electron/images.cjs && node --check electron/menu.cjs && node --check electron/i18n.cjs && node --check electron/projects.cjs && node --check electron/preload.cjs",
     "test": "npm run build",
     "dist:desktop": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",
@@ -23,7 +23,9 @@
   },
   "devDependencies": {
     "@tiptap/core": "^3.29.2",
+    "@tiptap/extension-code": "^3.29.2",
     "@tiptap/extension-heading": "^3.29.2",
+    "@tiptap/extension-image": "^3.29.2",
     "@tiptap/extension-link": "^3.29.2",
     "@tiptap/markdown": "^3.29.2",
     "@tiptap/pm": "^3.29.2",

@@ -1,6 +1,7 @@
 import {
   Bold,
   Code2,
+  Image as ImageIcon,
   Italic,
   Link as LinkIcon,
   List,
@@ -18,7 +19,7 @@ import { t } from '../i18n/index.js'
 
 const headingLevels = [1, 2, 3, 4, 5, 6, 7]
 
-export default function DocumentToolbar({ editor, onFind, findOpen }) {
+export default function DocumentToolbar({ editor, onImage, onFind, findOpen }) {
   const active = useEditorState({
     editor,
     selector: ({ editor: currentEditor }) => ({
@@ -71,6 +72,7 @@ export default function DocumentToolbar({ editor, onFind, findOpen }) {
       <ToolbarButton label={t('Strikethrough')} active={active.strike} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={17} /></ToolbarButton>
       <ToolbarButton label={t('Inline code')} active={active.code} onClick={() => editor.chain().focus().toggleCode().run()}><Code2 size={17} /></ToolbarButton>
       <ToolbarButton label={t('Link')} active={active.link} onClick={setLink}><LinkIcon size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Insert image…')} onClick={onImage}><ImageIcon size={17} /></ToolbarButton>
 
       <ToolbarDivider />
       <ToolbarButton label={t('Bulleted list')} active={active.bulletList} onClick={() => editor.chain().focus().toggleBulletList().run()}><List size={17} /></ToolbarButton>
