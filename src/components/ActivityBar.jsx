@@ -1,11 +1,13 @@
-import { Files, History, ListTree, MessageSquareText, Settings } from 'lucide-react'
+import { Brain, FolderKanban, Files, History, ListTree, MessageSquareText, Settings } from 'lucide-react'
 import { t } from '../i18n/index.js'
 
 export const sideTabs = [
+  { id: 'projects', label: t('Projects'), icon: FolderKanban },
   { id: 'files', label: t('Files'), icon: Files },
   { id: 'outline', label: t('Outline'), icon: ListTree },
   { id: 'notes', label: t('Notes'), icon: MessageSquareText },
   { id: 'history', label: t('History'), icon: History },
+  { id: 'memory', label: t('Memory'), icon: Brain },
 ]
 
 export default function ActivityBar({ activeTab, onSelect, onSettings }) {
