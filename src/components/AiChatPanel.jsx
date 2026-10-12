@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Brain, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Copy, CornerDownLeft, FolderOpen, GitBranch, Loader2, Pencil, Plus, Send, Settings, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { Brain, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Copy, CornerDownLeft, FolderOpen, GitBranch, Loader2, Pencil, Plus, RotateCcw, Send, Settings, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
 import MarkdownMessage from './MarkdownMessage.jsx'
 import { reasoningByProvider } from '../lib/aiOptions.js'
 import { formatDateTime, languageEnglishName } from '../i18n/index.js'
@@ -63,7 +63,7 @@ const systemPrompt = (language, projectContext = '', previousChats = [], toolsTe
 function transcriptOf(conversation) {
   const text = conversation.messages
     .filter((message) => !message.error && message.role !== 'tool')
-    .map((message) => `${message.role === 'user' ? 'Utente' : 'Assistente'}: ${message.role === 'assistant' ? visibleText(message.content).text : message.content}`)
+    .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.role === 'assistant' ? visibleText(message.content).text : message.content}`)
     .join('\n\n')
   return text.length > MAX_PREVIOUS_CHARS ? `…${text.slice(-MAX_PREVIOUS_CHARS)}` : text
 }
@@ -86,7 +86,10 @@ function toModelMessages(messages, context, native, loaded = new Map()) {
       }
       return [{ role: 'user', content: `[Result of ${message.name}]\n${content}`, ...(attached.length ? { images: attached } : {}) }]
     }
-    if (message.role === 'user' && index === lastUser && context) return [{ role: 'user', content: `${context}\n\nRequest: ${message.content}` }]
+    // App-attached context (e.g. a note): the user only sees a reference to it, the model receives the detail.
+    const detail = message.role === 'user' && message.attachment?.detail ? `${message.attachment.detail}\n\n` : ''
+    if (message.role === 'user' && index === lastUser && context) return [{ role: 'user', content: `${context}\n\n${detail}Request: ${message.content}` }]
+    if (detail) return [{ role: 'user', content: `${detail}${message.content}` }]
     if (native && message.role === 'assistant' && message.toolCall) {
       return [{ role: 'assistant', content: visibleText(message.content).text, tool_calls: [{ function: { name: message.toolCall.name, arguments: message.toolCall.arguments } }] }]
     }
@@ -298,7 +301,8 @@ function ImageViewer({ src, label, onClose }) {
   )
 }
 
-function Message({ message, editor, onBranch, onOpenImage }) {
+// memo: ogni tasto digitato nella casella rirenderizza il pannello, ma i messaggi (con il Markdown) non devono rifarsi.
+const Message = memo(function Message({ message, index, editor, onBranch, onEdit, onOpenImage, onOpenNote }) {
   const [copied, setCopied] = useState(false)
   const assistant = message.role === 'assistant'
 
@@ -311,7 +315,7 @@ function Message({ message, editor, onBranch, onOpenImage }) {
       <div className="group flex flex-col items-start gap-1">
         <ToolResult message={message} />
         {message.images?.length > 0 && <ToolImages images={message.images} onOpen={onOpenImage} />}
-        {onBranch && <div className="flex text-xs text-slate-500 opacity-0 transition group-hover:opacity-100"><button type="button" className={actionClass} onClick={onBranch}><GitBranch size={12} /> {t('Branch from here')}</button></div>}
+        {onBranch && <div className="flex text-xs text-slate-500 opacity-0 transition group-hover:opacity-100"><button type="button" className={actionClass} onClick={() => onBranch(index)}><GitBranch size={12} /> {t('Branch from here')}</button></div>}
       </div>
     )
   }
@@ -326,6 +330,9 @@ function Message({ message, editor, onBranch, onOpenImage }) {
 
   return (
     <div className={`group flex flex-col gap-1 ${assistant ? 'items-start' : 'items-end'}`}>
+      {message.attachment?.label && (message.attachment.noteId && onOpenNote
+        ? <button type="button" className="max-w-[92%] truncate rounded-lg border-l-2 border-accent-500 bg-slate-800/60 px-2.5 py-1 text-left text-xs text-slate-300 transition hover:bg-slate-700/60" title={message.attachment.label} onClick={() => onOpenNote(message.attachment.noteId)}>{message.attachment.label}</button>
+        : <div className="max-w-[92%] truncate rounded-lg border-l-2 border-accent-500 bg-slate-800/60 px-2.5 py-1 text-xs text-slate-300" title={message.attachment.label}>{message.attachment.label}</div>)}
       {message.thinking && <ThinkingBlock text={message.thinking} />}
       {(shown || !message.toolCall) && (
         <div className={`max-w-[92%] break-words rounded-xl px-3 py-2 text-sm leading-6 ${message.error ? 'whitespace-pre-wrap border border-rose-500/40 bg-rose-500/10 text-rose-300' : assistant ? 'bg-slate-800 text-slate-200' : 'whitespace-pre-wrap bg-accent-600 text-white'}`}>
@@ -345,13 +352,42 @@ function Message({ message, editor, onBranch, onOpenImage }) {
             )}
           </>
         )}
-        {onBranch && <button type="button" title={t('Create a new conversation starting from this message')} className={actionClass} onClick={onBranch}><GitBranch size={12} /> {t('Branch from here')}</button>}
+        {onEdit && !assistant && <button type="button" title={t('Edit this message and continue from here: the replies after it are removed')} className={actionClass} onClick={() => onEdit(index)}><Pencil size={12} /> {t('Edit')}</button>}
+        {onBranch && <button type="button" title={t('Create a new conversation starting from this message')} className={actionClass} onClick={() => onBranch(index)}><GitBranch size={12} /> {t('Branch from here')}</button>}
       </div>
     </div>
   )
-}
+})
 
-export default function AiChatPanel({ editor, contextTab, toolBridge, project, settingsVersion, conversationId, onConversationChange, onOpenSettings }) {
+// La casella tiene il proprio testo: digitare non rirenderizza il pannello (e con lui tutta la conversazione).
+const ChatInput = forwardRef(function ChatInput({ busy, onSend, onStop }, ref) {
+  const [value, setValue] = useState('')
+  const textarea = useRef(null)
+  useImperativeHandle(ref, () => ({ setValue, focus: () => textarea.current?.focus() }), [])
+  return (
+    <div className="flex items-end gap-2">
+      <textarea
+        ref={textarea}
+        value={value}
+        rows={3}
+        placeholder={t('Type a message…  (Enter to send, Shift+Enter for a new line)')}
+        className="min-h-0 flex-1 resize-none rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400"
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+            event.preventDefault()
+            onSend(value)
+          }
+        }}
+      />
+      {busy
+        ? <button type="button" aria-label={t('Stop')} title={t('Stop')} className="rounded-md bg-rose-600 p-2.5 text-white transition hover:bg-rose-500" onClick={onStop}><Square size={16} /></button>
+        : <button type="button" aria-label={t('Send')} title={t('Send')} disabled={!value.trim()} className="rounded-md bg-accent-600 p-2.5 text-white transition hover:bg-accent-500 disabled:opacity-50" onClick={() => onSend(value)}><Send size={16} /></button>}
+    </div>
+  )
+})
+
+export default function AiChatPanel({ editor, contextTab, toolBridge, request, onOpenNote, project, settingsVersion, conversationId, onConversationChange, onOpenSettings }) {
   const [settings, setSettings] = useState(null)
   const [capabilities, setCapabilities] = useState(null)
   const [viewer, setViewer] = useState(null)
@@ -362,7 +398,8 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
   const [conversations, setConversations] = useState([])
   const [current, setCurrent] = useState(blankConversation)
   const [renaming, setRenaming] = useState(false)
-  const [input, setInput] = useState('')
+  const [editingIndex, setEditingIndex] = useState(null)
+  const composer = useRef(null)
   const [includeDocument, setIncludeDocument] = useState(true)
   const [busy, setBusy] = useState(false)
   const [live, setLive] = useState(null)
@@ -531,20 +568,56 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
     return { reply, thinking: liveRef.current.thinking }
   }
 
-  async function send(text) {
+  // Richiesta arrivata da fuori (es. "Applica correzione…" di una nota): parte appena l'assistente è pronto e libero.
+  const handledRequest = useRef(null)
+  useEffect(() => {
+    if (!request || handledRequest.current === request.id || busy || !enabled || !settings) return
+    handledRequest.current = request.id
+    send(request.text, request.attachment)
+  })
+
+  // Riprende da dove si era interrotto: l'ultimo messaggio è dell'utente (o un errore dell'assistente, che viene scartato).
+  const canResume = !busy && enabled && current.messages.length > 0 && (() => {
+    const last = current.messages[current.messages.length - 1]
+    return last.role === 'user' || (last.role === 'assistant' && last.error)
+  })()
+
+  // Funzioni stabili per i messaggi memorizzati: puntano sempre alle versioni più recenti.
+  const handlers = useRef({})
+  const onBranchStable = useCallback((index) => handlers.current.branchFrom(index), [])
+  const onEditStable = useCallback((index) => handlers.current.startEdit(index), [])
+
+  function startEdit(index) {
+    setEditingIndex(index)
+    composer.current?.setValue(current.messages[index].content)
+    setTimeout(() => composer.current?.focus(), 0)
+  }
+
+  handlers.current = { branchFrom, startEdit }
+
+  async function send(text, attachment = null, { resume = false } = {}) {
     const content = text.trim()
-    if (!content || busy || !enabled) return
+    if ((!resume && !content) || busy || !enabled) return
     setError('')
     setBusy(true)
-    setInput('')
+    composer.current?.setValue('')
     runRef.current = { cancelled: false, cancel: null }
 
     // Il messaggio dell'utente viene salvato subito: anche se la richiesta fallisce resta nel log.
-    let conversation = {
-      ...current,
-      title: current.title || content.slice(0, 60),
-      messages: [...current.messages, { role: 'user', content, at: new Date().toISOString() }],
-    }
+    // Modificando un messaggio precedente le risposte successive vengono troncate; riprendendo si scartano solo gli errori in coda.
+    let base = current.messages
+    const edited = editingIndex !== null ? current.messages[editingIndex] : null
+    if (resume) while (base.length && base[base.length - 1].role === 'assistant' && base[base.length - 1].error) base = base.slice(0, -1)
+    else if (edited) base = base.slice(0, editingIndex)
+    setEditingIndex(null)
+    const kept = attachment ?? edited?.attachment ?? null
+    let conversation = resume
+      ? { ...current, messages: base }
+      : {
+        ...current,
+        title: current.title || content.slice(0, 60),
+        messages: [...base, { role: 'user', content, ...(kept ? { attachment: kept } : {}), at: new Date().toISOString() }],
+      }
     setCurrent(conversation)
     conversation = await persist(conversation)
     setCurrent(conversation)
@@ -664,10 +737,10 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
         // Al limite di passaggi si chiede all'utente se continuare, invece di fermarsi e basta.
         if (step >= limit) {
           // Le etichette sono variabili: la decisione si confronta con la stessa stringa mostrata, così non dipende dalla lingua.
-          const continueLabel = t('Continue ({count} more steps)', { count: maxSteps })
+          const continueLabel = t('Continue')
           const decision = await askUser({
             steps: [{
-              question: t('I have used the {limit} steps allowed with the tools. Do you want me to continue?', { limit }),
+              question: t('Step limit reached ({limit}). Continue?', { limit }),
               options: [
                 { label: continueLabel, description: t('Resumes the work where it stopped.') },
                 { label: t('Stop here'), description: t('Leaves things as they are.') },
@@ -791,7 +864,10 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
               <p className="m-auto max-w-[16rem] text-center text-sm text-slate-500">{t('Ask to proofread, rewrite or discuss the document. If you select some text, the assistant works on that.')}{!project && t(' Without an open project the conversation is not saved.')}
               </p>
             )}
-            {current.messages.map((message, index) => <Message key={index} message={message} editor={editor} onBranch={canBranch ? () => branchFrom(index) : null} onOpenImage={setViewer} />)}
+            {current.messages.map((message, index) => <Message key={index} message={message} index={index} editor={editor} onBranch={canBranch ? onBranchStable : null} onEdit={message.role === 'user' && !busy ? onEditStable : null} onOpenImage={setViewer} onOpenNote={onOpenNote} />)}
+            {canResume && (
+              <button type="button" className="flex items-center gap-1.5 self-start rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50" onClick={() => send('', null, { resume: true })}><RotateCcw size={12} /> {t('Resume from here')}</button>
+            )}
 
             {busy && (
               <div className="flex flex-col items-start gap-1.5">
@@ -863,24 +939,13 @@ export default function AiChatPanel({ editor, contextTab, toolBridge, project, s
                 )}
               </div>
             )}
-            <div className="flex items-end gap-2">
-              <textarea
-                value={input}
-                rows={3}
-                placeholder={t('Type a message…  (Enter to send, Shift+Enter for a new line)')}
-                className="min-h-0 flex-1 resize-none rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400"
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                    event.preventDefault()
-                    send(input)
-                  }
-                }}
-              />
-              {busy
-                ? <button type="button" aria-label={t('Stop')} title={t('Stop')} className="rounded-md bg-rose-600 p-2.5 text-white transition hover:bg-rose-500" onClick={stop}><Square size={16} /></button>
-                : <button type="button" aria-label={t('Send')} title={t('Send')} disabled={!input.trim()} className="rounded-md bg-accent-600 p-2.5 text-white transition hover:bg-accent-500 disabled:opacity-50" onClick={() => send(input)}><Send size={16} /></button>}
-            </div>
+            {editingIndex !== null && (
+              <p className="mb-2 flex items-center justify-between gap-2 rounded-md border border-accent-500/40 bg-accent-500/10 px-2.5 py-1.5 text-xs text-slate-300">
+                <span>{t('Editing a previous message: the replies after it will be removed.')}</span>
+                <button type="button" className="shrink-0 text-slate-400 hover:text-slate-50" onClick={() => { setEditingIndex(null); composer.current?.setValue('') }}>{t('Cancel')}</button>
+              </p>
+            )}
+            <ChatInput ref={composer} busy={busy} onSend={send} onStop={stop} />
           </div>
         </>
       )}

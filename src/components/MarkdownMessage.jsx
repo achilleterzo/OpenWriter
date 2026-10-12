@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -36,10 +37,10 @@ const components = {
 }
 
 // Il testo del modello viene reso come elementi React: l'HTML grezzo non viene interpretato.
-export default function MarkdownMessage({ children }) {
+export default memo(function MarkdownMessage({ children }) {
   return (
     <div className="min-w-0 break-words">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{children}</ReactMarkdown>
     </div>
   )
-}
+})

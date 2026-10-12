@@ -55,6 +55,10 @@ function createChatStore({ getProjectPath }) {
           at: typeof message.at === 'string' ? message.at : now,
           ...(message.error ? { error: true } : {}),
           // Ragionamento mostrato dal modello e chiamate agli strumenti restano nel log della conversazione.
+          // Contesto allegato dall'app (es. una nota): etichetta mostrata all'utente, dettaglio inviato al modello, id della nota per il collegamento.
+          ...(message.role === 'user' && message.attachment && typeof message.attachment === 'object'
+            ? { attachment: { label: text(message.attachment.label, 300), detail: text(message.attachment.detail, MAX_MESSAGE_CHARS), ...(message.attachment.noteId ? { noteId: text(message.attachment.noteId, 80) } : {}) } }
+            : {}),
           ...(message.thinking ? { thinking: text(message.thinking, MAX_MESSAGE_CHARS) } : {}),
           ...(message.role === 'tool' ? { name: text(message.name, 60) } : {}),
           // Le immagini restano su disco (.ow/chat/attachments): nel JSON ci sono solo riferimenti.
