@@ -9,6 +9,7 @@ import HistoryPanel from './components/HistoryPanel.jsx'
 import NotesPanel from './components/NotesPanel.jsx'
 import ProjectsPanel from './components/ProjectsPanel.jsx'
 import MemoryPanel from './components/MemoryPanel.jsx'
+import { useDialogs } from './components/Dialogs.jsx'
 import OutlinePanel from './components/OutlinePanel.jsx'
 import PanelResizer from './components/PanelResizer.jsx'
 import SettingsScreen from './components/SettingsScreen.jsx'
@@ -29,6 +30,8 @@ const remapPath = (value, from, to) => {
   if (value === from) return to
   return value.startsWith(`${from}\\`) || value.startsWith(`${from}/`) ? to + value.slice(from.length) : value
 }
+// Ordine stabile con le schede fissate davanti a tutte le altre.
+const keepPinnedFirst = (list) => [...list.filter((tab) => tab.pinned), ...list.filter((tab) => !tab.pinned)]
 const isInside = (value, directory) => Boolean(value) && (value === directory || value.startsWith(`${directory}\\`) || value.startsWith(`${directory}/`))
 
 let untitledCounter = 0
@@ -51,14 +54,17 @@ const samePath = (left, right) => Boolean(left) && Boolean(right) && left.replac
 // Ricostruisce le schede dalla sessione salvata: le bozze tornano dal testo salvato, gli altri file dal disco.
 async function restoreTabs(session) {
   const tabs = []
+  // Con almeno una scheda fissata, alla riapertura restano solo le fissate e le bozze (testo non salvato): le altre si riaprono dal file quando servono.
+  const anyPinned = (session?.tabs || []).some((saved) => saved.pinned)
   for (const saved of session?.tabs || []) {
+    if (anyPinned && !saved.pinned && saved.markdown === undefined) continue
     try {
       // Il numero dei documenti senza titolo è un dato salvato, non si ricava dal titolo (che può cambiare con la lingua).
       if (Number.isInteger(saved.untitled)) untitledCounter = Math.max(untitledCounter, saved.untitled)
       if (saved.markdown !== undefined) {
-        tabs.push({ id: saved.id, filePath: saved.filePath, sourcePath: saved.sourcePath, untitled: saved.untitled, title: saved.title, content: saved.markdown, contentType: 'markdown', dirty: Boolean(saved.dirty) })
+        tabs.push({ id: saved.id, filePath: saved.filePath, sourcePath: saved.sourcePath, untitled: saved.untitled, title: saved.title, content: saved.markdown, contentType: 'markdown', dirty: Boolean(saved.dirty), pinned: Boolean(saved.pinned) })
       } else if (saved.sourcePath) {
-        tabs.push(createTab(await electronAPI.reopenDocument(saved.sourcePath), saved.id))
+        tabs.push({ ...createTab(await electronAPI.reopenDocument(saved.sourcePath), saved.id), pinned: Boolean(saved.pinned) })
       }
     } catch (error) {
       console.warn('Scheda non ripristinata', saved?.title, error)
@@ -134,6 +140,7 @@ export default function App() {
           title: tab.title,
           untitled: tab.untitled,
           dirty: tab.dirty,
+          pinned: Boolean(tab.pinned),
           ...(keepText ? { markdown: editor.getMarkdown() } : {}),
         }
       }),
@@ -274,6 +281,10 @@ export default function App() {
     })
   }, [])
 
+  const dialogs = useDialogs()
+  const dialogsRef = useRef(dialogs)
+  dialogsRef.current = dialogs
+
   const workspace = useMemo(() => ({
     newTab() {
       const tab = createTab()
@@ -288,11 +299,11 @@ export default function App() {
       setActiveId(tab.id)
       setStatus(t('Opened'))
     },
-    closeTab(id) {
-      const current = latest.current.tabs
-      const tab = current.find((item) => item.id === id)
+    async closeTab(id) {
+      const tab = latest.current.tabs.find((item) => item.id === id)
       if (!tab) return
-      if (tab.dirty && !window.confirm(t('"{title}" has unsaved changes. Close it anyway?', { title: tab.title }))) return
+      if (tab.dirty && !(await dialogsRef.current.confirm(t('"{title}" has unsaved changes. Close it anyway?', { title: tab.title }), { danger: true, confirmLabel: t('Close') }))) return
+      const current = latest.current.tabs
       const remaining = current.filter((item) => item.id !== id)
       const next = remaining.some(isDocument) ? remaining : [...remaining, createTab()]
       setTabs(next)
@@ -320,6 +331,22 @@ export default function App() {
       setExpandedPaths((current) => new Set([...current].filter((item) => !isInside(item, target))))
       setHistoryVersion((value) => value + 1)
       setStatus(t('Moved to the trash'))
+    },
+    // Fissa o stacca una scheda; le fissate stanno sempre a sinistra.
+    togglePin(id) {
+      setTabs((current) => keepPinnedFirst(current.map((tab) => (tab.id === id ? { ...tab, pinned: !tab.pinned } : tab))))
+    },
+    // Trascinamento: la scheda `id` passa davanti a `beforeId` (restando nel proprio gruppo, fissate o no).
+    moveTab(id, beforeId) {
+      if (id === beforeId) return
+      setTabs((current) => {
+        const moving = current.find((tab) => tab.id === id)
+        if (!moving) return current
+        const rest = current.filter((tab) => tab.id !== id)
+        const position = rest.findIndex((tab) => tab.id === beforeId)
+        if (position === -1) return current
+        return keepPinnedFirst([...rest.slice(0, position), moving, ...rest.slice(position)])
+      })
     },
     requestFind(replace) {
       setFindRequest((current) => ({ nonce: current.nonce + 1, replace }))
@@ -592,7 +619,7 @@ export default function App() {
           </aside>
         )}
         <main className="flex min-w-0 flex-1 flex-col">
-          <TabBar tabs={tabs} activeId={activeTab.id} onSelect={setActiveId} onClose={workspace.closeTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
+          <TabBar tabs={tabs} activeId={activeTab.id} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
             {tabs.map((tab) => (tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} />
