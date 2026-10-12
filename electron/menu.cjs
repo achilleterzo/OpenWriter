@@ -7,7 +7,11 @@ function createApplicationMenu(sendCommand) {
     {
       label: 'File',
       submenu: [
+        { label: 'Nuovo documento', accelerator: 'CmdOrCtrl+N', click: command('new') },
         { label: 'Apri...', accelerator: 'CmdOrCtrl+O', click: command('open') },
+        { label: 'Apri cartella progetto...', accelerator: 'CmdOrCtrl+Shift+O', click: command('open-project') },
+        { label: 'Chiudi scheda', accelerator: 'CmdOrCtrl+W', click: command('close-tab') },
+        { type: 'separator' },
         { label: 'Salva', accelerator: 'CmdOrCtrl+S', click: command('save') },
         { label: 'Salva con nome...', accelerator: 'CmdOrCtrl+Shift+S', click: command('save-as') },
         { type: 'separator' },
