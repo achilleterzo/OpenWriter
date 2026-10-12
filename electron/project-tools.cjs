@@ -43,7 +43,7 @@ function createProjectTools({ getProjectPath, readDocument }) {
 
   async function listDirectory(relativePath) {
     const { target, relative } = resolveInside(relativePath)
-    const entries = await fs.promises.readdir(target, { withFileTypes: true })
+    const entries = await fs.promises.readdir(target, { withFileTypes: true }).catch(() => { throw new Error(t('Folder not found: {path}', { path: relative || '.' })) })
     const visible = entries.filter((entry) => !EXCLUDED_NAMES.has(entry.name))
     const items = await Promise.all(visible.slice(0, MAX_LIST_ENTRIES).map(async (entry) => {
       if (entry.isDirectory()) return { name: entry.name, type: 'directory' }
@@ -57,7 +57,8 @@ function createProjectTools({ getProjectPath, readDocument }) {
 
   async function readFile(relativePath, { offset = 0, limit = DEFAULT_READ_CHARS } = {}) {
     const { target, relative } = resolveInside(relativePath)
-    const stats = await fs.promises.stat(target)
+    const stats = await fs.promises.stat(target).catch(() => null)
+    if (!stats) throw new Error(t('File not found: {path}', { path: relative }))
     if (!stats.isFile()) throw new Error(t('Not a file: use list_directory for folders'))
 
     let text

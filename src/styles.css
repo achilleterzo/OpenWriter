@@ -132,11 +132,30 @@ body {
 .document-editor .tiptap ul {
   margin: 0 0 1rem;
   padding-left: 1.5rem;
+  list-style: disc;
 }
 
 .document-editor .tiptap ol {
   margin: 0 0 1rem;
   padding-left: 1.5rem;
+  list-style: decimal;
+}
+
+/* Il reset di Tailwind toglie i segni di lista: qui si ripristinano, anche per le liste annidate. */
+.document-editor .tiptap ul ul { list-style: circle; }
+.document-editor .tiptap ul ul ul { list-style: square; }
+.document-editor .tiptap ol ol { list-style: lower-alpha; }
+.document-editor .tiptap ol ol ol { list-style: lower-roman; }
+
+.document-editor .tiptap ul ul,
+.document-editor .tiptap ol ol,
+.document-editor .tiptap ul ol,
+.document-editor .tiptap ol ul {
+  margin: 0.25rem 0 0;
+}
+
+.document-editor .tiptap li > p {
+  margin: 0 0 0.25rem;
 }
 
 .document-editor .tiptap blockquote {

@@ -2,4 +2,4 @@
 
 Source: [`src/components/ToolbarButton.jsx`](../../../../../src/components/ToolbarButton.jsx)
 
-Shared icon button used by toolbars and headings dropdowns, with icon, label, active state, and disabled state.
+Shared toolbar building blocks: `ToolbarButton` renders an icon button with accessible label and title, active state (accent background) and hover style, and `ToolbarDivider` renders a vertical separator between toolbar groups.

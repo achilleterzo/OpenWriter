@@ -278,6 +278,20 @@ export default function AiProviderSettings() {
                 {[...new Set([5, 8, 10, 15, 20, 30, 50, settings.maxToolSteps])].sort((left, right) => left - right).map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
             </label>
+            <div className="grid gap-2 border-t border-slate-800 pt-3 text-sm text-slate-300">
+              <label className="flex items-start gap-2">
+                <input type="checkbox" className="mt-1 accent-accent-500" checked={Boolean(settings.autoContinue)} onChange={(event) => persist({ ...settings, autoContinue: event.target.checked })} />
+                <span>{t('Continue automatically after a countdown')}<span className="block text-xs text-slate-500">{t('When the step limit is reached, the assistant continues by itself after the countdown, so unattended work does not stay waiting for you. Click the question to stop the countdown.')}</span></span>
+              </label>
+              {settings.autoContinue && (
+                <label className="flex items-center justify-between gap-3 pl-6">
+                  <span>{t('Countdown')}</span>
+                  <select className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-100 outline-none focus:border-accent-400" value={settings.autoContinueSeconds} onChange={(event) => persist({ ...settings, autoContinueSeconds: Number(event.target.value) })}>
+                    {[...new Set([5, 10, 20, 30, 60, 120, settings.autoContinueSeconds])].sort((left, right) => left - right).map((value) => <option key={value} value={value}>{t('{count} seconds', { count: value })}</option>)}
+                  </select>
+                </label>
+              )}
+            </div>
             {settings.tools?.vision && capabilities && !capabilities.vision && (
               <p className="text-xs text-amber-400">{capabilities.known ? t('The selected model does not support images: the image and screenshot tools stay off.') : t('I cannot check whether the model supports images: the image and screenshot tools stay off.')}</p>
             )}

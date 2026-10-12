@@ -213,3 +213,12 @@ npm run dist:mac
 npm run dist:linux
 ```
 
+## Archive Verification
+
+Every reference page was checked against its source file. Findings and fixes applied during the verification:
+
+- Pages rewritten from the actual source (behavior, limits, operations): `electron/images.cjs` (SSRF checks, redirects, normalization limits), `electron/menu.cjs` (exact command list), `electron/projects.cjs` (projects.json layout, missing flag), `electron/i18n.cjs` (shared English-key catalogs), `electron/preload.cjs` (full API surface including memory and AI login), `electron/project-file.cjs`, `electron/project-tools.cjs`, `electron/chat-store.cjs`, `electron/notes-store.cjs` (exact limits and operation sets).
+- Renderer pages rewritten against the code: `src/App.jsx` (tool bridge, notes, layout, screenshots), `src/main.jsx` (StrictMode, imports, `initLanguage`), `src/hooks` (full command list), `src/appearance.js` (exact option sets), `src/styles.css` (variable and decoration classes), `src/i18n` (t/tp, pseudo locale, reload flow), `lib/aiOptions.js` (provider-specific reasoning levels), `lib/aiTools.js` (complete tool catalog and protocol helpers), `lib/anchoring.js`, `lib/annotationExtension.js`, `lib/imageExtension.js`, `lib/imagePaths.js`, `lib/layout.js` (exact panel ranges), `lib/lineDiff.js`, `lib/searchExtension.js`.
+- Component pages spot-verified and corrected where content had drifted: `OutlinePanel`, `ToolbarButton`, `DocumentToolbar` (H1–H7 included), `TabBar`.
+- `components.md` index links fixed to `pages/` (the earlier relative links pointed to the index folder itself).
+

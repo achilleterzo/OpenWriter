@@ -4,6 +4,14 @@ React hooks.
 
 ## useDocumentFileCommands.js
 
-Source: [`src/hooks/useDocumentFileCommands.js`](../../src/hooks/useDocumentFileCommands.js)
+Source: [`src/hooks/useDocumentFileCommands.js`](../hooks/useDocumentFileCommands.js)
 
-Hook that wires document file commands for the active editor: open document from disk, open path inside the project, save and save as (Markdown savable in place), export to DOCX and PDF, and print-facing dialogs. Exposes the handlers used by the document toolbar and app menu.
+Hook that applies native-menu document commands to the active tab, subscribing through `onDocumentCommand`.
+
+- `find` / `replace`: forwards to `workspace.requestFind` (Ctrl+F / Ctrl+H).
+- `new`: opens a new untitled tab; `close-tab`: closes the active tab (confirmation if dirty, handled in App).
+- `open`: file dialog through `electronAPI.openDocument`, then `workspace.openDocument`.
+- `save` / `save-as`: `saveMarkdown` with the editor Markdown and save-as flag; on success `workspace.markSaved` and status update.
+- `export-docx` / `export-pdf`: exports the editor HTML through the corresponding IPC.
+- Errors are logged and surface as a generic status message.
+

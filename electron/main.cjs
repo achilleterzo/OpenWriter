@@ -418,7 +418,13 @@ function createWindow() {
 }
 
 ipcMain.handle('document:open', openDocument)
-ipcMain.handle('document:open-path', (_event, filePath) => readDocument(resolveInProject(filePath)))
+ipcMain.handle('document:open-path', async (_event, filePath) => {
+  const target = resolveInProject(filePath)
+  const stats = await fs.stat(target).catch(() => null)
+  if (!stats) throw new Error(t('Could not open the file'))
+  if (stats.isDirectory()) throw new Error(t('Not a file'))
+  return readDocument(target)
+})
 ipcMain.handle('document:reopen', (_event, filePath) => readSessionDocument(filePath))
 ipcMain.handle('session:load', () => loadSession())
 ipcMain.handle('session:save', (_event, session) => saveSession(session))

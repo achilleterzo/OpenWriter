@@ -485,6 +485,14 @@ export default function App() {
       setStatus(t('Saved'))
       return true
     },
+    // Richiude un documento aperto dall'assistente, ma solo se non ha modifiche non salvate.
+    async closeDocument(id) {
+      await sleep(150)
+      const tab = latest.current.tabs.find((item) => item.id === id)
+      if (!tab || tab.dirty) return false
+      workspaceRef.current.closeTab(id)
+      return true
+    },
     onFilesChanged: () => setExplorerRefresh((value) => value + 1),
     onMemoryChanged: () => setMemoryVersion((value) => value + 1),
     // Un file è stato cestinato o spostato dall'assistente: le schede e l'esplora file si aggiornano come per il file manager.

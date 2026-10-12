@@ -145,6 +145,17 @@ function AskStepView({ step, initial, onAnswer }) {
   const choose = (label) => (step.multiple ? setPicked((current) => (current.includes(label) ? current.filter((item) => item !== label) : [...current, label])) : submit([label]))
   const confirmable = picked.length > 0 || Boolean(otherOpen && other.trim())
 
+  // Risposta automatica con conto alla rovescia (es. "Continua" al limite di passaggi): un clic sulla scheda lo ferma.
+  const auto = step.autoChoose
+  const [remaining, setRemaining] = useState(auto ? auto.seconds : 0)
+  const [stopped, setStopped] = useState(false)
+  useEffect(() => {
+    if (!auto || stopped) return undefined
+    if (remaining <= 0) { choose(auto.label); return undefined }
+    const timer = setTimeout(() => setRemaining((value) => value - 1), 1000)
+    return () => clearTimeout(timer)
+  }, [remaining, stopped])
+
   useEffect(() => {
     const onKeyDown = (event) => {
       // Non rubare le cifre mentre si scrive in un campo di testo o nell'editor del documento.
@@ -161,7 +172,7 @@ function AskStepView({ step, initial, onAnswer }) {
   const pagerButton = 'flex h-6 w-6 items-center justify-center rounded text-slate-400 transition hover:bg-slate-700 hover:text-slate-50 disabled:opacity-30 disabled:hover:bg-transparent'
 
   return (
-    <div>
+    <div onPointerDown={() => setStopped(true)} onKeyDown={() => setStopped(true)}>
       <p className="font-medium text-slate-50">{step.question}</p>
       {step.ordered && <p className="mt-0.5 text-xs text-slate-400">{t('Choose in the order you prefer: the sequence matters.')}</p>}
       <div className="mt-2 grid gap-1.5">
@@ -182,6 +193,13 @@ function AskStepView({ step, initial, onAnswer }) {
                 <span className="block break-words">{option.label}</span>
                 {option.description && <span className="block break-words text-xs text-slate-400">{option.description}</span>}
               </span>
+              {auto && !stopped && option.label === auto.label && (
+                <svg width="22" height="22" viewBox="0 0 22 22" className="mt-0 shrink-0 -rotate-90" role="img" aria-label={t('Continues in {seconds} s', { seconds: remaining })}>
+                  <title>{t('Continues in {seconds} s', { seconds: remaining })}</title>
+                  <circle cx="11" cy="11" r="8" fill="none" strokeWidth="2.5" className="stroke-slate-700" />
+                  <circle cx="11" cy="11" r="8" fill="none" strokeWidth="2.5" strokeLinecap="round" className="stroke-accent-400" strokeDasharray={2 * Math.PI * 8} strokeDashoffset={2 * Math.PI * 8 * (1 - remaining / auto.seconds)} style={{ transition: 'stroke-dashoffset 1s linear' }} />
+                </svg>
+              )}
               {active && (step.ordered
                 ? <span aria-label={t('Choice number {value}', { value: position + 1 })} className="mt-0.5 flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-accent-600 px-1 text-xs font-semibold text-white">{position + 1}</span>
                 : <Check size={14} className="mt-1 shrink-0 text-accent-400" />)}
@@ -664,6 +682,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     const snapshotted = new Set()
     // Documenti modificati dall'assistente in questa richiesta: a lavoro finito vengono salvati (la versione precedente è archiviata da beforeEdit).
     const editedTabs = new Set()
+    // Documenti aperti dall'assistente (non già aperti dall'utente): a lavoro finito, dopo il salvataggio, si richiudono.
+    const openedTabs = new Set()
     const maxSteps = settings.maxToolSteps || DEFAULT_MAX_TOOL_STEPS
     // Mostra la domanda in chat e attende la risposta dell'utente (o Salta / Annulla / Interrompi).
     const askUser = (spec) => new Promise((resolve) => {
@@ -689,6 +709,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       onMemoryChanged: () => toolBridge.onMemoryChanged(),
       onPathChanged: (change) => toolBridge.onPathChanged(change),
       onDocumentEdited: (tab) => editedTabs.add(tab.id),
+      onDocumentOpened: (tab) => openedTabs.add(tab.id),
       openFile: (absolutePath) => toolBridge.openFile(absolutePath),
       beforeEdit: async (tab, targetEditor) => {
         if (snapshotted.has(tab.id)) return
@@ -806,6 +827,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
               ordered: false,
               pageSize: 5,
               allowOther: false,
+              ...(settings.autoContinue ? { autoChoose: { label: continueLabel, seconds: settings.autoContinueSeconds || 20 } } : {}),
             }],
           })
           if (runRef.current.cancelled || decision.answers?.[0]?.selected?.[0] !== continueLabel) {
@@ -844,6 +866,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       }
     } finally {
       for (const id of editedTabs) await toolBridge.saveDocument(id).catch((error) => console.error(error))
+      for (const id of openedTabs) await toolBridge.closeDocument(id).catch((error) => console.error(error))
       cancelAnimationFrame(frameRef.current)
       frameRef.current = null
       setLive(null)
