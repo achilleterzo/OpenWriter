@@ -1,10 +1,40 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Copy, CornerDownLeft, FolderOpen, GitBranch, Pencil, Plus, Send, Settings, Sparkles, Trash2, X } from 'lucide-react'
+import { Brain, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Copy, CornerDownLeft, FolderOpen, GitBranch, Loader2, Pencil, Plus, Send, Settings, Sparkles, Square, Trash2, Wrench, X } from 'lucide-react'
+import MarkdownMessage from './MarkdownMessage.jsx'
+import { reasoningByProvider } from '../lib/aiOptions.js'
+import { DEFAULT_MAX_TOOL_STEPS, createToolRunner, describeCall, parseToolCall, toolSchemas, toolsPrompt, visibleText } from '../lib/aiTools.js'
 
 const api = window.electronAPI
 const ai = api?.ai
 const MAX_CONTEXT_CHARS = 60000
 const MAX_PREVIOUS_CHARS = 12000
+const MAX_TOOL_DISPLAY_CHARS = 3000
+// Al modello si rinviano solo le immagini più recenti: le altre pesano molti token e di solito non servono più.
+const MAX_MODEL_IMAGES = 4
+
+// Elenco dei modelli per provider, letto una volta e riusato.
+const modelsCache = new Map()
+
+// Allegati già letti, per non rileggerli dal disco a ogni richiesta e a ogni rendering.
+const imageCache = new Map()
+const imageKey = (entry) => entry.id || entry
+
+// Contenuto di un'immagine della conversazione: subito se è ancora in memoria, altrimenti dall'allegato su disco.
+async function loadImage(entry) {
+  if (entry.data) return { mime: entry.mime, data: entry.data }
+  if (!imageCache.has(entry.id)) imageCache.set(entry.id, await api.getAttachment(entry.id))
+  return imageCache.get(entry.id)
+}
+
+// Dati delle ultime immagini della conversazione, indicizzati per entry; quelle più vecchie restano fuori.
+async function loadRecentImages(messages) {
+  const entries = messages.filter((message) => message.role === 'tool').flatMap((message) => message.images || []).slice(-MAX_MODEL_IMAGES)
+  const loaded = new Map()
+  for (const entry of entries) {
+    try { loaded.set(imageKey(entry), await loadImage(entry)) } catch { /* allegato mancante: l'immagine viene omessa */ }
+  }
+  return loaded
+}
 
 const quickActions = [
   { label: 'Correggi', prompt: 'Correggi ortografia, grammatica e punteggiatura senza cambiare il significato. Restituisci solo il testo corretto.' },
@@ -13,24 +43,53 @@ const quickActions = [
   { label: 'Revisiona', prompt: 'Revisiona il testo: elenca i problemi di stile, chiarezza e coerenza e proponi miglioramenti concreti.' },
 ]
 
+// Titoli lunghi: nelle liste a discesa si abbreviano, il titolo completo resta nel tooltip.
+const ellipsize = (value, limit) => (value.length > limit ? `${value.slice(0, limit - 1).trimEnd()}…` : value)
 const blankConversation = () => ({ id: null, title: '', parentId: null, branchedAt: null, contextFrom: [], messages: [] })
 const dateFormatter = new Intl.DateTimeFormat('it', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 
-const systemPrompt = (language, projectContext = '', previousChats = []) => [
+const systemPrompt = (language, projectContext = '', previousChats = [], toolsText = '') => [
   'Sei l\'assistente di scrittura integrato in OpenWriter, un editor di documenti Markdown.',
   `Rispondi in ${language}, salvo diversa richiesta. Sii conciso.`,
   'Quando riscrivi o correggi un testo, restituisci direttamente il testo in Markdown, senza preamboli.',
   projectContext.trim() && `Contesto del progetto fornito dall'autore (rispettalo):\n---\n${projectContext.trim()}\n---`,
   ...previousChats.map(({ title, transcript }) => `Conversazione precedente "${title}", da usare solo come contesto:\n---\n${transcript}\n---`),
+  toolsText,
 ].filter(Boolean).join('\n\n')
 
-// Trascrizione di una conversazione per usarla come contesto: se è lunga si tengono i messaggi più recenti.
+// Trascrizione di una conversazione per usarla come contesto: solo domande e risposte, senza strumenti.
 function transcriptOf(conversation) {
   const text = conversation.messages
-    .filter((message) => !message.error)
-    .map((message) => `${message.role === 'user' ? 'Utente' : 'Assistente'}: ${message.content}`)
+    .filter((message) => !message.error && message.role !== 'tool')
+    .map((message) => `${message.role === 'user' ? 'Utente' : 'Assistente'}: ${message.role === 'assistant' ? visibleText(message.content).text : message.content}`)
     .join('\n\n')
   return text.length > MAX_PREVIOUS_CHARS ? `…${text.slice(-MAX_PREVIOUS_CHARS)}` : text
+}
+
+// Messaggi da inviare al modello. Nel formato testuale i risultati degli strumenti tornano come messaggi dell'utente;
+// in quello nativo (Ollama) si usano `tool_calls` e i messaggi con ruolo "tool". Le immagini viaggiano come allegati
+// di un messaggio dell'utente (i messaggi "tool" non possono contenerne).
+function toModelMessages(messages, context, native, loaded = new Map()) {
+  const usable = messages.filter((message) => !(message.error && message.role === 'assistant'))
+  const lastUser = usable.map((message) => message.role).lastIndexOf('user')
+  return usable.flatMap((message, index) => {
+    if (message.role === 'tool') {
+      const entries = message.images || []
+      const attached = entries.map((entry) => loaded.get(imageKey(entry))).filter(Boolean)
+      const omitted = entries.length - attached.length
+      const content = `${message.content}${omitted ? `\n(${omitted === 1 ? 'immagine non più allegata' : `${omitted} immagini non più allegate`} per contenere i token)` : ''}`
+      if (native) {
+        const result = { role: 'tool', tool_name: message.name, content }
+        return attached.length ? [result, { role: 'user', content: `[Immagine restituita da ${message.name}]`, images: attached.map((image) => image.data) }] : [result]
+      }
+      return [{ role: 'user', content: `[Risultato di ${message.name}]\n${content}`, ...(attached.length ? { images: attached } : {}) }]
+    }
+    if (message.role === 'user' && index === lastUser && context) return [{ role: 'user', content: `${context}\n\nRichiesta: ${message.content}` }]
+    if (native && message.role === 'assistant' && message.toolCall) {
+      return [{ role: 'assistant', content: visibleText(message.content).text, tool_calls: [{ function: { name: message.toolCall.name, arguments: message.toolCall.arguments } }] }]
+    }
+    return [{ role: message.role, content: message.content }]
+  })
 }
 
 function selectedText(editor) {
@@ -38,29 +97,249 @@ function selectedText(editor) {
   return empty ? '' : editor.state.doc.textBetween(from, to, '\n\n')
 }
 
-function Message({ message, editor, onBranch }) {
+const actionClass = 'flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-slate-800 hover:text-slate-200'
+
+function ThinkingBlock({ text, live = false }) {
+  return (
+    <details open={live} className="max-w-[92%] rounded-lg border border-slate-800 bg-slate-950/40 px-2.5 py-1.5 text-xs text-slate-500">
+      <summary className="flex cursor-pointer select-none items-center gap-1.5"><Brain size={12} /> Ragionamento</summary>
+      <p className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words italic leading-5">{live ? text.slice(-1500) : text}</p>
+    </details>
+  )
+}
+
+function ToolResult({ message }) {
+  const body = message.content.length > MAX_TOOL_DISPLAY_CHARS ? `${message.content.slice(0, MAX_TOOL_DISPLAY_CHARS)}\n… (${message.content.length} caratteri)` : message.content
+  return (
+    <details className="group max-w-[92%] rounded-lg border border-slate-800 bg-slate-950/40 px-2.5 py-1.5 text-xs text-slate-500">
+      <summary className="flex cursor-pointer select-none items-center gap-1.5">
+        <ChevronRight size={12} className="transition group-open:rotate-90" />
+        <Wrench size={12} /> {message.name}{message.error ? <span className="text-rose-400"> · errore</span> : ''}
+      </summary>
+      <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono leading-5">{body}</pre>
+    </details>
+  )
+}
+
+// Una domanda con scelte cliccabili: a pagine, con "Altro" per una risposta libera e "Salta".
+// Un clic su una scelta risponde subito (a meno che siano ammesse più scelte); i tasti 1-9 scelgono dalla pagina corrente.
+// Con più scelte "ordered" i numeri accanto alle voci mostrano l'ordine di selezione.
+function AskStepView({ step, initial, onAnswer }) {
+  const [page, setPage] = useState(0)
+  const [picked, setPicked] = useState(initial?.selected || [])
+  const [otherOpen, setOtherOpen] = useState(Boolean(initial?.other))
+  const [other, setOther] = useState(initial?.other || '')
+  const pages = Math.max(1, Math.ceil(step.options.length / step.pageSize))
+  const start = page * step.pageSize
+  const visible = step.options.slice(start, start + step.pageSize)
+
+  const submit = (selected, otherText = '') => onAnswer({ selected, other: otherText.trim(), skipped: false })
+  const choose = (label) => (step.multiple ? setPicked((current) => (current.includes(label) ? current.filter((item) => item !== label) : [...current, label])) : submit([label]))
+  const confirmable = picked.length > 0 || Boolean(otherOpen && other.trim())
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      // Non rubare le cifre mentre si scrive in un campo di testo o nell'editor del documento.
+      const target = event.target
+      if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement || target?.isContentEditable) return
+      if (event.ctrlKey || event.metaKey || event.altKey || !/^[1-9]$/.test(event.key)) return
+      const option = visible[Number(event.key) - 1]
+      if (option) { event.preventDefault(); choose(option.label) }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  })
+
+  const pagerButton = 'flex h-6 w-6 items-center justify-center rounded text-slate-400 transition hover:bg-slate-700 hover:text-slate-50 disabled:opacity-30 disabled:hover:bg-transparent'
+
+  return (
+    <div>
+      <p className="font-medium text-slate-50">{step.question}</p>
+      {step.ordered && <p className="mt-0.5 text-xs text-slate-400">Scegli nell&apos;ordine che preferisci: la sequenza conta.</p>}
+      <div className="mt-2 grid gap-1.5">
+        {visible.map((option, index) => {
+          const position = picked.indexOf(option.label)
+          const active = position !== -1
+          return (
+            <button
+              key={start + index}
+              type="button"
+              role={step.multiple ? 'checkbox' : undefined}
+              aria-checked={step.multiple ? active : undefined}
+              className={`flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-left transition ${active ? 'border-accent-400 bg-accent-500/20' : 'border-slate-700 hover:border-accent-400 hover:bg-slate-700/60'}`}
+              onClick={() => choose(option.label)}
+            >
+              <span className="mt-0.5 flex h-5 min-w-5 items-center justify-center rounded bg-slate-900 px-1 text-xs text-slate-400">{index + 1}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block break-words">{option.label}</span>
+                {option.description && <span className="block break-words text-xs text-slate-400">{option.description}</span>}
+              </span>
+              {active && (step.ordered
+                ? <span aria-label={`Scelta numero ${position + 1}`} className="mt-0.5 flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-accent-600 px-1 text-xs font-semibold text-white">{position + 1}</span>
+                : <Check size={14} className="mt-1 shrink-0 text-accent-400" />)}
+            </button>
+          )
+        })}
+        {step.allowOther && (otherOpen ? (
+          <div className="flex gap-1.5">
+            <input
+              autoFocus
+              value={other}
+              aria-label="Altro"
+              placeholder="Scrivi la tua risposta…"
+              className="min-w-0 flex-1 rounded-lg border border-accent-400 bg-slate-900 px-2.5 py-2 text-slate-100 outline-none placeholder:text-slate-500"
+              onChange={(event) => setOther(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing && confirmable) { event.preventDefault(); submit(picked, other) }
+                if (event.key === 'Escape') { setOtherOpen(false); setOther('') }
+              }}
+            />
+            {!step.multiple && <button type="button" disabled={!other.trim()} className="rounded-lg bg-accent-600 px-3 text-white transition hover:bg-accent-500 disabled:opacity-40" onClick={() => submit([], other)}>Invia</button>}
+          </div>
+        ) : (
+          <button type="button" className="flex w-full items-center gap-2 rounded-lg border border-dashed border-slate-600 px-2.5 py-2 text-left text-slate-400 transition hover:border-accent-400 hover:text-slate-50" onClick={() => setOtherOpen(true)}>
+            <Pencil size={13} /> Altro…
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        {pages > 1 ? (
+          <div className="flex items-center gap-1 text-xs text-slate-400">
+            <button type="button" aria-label="Pagina precedente" disabled={page === 0} className={pagerButton} onClick={() => setPage(page - 1)}><ChevronLeft size={15} /></button>
+            <span>Pagina {page + 1} di {pages} · {step.options.length} scelte</span>
+            <button type="button" aria-label="Pagina successiva" disabled={page === pages - 1} className={pagerButton} onClick={() => setPage(page + 1)}><ChevronRight size={15} /></button>
+          </div>
+        ) : <span />}
+        <div className="flex items-center gap-1.5">
+          <button type="button" className="rounded px-2 py-1 text-xs text-slate-400 transition hover:bg-slate-700 hover:text-slate-50" onClick={() => onAnswer({ selected: [], other: '', skipped: true })}>Salta</button>
+          {step.multiple && <button type="button" disabled={!confirmable} className="rounded-lg bg-accent-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-accent-500 disabled:opacity-40" onClick={() => submit(picked, otherOpen ? other : '')}>Conferma{picked.length ? ` (${picked.length})` : ''}</button>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Domanda dell'assistente, o breve questionario in sequenza: le domande si scorrono una per volta e si può tornare indietro.
+// Alla fine dell'ultima, tutte le risposte tornano insieme all'assistente.
+function AskCard({ ask }) {
+  const cardRef = useRef(null)
+  const [index, setIndex] = useState(0)
+  const [answers, setAnswers] = useState([])
+  const steps = ask.steps
+  const sequence = steps.length > 1
+
+  // La scheda prende il focus quando compare e a ogni domanda, così i numeri e Tab funzionano subito.
+  useEffect(() => { cardRef.current?.focus({ preventScroll: true }) }, [index])
+
+  function answer(result) {
+    const next = [...answers]
+    next[index] = result
+    setAnswers(next)
+    if (index < steps.length - 1) setIndex(index + 1)
+    else ask.resolve({ answers: next, cancelled: false })
+  }
+
+  return (
+    <div ref={cardRef} tabIndex={-1} role="group" aria-label="Domanda dell'assistente" className="w-full max-w-[96%] rounded-xl border border-accent-500/50 bg-slate-800/70 p-3 text-sm outline-none">
+      {sequence && (
+        <div className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-400">
+          <button type="button" aria-label="Domanda precedente" disabled={index === 0} className="flex items-center gap-0.5 rounded px-1.5 py-0.5 transition hover:bg-slate-700 hover:text-slate-50 disabled:opacity-30 disabled:hover:bg-transparent" onClick={() => setIndex(index - 1)}><ChevronLeft size={13} /> Indietro</button>
+          <span aria-label={`Domanda ${index + 1} di ${steps.length}`} className="flex items-center gap-1.5">
+            Domanda {index + 1} di {steps.length}
+            <span className="flex gap-1" aria-hidden="true">{steps.map((_, position) => <span key={position} className={`h-1.5 w-1.5 rounded-full ${position === index ? 'bg-accent-400' : answers[position] ? 'bg-accent-500/50' : 'bg-slate-600'}`} />)}</span>
+          </span>
+          <button type="button" className="rounded px-1.5 py-0.5 transition hover:bg-slate-700 hover:text-slate-50" onClick={() => ask.resolve({ answers: [], cancelled: true })}>Annulla</button>
+        </div>
+      )}
+      <AskStepView key={index} step={steps[index]} initial={answers[index]} onAnswer={answer} />
+    </div>
+  )
+}
+
+// Miniature delle immagini restituite da uno strumento; un clic le apre a tutta grandezza.
+function ToolImages({ images, onOpen }) {
+  const [sources, setSources] = useState({})
+  useEffect(() => {
+    let cancelled = false
+    images.forEach(async (entry, index) => {
+      try {
+        const loaded = await loadImage(entry)
+        if (!cancelled) setSources((current) => ({ ...current, [index]: `data:${loaded.mime};base64,${loaded.data}` }))
+      } catch { /* allegato non più disponibile */ }
+    })
+    return () => { cancelled = true }
+  }, [images])
+
+  return (
+    <div className="flex max-w-[92%] flex-wrap gap-1.5">
+      {images.map((entry, index) => (sources[index]
+        ? (
+          <button key={index} type="button" title={entry.label || 'Immagine'} className="overflow-hidden rounded border border-slate-700 bg-slate-950/40 transition hover:border-accent-400" onClick={() => onOpen({ src: sources[index], label: entry.label })}>
+            <img src={sources[index]} alt={entry.label || 'Immagine'} className="max-h-32 max-w-44 object-contain" />
+          </button>
+        )
+        : <span key={index} className="flex h-16 w-24 items-center justify-center rounded border border-slate-800 text-slate-500"><ImageIcon size={16} /></span>))}
+    </div>
+  )
+}
+
+function ImageViewer({ src, label, onClose }) {
+  useEffect(() => {
+    const onKeyDown = (event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose() } }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [onClose])
+  return (
+    <div role="dialog" aria-label="Immagine" className="fixed inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black/80 p-6" onClick={onClose}>
+      <img src={src} alt={label || 'Immagine'} className="max-h-[85vh] max-w-[92vw] object-contain" />
+      {label && <p className="max-w-[92vw] truncate text-sm text-slate-200">{label}</p>}
+    </div>
+  )
+}
+
+function Message({ message, editor, onBranch, onOpenImage }) {
   const [copied, setCopied] = useState(false)
   const assistant = message.role === 'assistant'
 
+  if (message.role === 'tool' && message.name === 'ask_choice' && !message.error) {
+    return <p className="flex max-w-[92%] items-start gap-1.5 rounded-lg border border-slate-800 px-2.5 py-1.5 text-xs text-slate-400"><span className="shrink-0 text-accent-400">↳</span><span className="whitespace-pre-wrap break-words">{message.content}</span></p>
+  }
+
+  if (message.role === 'tool') {
+    return (
+      <div className="group flex flex-col items-start gap-1">
+        <ToolResult message={message} />
+        {message.images?.length > 0 && <ToolImages images={message.images} onOpen={onOpenImage} />}
+        {onBranch && <div className="flex text-xs text-slate-500 opacity-0 transition group-hover:opacity-100"><button type="button" className={actionClass} onClick={onBranch}><GitBranch size={12} /> Dirama da qui</button></div>}
+      </div>
+    )
+  }
+
+  const shown = assistant ? visibleText(message.content).text : message.content
+
   async function copy() {
-    await navigator.clipboard.writeText(message.content)
+    await navigator.clipboard.writeText(shown)
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
 
-  const actionClass = 'flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-slate-800 hover:text-slate-200'
-
   return (
     <div className={`group flex flex-col gap-1 ${assistant ? 'items-start' : 'items-end'}`}>
-      <div className={`max-w-[92%] whitespace-pre-wrap break-words rounded-xl px-3 py-2 text-sm leading-6 ${message.error ? 'border border-rose-500/40 bg-rose-500/10 text-rose-300' : assistant ? 'bg-slate-800 text-slate-200' : 'bg-accent-600 text-white'}`}>
-        {message.content}
-      </div>
+      {message.thinking && <ThinkingBlock text={message.thinking} />}
+      {(shown || !message.toolCall) && (
+        <div className={`max-w-[92%] break-words rounded-xl px-3 py-2 text-sm leading-6 ${message.error ? 'whitespace-pre-wrap border border-rose-500/40 bg-rose-500/10 text-rose-300' : assistant ? 'bg-slate-800 text-slate-200' : 'whitespace-pre-wrap bg-accent-600 text-white'}`}>
+          {assistant && !message.error ? <MarkdownMessage>{shown}</MarkdownMessage> : shown}
+        </div>
+      )}
+      {message.toolCall && (
+        <p className="flex max-w-[92%] items-center gap-1.5 rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-400"><Wrench size={12} className="shrink-0" /> <span className="truncate">{describeCall(message.toolCall.name, message.toolCall.arguments)}</span></p>
+      )}
       <div className="flex gap-1 text-xs text-slate-500 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
-        {assistant && !message.error && (
+        {assistant && !message.error && shown && (
           <>
             <button type="button" className={actionClass} onClick={copy}>{copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copiato' : 'Copia'}</button>
             {editor && (
-              <button type="button" title="Sostituisce la selezione o inserisce al cursore" className={actionClass} onClick={() => editor.chain().focus().insertContent(message.content, { contentType: 'markdown' }).run()}>
+              <button type="button" title="Sostituisce la selezione o inserisce al cursore" className={actionClass} onClick={() => editor.chain().focus().insertContent(shown, { contentType: 'markdown' }).run()}>
                 <CornerDownLeft size={12} /> Inserisci
               </button>
             )}
@@ -72,8 +351,13 @@ function Message({ message, editor, onBranch }) {
   )
 }
 
-export default function AiChatPanel({ editor, project, settingsVersion, conversationId, onConversationChange, onOpenSettings }) {
+export default function AiChatPanel({ editor, contextTab, toolBridge, project, settingsVersion, conversationId, onConversationChange, onOpenSettings }) {
   const [settings, setSettings] = useState(null)
+  const [capabilities, setCapabilities] = useState(null)
+  const [viewer, setViewer] = useState(null)
+  const [pendingAsk, setPendingAsk] = useState(null)
+  const [models, setModels] = useState([])
+  const pendingAskRef = useRef(null)
   const [projectSettings, setProjectSettings] = useState(null)
   const [conversations, setConversations] = useState([])
   const [current, setCurrent] = useState(blankConversation)
@@ -81,11 +365,34 @@ export default function AiChatPanel({ editor, project, settingsVersion, conversa
   const [input, setInput] = useState('')
   const [includeDocument, setIncludeDocument] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [live, setLive] = useState(null)
   const [error, setError] = useState('')
   const endRef = useRef(null)
+  const liveRef = useRef({ text: '', thinking: '', status: '' })
+  const frameRef = useRef(null)
+  const runRef = useRef({ cancelled: false, cancel: null })
+  const nativeUnsupported = useRef(false)
 
   useEffect(() => {
     ai?.getSettings().then(setSettings)
+  }, [settingsVersion])
+
+  // Modelli disponibili per il provider attivo (per il selettore in chat).
+  useEffect(() => {
+    if (!settings?.aiEnabled) return undefined
+    const { provider: active } = settings
+    const key = `${active}|${settings.providers?.[active]?.endpoint || ''}`
+    if (modelsCache.has(key)) { setModels(modelsCache.get(key)); return undefined }
+    let cancelled = false
+    ai.listModels({ provider: active, endpoint: settings.providers?.[active]?.endpoint })
+      .then((list) => { modelsCache.set(key, list); if (!cancelled) setModels(list) })
+      .catch(() => { if (!cancelled) setModels([]) })
+    return () => { cancelled = true }
+  }, [settings?.aiEnabled, settings?.provider])
+
+  // Cosa sa fare il modello scelto (le immagini servono un modello con vision).
+  useEffect(() => {
+    ai?.getCapabilities().then(setCapabilities).catch(() => setCapabilities(null))
   }, [settingsVersion])
 
   // Il contesto di progetto (.ow/context.md) si rilegge a ogni cambio di progetto o chiusura delle impostazioni.
@@ -116,14 +423,29 @@ export default function AiChatPanel({ editor, project, settingsVersion, conversa
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' })
-  }, [current.messages, busy])
+  }, [current.messages, live, busy, pendingAsk])
 
   const provider = settings?.provider
   const model = settings?.providers?.[provider]?.model
   const providerLabel = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', codex: 'Codex', claude: 'Claude' }[provider]
   const enabled = Boolean(settings?.aiEnabled)
+  // Per Ollama il modello va scelto per forza; Claude e Codex hanno un predefinito.
+  const canUseNativeProvider = ['ollama', 'ollama-cloud'].includes(provider)
   const canBranch = Boolean(project && current.id && !busy)
   const parent = current.parentId ? conversations.find((item) => item.id === current.parentId) : null
+
+  // Modello e sforzo si cambiano anche dalla chat: sono le stesse impostazioni del provider attivo.
+  async function changeProviderSetting(changes) {
+    const active = settings.provider
+    const next = { ...settings, providers: { ...settings.providers, [active]: { ...settings.providers[active], ...changes } } }
+    setSettings(next)
+    try {
+      setSettings(await ai.saveSettings(next))
+      ai.getCapabilities().then(setCapabilities).catch(() => setCapabilities(null))
+    } catch (reason) {
+      setError(reason.message)
+    }
+  }
 
   const refreshList = async () => { if (project) setConversations(await api.listConversations()) }
 
@@ -183,12 +505,38 @@ export default function AiChatPanel({ editor, project, settingsVersion, conversa
     setCurrent(await persist(branch))
   }
 
+  // Aggiorna l'anteprima in streaming al massimo una volta per frame, anche se arrivano molti pezzi.
+  const scheduleLive = () => {
+    if (frameRef.current) return
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null
+      setLive({ ...liveRef.current })
+    })
+  }
+
+  // Una singola richiesta in streaming: aggiorna `live` man mano e restituisce { reply, thinking }.
+  async function streamReply(messages, options) {
+    liveRef.current = { text: '', thinking: '', status: 'In attesa del modello…' }
+    scheduleLive()
+    const request = ai.chatStream(messages, (event) => {
+      const state = liveRef.current
+      if (event.type === 'text') { state.text += event.delta; state.status = '' }
+      else if (event.type === 'thinking') { state.thinking += event.delta; state.status = state.text ? state.status : 'Sta ragionando…' }
+      else if (event.type === 'status') state.status = event.text
+      scheduleLive()
+    }, options)
+    runRef.current.cancel = request.cancel
+    const reply = await request.promise
+    return { reply, thinking: liveRef.current.thinking }
+  }
+
   async function send(text) {
     const content = text.trim()
     if (!content || busy || !enabled) return
     setError('')
     setBusy(true)
     setInput('')
+    runRef.current = { cancelled: false, cancel: null }
 
     // Il messaggio dell'utente viene salvato subito: anche se la richiesta fallisce resta nel log.
     let conversation = {
@@ -200,37 +548,187 @@ export default function AiChatPanel({ editor, project, settingsVersion, conversa
     conversation = await persist(conversation)
     setCurrent(conversation)
 
+    const append = async (message) => {
+      conversation = { ...conversation, messages: [...conversation.messages, { at: new Date().toISOString(), ...message }] }
+      setCurrent(conversation)
+      conversation = await persist(conversation)
+      setCurrent(conversation)
+    }
+
+    const toolSettings = settings.tools || {}
+    const toolsOn = {
+      files: Boolean(toolSettings.files && project),
+      notes: Boolean(toolSettings.notes && project),
+      edit: Boolean(toolSettings.edit && editor),
+      web: Boolean(toolSettings.web),
+      vision: Boolean(toolSettings.vision && capabilities?.vision),
+      ask: Boolean(toolSettings.ask),
+    }
+    const anyTool = Object.values(toolsOn).some(Boolean)
+    const canUseNative = ['ollama', 'ollama-cloud'].includes(settings.provider)
+    const snapshotted = new Set()
+    const maxSteps = settings.maxToolSteps || DEFAULT_MAX_TOOL_STEPS
+    // Mostra la domanda in chat e attende la risposta dell'utente (o Salta / Annulla / Interrompi).
+    const askUser = (spec) => new Promise((resolve) => {
+      liveRef.current = { text: '', thinking: '', status: 'In attesa della tua risposta…' }
+      scheduleLive()
+      const finish = (result) => { pendingAskRef.current = null; setPendingAsk(null); resolve(result) }
+      pendingAskRef.current = finish
+      setPendingAsk({ ...spec, resolve: finish })
+    })
+    const runTool = createToolRunner({
+      api,
+      project,
+      enabled: toolsOn,
+      getDocument: (path) => toolBridge.getDocument(path),
+      getOpenDocumentText: (path) => toolBridge.getOpenDocumentText(path),
+      listBrowserTabs: () => toolBridge.listBrowserTabs(),
+      getBrowser: (options) => toolBridge.getBrowser(options),
+      captureDocument: (path) => toolBridge.captureDocument(path),
+      captureBrowser: (tab) => toolBridge.captureBrowser(tab),
+      askUser,
+      onNotesChanged: () => toolBridge.onNotesChanged(),
+      beforeEdit: async (tab, targetEditor) => {
+        if (snapshotted.has(tab.id)) return
+        snapshotted.add(tab.id)
+        await toolBridge.snapshot(tab, targetEditor)
+      },
+    })
+
     try {
-      // Selezione e documento viaggiano solo con l'ultima richiesta, senza gonfiare la cronologia salvata.
-      const selection = editor ? selectedText(editor) : ''
-      const document = editor && includeDocument ? editor.getMarkdown().slice(0, MAX_CONTEXT_CHARS) : ''
-      const context = [
-        document && `Documento aperto (Markdown):\n"""\n${document}\n"""`,
-        selection && `Testo selezionato dall'utente:\n"""\n${selection}\n"""`,
-      ].filter(Boolean).join('\n\n')
-      const history = conversation.messages.filter((message) => !message.error)
-      const payload = history.map((message, index) => (
-        index === history.length - 1 && context ? { role: 'user', content: `${context}\n\nRichiesta: ${message.content}` } : { role: message.role, content: message.content }
-      ))
       const previous = (await Promise.all((conversation.contextFrom || []).map((id) => api.getConversation(id).catch(() => null))))
         .filter(Boolean)
         .map((item) => ({ title: item.title, transcript: transcriptOf(item) }))
 
-      const reply = await ai.chat([
-        { role: 'system', content: systemPrompt(projectSettings?.ai?.language || settings.language || 'Italiano', projectSettings?.ai?.context, previous) },
-        ...payload,
-      ])
-      conversation = { ...conversation, messages: [...conversation.messages, { role: 'assistant', content: reply || '(risposta vuota)', at: new Date().toISOString() }] }
-    } catch (reason) {
-      conversation = { ...conversation, messages: [...conversation.messages, { role: 'assistant', content: reason.message, at: new Date().toISOString(), error: true }] }
+      let limit = maxSteps
+      for (let step = 0; ; step += 1) {
+        // Documento e selezione sono riletti a ogni passaggio: dopo una modifica il modello vede il testo aggiornato.
+        const selection = editor ? selectedText(editor) : ''
+        const documentText = editor && includeDocument ? editor.getMarkdown().slice(0, MAX_CONTEXT_CHARS) : ''
+        const context = [
+          documentText && `Documento aperto (Markdown):\n"""\n${documentText}\n"""`,
+          selection && `Testo selezionato dall'utente:\n"""\n${selection}\n"""`,
+        ].filter(Boolean).join('\n\n')
+        let result
+        try {
+          // Un modello che rifiuta gli strumenti nativi viene ricordato e da lì in poi usa il formato testuale.
+          const attemptReply = async (native) => {
+            const system = systemPrompt(
+              projectSettings?.ai?.language || settings.language || 'Italiano',
+              projectSettings?.ai?.context,
+              previous,
+              anyTool ? toolsPrompt(toolsOn, { documentPath: toolBridge.activeDocumentPath(), native, maxSteps }) : '',
+            )
+            const loadedImages = await loadRecentImages(conversation.messages)
+            const modelMessages = [{ role: 'system', content: system }, ...toModelMessages(conversation.messages, context, native, loadedImages)]
+            const streamOptions = native ? { tools: toolSchemas(toolsOn) } : {}
+            let reply = await streamReply(modelMessages, streamOptions)
+            // Una risposta vuota (capita con alcuni modelli dopo il ragionamento) si ritenta una volta con un richiamo esplicito.
+            if (!reply.reply.trim()) reply = await streamReply([...modelMessages, { role: 'user', content: 'La tua risposta era vuota. Rispondi ora, oppure usa uno strumento.' }], streamOptions)
+            return reply
+          }
+          const native = anyTool && canUseNative && !nativeUnsupported.current
+          try {
+            result = await attemptReply(native)
+          } catch (reason) {
+            if (!native || runRef.current.cancelled || !String(reason.message).includes('TOOLS_UNSUPPORTED')) throw reason
+            nativeUnsupported.current = true
+            result = await attemptReply(false)
+          }
+        } catch (reason) {
+          const partial = visibleText(liveRef.current.text).text
+          if (runRef.current.cancelled) {
+            if (partial.trim()) await append({ role: 'assistant', content: `${partial}\n\n(interrotto)`, ...(liveRef.current.thinking ? { thinking: liveRef.current.thinking } : {}) })
+            else setError('Richiesta interrotta')
+          } else {
+            await append({ role: 'assistant', content: reason.message, error: true })
+          }
+          break
+        }
+
+        const parsed = anyTool ? parseToolCall(result.reply) : null
+        const thinking = result.thinking ? { thinking: result.thinking } : {}
+        if (!parsed) {
+          await append({ role: 'assistant', content: result.reply || '(risposta vuota)', ...thinking })
+          break
+        }
+
+        if (parsed.error) {
+          await append({ role: 'assistant', content: result.reply, ...thinking })
+          await append({ role: 'tool', name: 'tool_call', content: parsed.error, error: true })
+          continue
+        }
+
+        await append({ role: 'assistant', content: result.reply, toolCall: parsed.call, ...thinking })
+        // Al limite di passaggi si chiede all'utente se continuare, invece di fermarsi e basta.
+        if (step >= limit) {
+          // Le etichette sono variabili: la decisione si confronta con la stessa stringa mostrata, così non dipende dalla lingua.
+          const continueLabel = `Continua (altri ${maxSteps} passaggi)`
+          const decision = await askUser({
+            steps: [{
+              question: `Ho usato i ${limit} passaggi consentiti con gli strumenti. Vuoi che continui?`,
+              options: [
+                { label: continueLabel, description: 'Riprende il lavoro da dove si è fermato.' },
+                { label: 'Fermati qui', description: 'Lascia le cose come sono.' },
+              ],
+              multiple: false,
+              ordered: false,
+              pageSize: 5,
+              allowOther: false,
+            }],
+          })
+          if (runRef.current.cancelled || decision.answers?.[0]?.selected?.[0] !== continueLabel) {
+            await append({ role: 'tool', name: parsed.call.name, content: 'Non eseguito: limite di passaggi raggiunto.', error: true })
+            await append({ role: 'assistant', content: `Mi sono fermato dopo ${limit} passaggi con gli strumenti. Se vuoi che prosegua, scrivimelo oppure aumenta il limite in Impostazioni → AI.` })
+            break
+          }
+          limit += maxSteps
+        }
+
+        liveRef.current = { text: '', thinking: '', status: describeCall(parsed.call.name, parsed.call.arguments) }
+        scheduleLive()
+        try {
+          const outcome = await runTool(parsed.call.name, parsed.call.arguments)
+          const resultText = typeof outcome === 'string' ? outcome : outcome.text
+          // Le immagini si salvano come allegati nel progetto (senza progetto restano solo in memoria, fino alla chiusura).
+          const stored = []
+          for (const image of typeof outcome === 'string' ? [] : outcome.images) {
+            let entry = { mime: image.mime, label: image.label, data: image.data }
+            if (project) {
+              try {
+                const saved = await api.saveAttachment({ mime: image.mime, data: image.data })
+                imageCache.set(saved.id, { mime: saved.mime, data: image.data })
+                entry = { id: saved.id, mime: saved.mime, label: image.label }
+              } catch (reason) {
+                setError(`Immagine non salvata nel progetto: ${reason.message}`)
+              }
+            }
+            stored.push(entry)
+          }
+          await append({ role: 'tool', name: parsed.call.name, content: resultText, ...(stored.length ? { images: stored } : {}) })
+        } catch (reason) {
+          await append({ role: 'tool', name: parsed.call.name, content: reason.message, error: true })
+        }
+        if (runRef.current.cancelled) break
+      }
+    } finally {
+      cancelAnimationFrame(frameRef.current)
+      frameRef.current = null
+      setLive(null)
+      setBusy(false)
     }
-    setCurrent(await persist(conversation))
-    setBusy(false)
+  }
+
+  function stop() {
+    runRef.current.cancelled = true
+    runRef.current.cancel?.()
+    pendingAskRef.current?.({ answers: [], cancelled: true })
   }
 
   const attachable = conversations.filter((item) => item.id !== current.id && !current.contextFrom.includes(item.id))
   const titleOf = (id) => conversations.find((item) => item.id === id)?.title || 'Conversazione eliminata'
   const iconButton = 'rounded p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-50 disabled:opacity-40'
+  const liveShown = live ? visibleText(live.text) : null
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -262,11 +760,11 @@ export default function AiChatPanel({ editor, project, settingsVersion, conversa
                 aria-label="Conversazione"
                 value={current.id || ''}
                 disabled={busy}
-                className="min-w-0 flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100 outline-none focus:border-accent-400"
+                className="w-0 min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100 outline-none focus:border-accent-400"
                 onChange={(event) => openConversation(event.target.value || null)}
               >
                 {!current.id && <option value="">Nuova conversazione</option>}
-                {conversations.map((item) => <option key={item.id} value={item.id}>{item.parentId ? '↳ ' : ''}{item.title} · {dateFormatter.format(new Date(item.updatedAt))}</option>)}
+                {conversations.map((item) => <option key={item.id} value={item.id} title={item.title}>{item.parentId ? '↳ ' : ''}{ellipsize(item.title, 38)} · {dateFormatter.format(new Date(item.updatedAt))}</option>)}
               </select>
             )}
             <button type="button" aria-label="Rinomina conversazione" title="Rinomina" disabled={!current.id || busy || renaming} className={iconButton} onClick={() => setRenaming(true)}><Pencil size={14} /></button>
@@ -275,27 +773,38 @@ export default function AiChatPanel({ editor, project, settingsVersion, conversa
           </div>
         )}
         {current.parentId && (
-          <p className="flex items-center gap-1 text-xs text-slate-500"><GitBranch size={12} /> Ramo di «{parent?.title || 'conversazione eliminata'}», dal messaggio {current.branchedAt + 1}</p>
+          <p className="flex min-w-0 items-center gap-1 text-xs text-slate-500"><GitBranch size={12} className="shrink-0" /> <span className="truncate">Ramo di «{parent?.title || 'conversazione eliminata'}», dal messaggio {current.branchedAt + 1}</span></p>
         )}
       </header>
 
       {!ai || !settings ? null : !enabled ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-          <Sparkles size={30} className="text-slate-600" />
+          <Sparkles size={30} className="text-slate-500" />
           <p className="text-sm text-slate-400">L&apos;assistente AI è disattivato. Abilitalo e scegli un provider nelle impostazioni.</p>
           <button type="button" className="rounded-md bg-accent-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-accent-500" onClick={onOpenSettings}>Apri impostazioni</button>
         </div>
       ) : (
         <>
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
-            {!current.messages.length && (
+            {!current.messages.length && !busy && (
               <p className="m-auto max-w-[16rem] text-center text-sm text-slate-500">
                 Chiedi di correggere, riscrivere o discutere il documento. Se selezioni del testo, l&apos;assistente lavora su quello.
                 {!project && ' Senza un progetto aperto la conversazione non viene salvata.'}
               </p>
             )}
-            {current.messages.map((message, index) => <Message key={index} message={message} editor={editor} onBranch={canBranch ? () => branchFrom(index) : null} />)}
-            {busy && <p className="text-sm text-slate-500">Sto elaborando…</p>}
+            {current.messages.map((message, index) => <Message key={index} message={message} editor={editor} onBranch={canBranch ? () => branchFrom(index) : null} onOpenImage={setViewer} />)}
+
+            {busy && (
+              <div className="flex flex-col items-start gap-1.5">
+                {live?.thinking && <ThinkingBlock text={live.thinking} live />}
+                {liveShown?.text && <div className="max-w-[92%] break-words rounded-xl bg-slate-800 px-3 py-2 text-sm leading-6 text-slate-200"><MarkdownMessage>{liveShown.text}</MarkdownMessage></div>}
+                <p className="flex items-center gap-1.5 text-xs text-slate-500">
+                  <Loader2 size={13} className="animate-spin" />
+                  {liveShown?.calling ? 'Preparo una chiamata a uno strumento…' : live?.status || (liveShown?.text ? 'Scrive…' : 'Elaboro…')}
+                </p>
+              </div>
+            )}
+            {pendingAsk && <AskCard ask={pendingAsk} />}
             {error && <p className="text-sm text-rose-400">{error}</p>}
             <div ref={endRef} />
           </div>
@@ -308,13 +817,41 @@ export default function AiChatPanel({ editor, project, settingsVersion, conversa
             </div>
             <label className="mb-2 flex items-center gap-2 text-xs text-slate-500">
               <input type="checkbox" checked={includeDocument} onChange={(event) => setIncludeDocument(event.target.checked)} className="accent-accent-500" />
-              Includi il documento attivo come contesto
+              Includi il documento attivo come contesto{contextTab ? ` (${contextTab.title})` : ''}
             </label>
+            <div className="mb-2 grid grid-cols-2 gap-2 text-xs text-slate-400">
+              <label className="grid min-w-0 gap-0.5">
+                Modello
+                <select
+                  aria-label="Modello"
+                  disabled={busy}
+                  value={model || ''}
+                  title={model || ''}
+                  className="w-full min-w-0 overflow-hidden text-ellipsis whitespace-nowrap rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs text-slate-100 outline-none focus:border-accent-400 disabled:opacity-50"
+                  onChange={(event) => changeProviderSetting({ model: event.target.value })}
+                >
+                  <option value="">{canUseNativeProvider ? 'Seleziona un modello' : 'Predefinito del client'}</option>
+                  {[...new Set([model, ...models].filter(Boolean))].map((name) => <option key={name} value={name} title={name}>{name}</option>)}
+                </select>
+              </label>
+              <label className="grid min-w-0 gap-0.5">
+                Sforzo
+                <select
+                  aria-label="Sforzo di ragionamento"
+                  disabled={busy}
+                  value={settings.providers?.[provider]?.reasoning || reasoningByProvider[provider][0].value}
+                  className="w-full min-w-0 rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs text-slate-100 outline-none focus:border-accent-400 disabled:opacity-50"
+                  onChange={(event) => changeProviderSetting({ reasoning: event.target.value })}
+                >
+                  {reasoningByProvider[provider].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+            </div>
             {project && (current.contextFrom.length > 0 || attachable.length > 0) && (
               <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                 {current.contextFrom.map((id) => (
-                  <span key={id} className="flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800 py-0.5 pl-2 pr-1 text-slate-300">
-                    {titleOf(id)}
+                  <span key={id} title={titleOf(id)} className="flex max-w-full items-center gap-1 rounded-full border border-slate-700 bg-slate-800 py-0.5 pl-2 pr-1 text-slate-300">
+                    <span className="truncate">{titleOf(id)}</span>
                     <button type="button" aria-label="Rimuovi dal contesto" disabled={busy} className="rounded-full p-0.5 hover:bg-slate-700" onClick={() => updateConversation({ contextFrom: current.contextFrom.filter((item) => item !== id) })}><X size={11} /></button>
                   </span>
                 ))}
@@ -323,11 +860,11 @@ export default function AiChatPanel({ editor, project, settingsVersion, conversa
                     aria-label="Usa una conversazione precedente come contesto"
                     value=""
                     disabled={busy}
-                    className="max-w-[11rem] rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5 text-xs text-slate-300 outline-none focus:border-accent-400"
+                    className="w-44 max-w-full overflow-hidden text-ellipsis whitespace-nowrap rounded border border-slate-700 bg-slate-800 px-1.5 py-0.5 text-xs text-slate-300 outline-none focus:border-accent-400"
                     onChange={(event) => event.target.value && updateConversation({ contextFrom: [...current.contextFrom, event.target.value] })}
                   >
                     <option value="">+ Contesto da conversazione…</option>
-                    {attachable.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+                    {attachable.map((item) => <option key={item.id} value={item.id} title={item.title}>{ellipsize(item.title, 40)}</option>)}
                   </select>
                 )}
               </div>
@@ -346,11 +883,14 @@ export default function AiChatPanel({ editor, project, settingsVersion, conversa
                   }
                 }}
               />
-              <button type="button" aria-label="Invia" title="Invia" disabled={busy || !input.trim()} className="rounded-md bg-accent-600 p-2.5 text-white transition hover:bg-accent-500 disabled:opacity-50" onClick={() => send(input)}><Send size={16} /></button>
+              {busy
+                ? <button type="button" aria-label="Interrompi" title="Interrompi" className="rounded-md bg-rose-600 p-2.5 text-white transition hover:bg-rose-500" onClick={stop}><Square size={16} /></button>
+                : <button type="button" aria-label="Invia" title="Invia" disabled={!input.trim()} className="rounded-md bg-accent-600 p-2.5 text-white transition hover:bg-accent-500 disabled:opacity-50" onClick={() => send(input)}><Send size={16} /></button>}
             </div>
           </div>
         </>
       )}
+      {viewer && <ImageViewer src={viewer.src} label={viewer.label} onClose={() => setViewer(null)} />}
     </div>
   )
 }
