@@ -2,32 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Palette: lo scuro è lo slate di Tailwind; il chiaro lo inverte. */
+/* Palette: lo scuro è un grigio antracite con luci color cenere (neutro, appena caldo); il chiaro la inverte. */
 :root {
-  --slate-50: 248 250 252;
-  --slate-100: 241 245 249;
-  --slate-200: 226 232 240;
-  --slate-300: 203 213 225;
-  --slate-400: 148 163 184;
-  --slate-500: 100 116 139;
-  --slate-600: 71 85 105;
-  --slate-700: 51 65 85;
-  --slate-800: 30 41 59;
-  --slate-900: 15 23 42;
-  --slate-950: 2 6 23;
+  --slate-50: 244 244 242;
+  --slate-100: 233 233 230;
+  --slate-200: 212 212 208;
+  --slate-300: 184 184 180;
+  --slate-400: 148 148 145;
+  --slate-500: 112 112 110;
+  --slate-600: 82 82 82;
+  --slate-700: 62 62 64;
+  --slate-800: 46 46 49;
+  --slate-900: 34 34 37;
+  --slate-950: 24 24 26;
 }
 :root[data-theme='light'] {
-  --slate-50: 2 6 23;
-  --slate-100: 15 23 42;
-  --slate-200: 30 41 59;
-  --slate-300: 51 65 85;
-  --slate-400: 71 85 105;
-  --slate-500: 100 116 139;
-  --slate-600: 148 163 184;
-  --slate-700: 203 213 225;
-  --slate-800: 226 232 240;
-  --slate-900: 241 245 249;
-  --slate-950: 248 250 252;
+  --slate-50: 24 24 26;
+  --slate-100: 34 34 37;
+  --slate-200: 46 46 49;
+  --slate-300: 62 62 64;
+  --slate-400: 82 82 82;
+  --slate-500: 112 112 110;
+  --slate-600: 148 148 145;
+  --slate-700: 184 184 180;
+  --slate-800: 212 212 208;
+  --slate-900: 233 233 230;
+  --slate-950: 244 244 242;
 }
 
 :root {
@@ -41,7 +41,7 @@
   --teal-300: 94 234 212;
   --teal-900: 19 78 74;
   --teal-950: 4 47 46;
-  --accent-300: 196 181 253; --accent-400: 167 139 250; --accent-500: 139 92 246; --accent-600: 124 58 237;
+  --accent-300: 214 214 210; --accent-400: 190 190 186; --accent-500: 150 150 146; --accent-600: 108 108 106;
   --editor-font: ui-sans-serif, system-ui, sans-serif;
   --editor-size: 1.0625rem;
   --editor-line-height: 1.75;
@@ -62,12 +62,14 @@
 }
 
 /* Tema chiaro: tonalità d'accento più scure, altrimenti testo e bordi chiari sparirebbero sullo sfondo. */
-:root[data-theme='light'] { --accent-300: 109 40 217; --accent-400: 124 58 237; }
+:root[data-theme='light'] { --accent-300: 82 82 80; --accent-400: 98 98 96; --accent-500: 86 86 86; --accent-600: 62 62 64; }
+:root[data-theme='light'][data-accent='ash'] { --accent-300: 82 82 80; --accent-400: 98 98 96; --accent-500: 86 86 86; --accent-600: 62 62 64; }
 :root[data-theme='light'][data-accent='violet'] { --accent-300: 109 40 217; --accent-400: 124 58 237; }
 :root[data-theme='light'][data-accent='cyan'] { --accent-300: 14 116 144; --accent-400: 8 145 178; }
 :root[data-theme='light'][data-accent='emerald'] { --accent-300: 4 120 87; --accent-400: 5 150 105; }
 :root[data-theme='light'][data-accent='rose'] { --accent-300: 190 18 60; --accent-400: 225 29 72; }
 :root[data-theme='light'][data-accent='amber'] { --accent-300: 180 83 9; --accent-400: 217 119 6; }
+:root[data-accent='ash'] { --accent-300: 214 214 210; --accent-400: 190 190 186; --accent-500: 150 150 146; --accent-600: 108 108 106; }
 :root[data-accent='violet'] { --accent-300: 196 181 253; --accent-400: 167 139 250; --accent-500: 139 92 246; --accent-600: 124 58 237; }
 :root[data-accent='cyan'] { --accent-300: 103 232 249; --accent-400: 34 211 238; --accent-500: 6 182 212; --accent-600: 8 145 178; }
 :root[data-accent='emerald'] { --accent-300: 110 231 183; --accent-400: 52 211 153; --accent-500: 16 185 129; --accent-600: 5 150 105; }

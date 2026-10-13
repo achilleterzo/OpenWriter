@@ -8,6 +8,7 @@ export const themes = [
 ]
 
 export const accents = [
+  { value: 'ash', label: t('Ash'), swatch: '#a3a39f' },
   { value: 'violet', label: t('Violet'), swatch: '#8b5cf6' },
   { value: 'cyan', label: t('Cyan'), swatch: '#06b6d4' },
   { value: 'emerald', label: t('Emerald'), swatch: '#10b981' },
@@ -35,7 +36,7 @@ export const widths = [
 
 export const fontSizeRange = { min: 14, max: 24 }
 
-export const defaultAppearance = { theme: 'system', accent: 'violet', font: 'sans', fontSize: 17, lineHeight: 'normal', width: 'medium' }
+export const defaultAppearance = { theme: 'system', accent: 'ash', font: 'sans', fontSize: 17, lineHeight: 'normal', width: 'medium' }
 
 const pick = (options, value, fallback) => (options.some((option) => option.value === value) ? value : fallback)
 
