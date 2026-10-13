@@ -9,6 +9,7 @@ import HistoryPanel from './components/HistoryPanel.jsx'
 import NotesPanel from './components/NotesPanel.jsx'
 import ProjectsPanel from './components/ProjectsPanel.jsx'
 import MemoryPanel from './components/MemoryPanel.jsx'
+import AboutDialog from './components/AboutDialog.jsx'
 import { useDialogs } from './components/Dialogs.jsx'
 import OutlinePanel from './components/OutlinePanel.jsx'
 import PanelResizer from './components/PanelResizer.jsx'
@@ -32,6 +33,14 @@ const remapPath = (value, from, to) => {
 }
 // Ordine stabile con le schede fissate davanti a tutte le altre.
 const keepPinnedFirst = (list) => [...list.filter((tab) => tab.pinned), ...list.filter((tab) => !tab.pinned)]
+// Confronto di versioni "1.2.3": positivo se left è più recente di right.
+const compareVersions = (left, right) => {
+  const parse = (value) => String(value || '').replace(/^v/i, '').split('.').map((part) => Number.parseInt(part, 10) || 0)
+  const a = parse(left)
+  const b = parse(right)
+  for (let index = 0; index < 3; index += 1) { const difference = (a[index] || 0) - (b[index] || 0); if (difference) return difference }
+  return 0
+}
 const isInside = (value, directory) => Boolean(value) && (value === directory || value.startsWith(`${directory}\\`) || value.startsWith(`${directory}/`))
 
 let untitledCounter = 0
@@ -91,6 +100,14 @@ export default function App() {
     } catch { /* sessionStorage non disponibile */ }
     return 'editor'
   })
+  // Scheda con cui si aprono le impostazioni: Generale, salvo dall'ingranaggio dell'assistente (IA).
+  const [settingsSection, setSettingsSection] = useState('general')
+  const [aboutOpen, setAboutOpen] = useState(false)
+  const [aboutCheck, setAboutCheck] = useState(false)
+  const [appVersion, setAppVersion] = useState('')
+  const [updateRelease, setUpdateRelease] = useState(null)
+  const [updateNoticeVisible, setUpdateNoticeVisible] = useState(false)
+  const openSettings = (section = 'general') => { setSettingsSection(section); setScreen('settings') }
   const [assistantOpen, setAssistantOpen] = useState(false)
   // Documenti nel contesto della chat: il documento attivo (di default sì) e gli altri aperti, "pinnati" per id di scheda.
   const [contextPins, setContextPins] = useState({ includeActive: true, pinnedIds: [] })
@@ -255,10 +272,34 @@ export default function App() {
   const openProject = useCallback((directory) => switchProject(() => electronAPI.openProject(directory)), [switchProject])
   const createProject = useCallback((name) => switchProject(() => electronAPI.createProject(name)), [switchProject])
 
+  // Nuova versione: controllo all'avvio (e a richiesta dalla finestra Informazioni), confronto con la versione in uso.
+  const checkForUpdate = useCallback(async () => {
+    const version = await electronAPI.getAppVersion()
+    setAppVersion(version)
+    const release = await electronAPI.getLatestRelease()
+    const newer = release?.version && compareVersions(release.version, version) > 0
+    setUpdateRelease(newer ? release : null)
+    return Boolean(newer)
+  }, [])
+
+  useEffect(() => {
+    if (!electronAPI) return
+    electronAPI.getAppVersion().then(setAppVersion).catch(() => {})
+    checkForUpdate().catch(() => {})
+  }, [checkForUpdate])
+
+  useEffect(() => {
+    if (!updateRelease) return undefined
+    setUpdateNoticeVisible(true)
+    const timer = setTimeout(() => setUpdateNoticeVisible(false), 9000)
+    return () => clearTimeout(timer)
+  }, [updateRelease])
+
   useEffect(() => {
     if (!electronAPI) return undefined
     return electronAPI.onAppCommand((command) => {
-      if (command === 'settings') setScreen('settings')
+      if (command === 'about' || command === 'check-updates') { setAboutCheck(command === 'check-updates'); setAboutOpen(true) }
+      if (command === 'settings') openSettings()
       if (command === 'open-project') chooseProject()
     })
   }, [chooseProject])
@@ -598,13 +639,15 @@ export default function App() {
         <ActivityBar
           activeTab={sideTab}
           onSelect={(id) => setSideTab((current) => (current === id ? null : id))}
-          onSettings={() => setScreen('settings')}
+          onSettings={() => openSettings()}
+          update={updateRelease}
+          onUpdate={() => { setAboutCheck(false); setAboutOpen(true) }}
         />
         {sideTab && (
           <aside style={{ width: widths.left }} className="relative flex shrink-0 flex-col border-r border-slate-800 bg-slate-900/60">
             <PanelResizer side="left" label={t('Side panel width')} width={widths.left} min={PANELS.left.min} max={maxWidthFor('left', resizeContext('left'))} defaultWidth={PANELS.left.default} onChange={resizePanel('left')} onCommit={commitLayout} />
             <h2 className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{sideTabs.find((item) => item.id === sideTab)?.label}</h2>
-            {sideTab === 'projects' && <ProjectsPanel project={project} onOpen={openProject} onChoose={chooseProject} onCreate={createProject} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
+            {sideTab === 'projects' && <ProjectsPanel project={project} onOpenFile={(file) => openFromExplorer(file)} onOpen={openProject} onChoose={chooseProject} onCreate={createProject} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
             {sideTab === 'files' && (
               <FileExplorer project={project} activePath={contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} />
             )}
@@ -646,12 +689,23 @@ export default function App() {
             settingsVersion={settingsVersion}
             conversationId={conversationId}
             onConversationChange={setConversationId}
-            onOpenSettings={() => setScreen('settings')}
+            onOpenSettings={() => openSettings('ai')}
           />
         </aside>
       </div>
       {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
-      {screen === 'settings' && <SettingsScreen project={project} onChooseProject={chooseProject} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
+      {updateRelease && updateNoticeVisible && (
+        <div className="fixed bottom-12 right-6 z-30 flex max-w-md items-center gap-4 rounded-xl border border-accent-500/50 bg-slate-900 p-4 text-sm shadow-xl">
+          <div className="min-w-0">
+            <strong className="block text-slate-50">{t('Update available: v{version}', { version: updateRelease.version })}</strong>
+            <span className="block text-xs text-slate-400">{t('You are using v{current}.', { current: appVersion })}</span>
+          </div>
+          <button type="button" className="shrink-0 rounded-md bg-accent-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-accent-500" onClick={() => electronAPI.openRelease(updateRelease.url)}>{t('Download latest build')}</button>
+          <button type="button" aria-label={t('Dismiss')} className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-50" onClick={() => setUpdateNoticeVisible(false)}>×</button>
+        </div>
+      )}
+      {aboutOpen && <AboutDialog version={appVersion} release={updateRelease} checkOnOpen={aboutCheck} onCheck={checkForUpdate} onClose={() => setAboutOpen(false)} />}
+      {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} onChooseProject={chooseProject} onOpenFile={(file) => { setScreen('editor'); setSettingsVersion((value) => value + 1); openFromExplorer(file) }} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
     </ContextMenuContext.Provider>
   )
 }

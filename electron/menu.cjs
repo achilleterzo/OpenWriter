@@ -17,6 +17,8 @@ function createApplicationMenu(sendCommand) {
         { label: t('Save'), accelerator: 'CmdOrCtrl+S', click: command('save') },
         { label: t('Save as…'), accelerator: 'CmdOrCtrl+Shift+S', click: command('save-as') },
         { type: 'separator' },
+        { label: t('Print…'), accelerator: 'CmdOrCtrl+P', click: command('print') },
+        { type: 'separator' },
         { label: t('Export DOCX…'), click: command('export-docx') },
         { label: t('Export PDF…'), click: command('export-pdf') },
         { type: 'separator' },
@@ -38,6 +40,13 @@ function createApplicationMenu(sendCommand) {
         { type: 'separator' },
         { label: t('Find…'), accelerator: 'CmdOrCtrl+F', click: command('find') },
         { label: t('Replace…'), accelerator: 'CmdOrCtrl+H', click: command('replace') },
+      ],
+    },
+    {
+      label: t('Help'),
+      submenu: [
+        { label: t('Check for updates…'), click: command('check-updates') },
+        { label: t('About OpenWriter'), click: command('about') },
       ],
     },
   ]))

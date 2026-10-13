@@ -11,6 +11,7 @@ const { createProjectFile } = require('./project-file.cjs')
 const { createProjectsStore } = require('./projects.cjs')
 const { createChatStore } = require('./chat-store.cjs')
 const { createMemoryStore } = require('./memory-store.cjs')
+const { fetchLatestRelease } = require('./updates.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
 const { createNotesStore } = require('./notes-store.cjs')
 const images = require('./images.cjs')
@@ -307,21 +308,47 @@ async function chooseSavePath({ filePath, saveAs, filters, defaultPath }) {
   return result.canceled ? null : result.filePath
 }
 
-async function exportPdf(html, filePath) {
-  const printWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true } })
-  const printableHtml = `<!doctype html><html><head><meta charset="UTF-8"><style>
+// Pagina stampabile del documento: stesso foglio di stile per l'esportazione in PDF e per la stampa.
+function printableHtml(html) {
+  return `<!doctype html><html><head><meta charset="UTF-8"><style>
     @page { size: A4; margin: 2cm; }
-    body { font-family: Arial, sans-serif; color: #111827; line-height: 1.6; }
-    h1, h2, h3, h4, h5, h6, p, ul, ol, blockquote, pre { margin: 0 0 12px; }
+    body { font-family: Arial, sans-serif; color: #111827; line-height: 1.6; font-size: 11pt; }
+    h1, h2, h3, h4, h5, h6, p, ul, ol, blockquote, pre, table { margin: 0 0 12px; }
+    h1, h2, h3, h4, h5, h6 { line-height: 1.25; break-after: avoid; }
+    h1 { font-size: 22pt; } h2 { font-size: 17pt; } h3 { font-size: 14pt; } h4, h5, h6 { font-size: 12pt; }
+    ul { list-style: disc; padding-left: 22px; } ol { list-style: decimal; padding-left: 22px; }
     blockquote { border-left: 3px solid #64748b; padding-left: 12px; color: #475569; }
-    pre { padding: 12px; background: #f1f5f9; white-space: pre-wrap; }
+    pre { padding: 12px; background: #f1f5f9; white-space: pre-wrap; break-inside: avoid; }
     code { font-family: monospace; }
+    img { max-width: 100%; height: auto; break-inside: avoid; }
+    table { border-collapse: collapse; } th, td { border: 1px solid #cbd5e1; padding: 4px 8px; }
+    a { color: #1d4ed8; }
   </style></head><body>${html}</body></html>`
+}
 
+async function loadPrintable(html) {
+  const printWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true } })
+  await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(printableHtml(html))}`)
+  // Le immagini (anche quelle del progetto, servite da ow-file://) devono essere caricate prima di stampare.
+  await printWindow.webContents.executeJavaScript('Promise.all(Array.from(document.images).map((image) => (image.complete ? 1 : new Promise((resolve) => { image.onload = image.onerror = resolve }))))')
+  return printWindow
+}
+
+async function exportPdf(html, filePath) {
+  const printWindow = await loadPrintable(html)
   try {
-    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(printableHtml)}`)
     const pdf = await printWindow.webContents.printToPDF({ printBackground: true })
     await fs.writeFile(filePath, pdf)
+  } finally {
+    printWindow.close()
+  }
+}
+
+// Stampa con la finestra di dialogo del sistema; restituisce true se il lavoro è stato inviato alla stampante.
+async function printDocument(html) {
+  const printWindow = await loadPrintable(html)
+  try {
+    return await new Promise((resolve) => { printWindow.webContents.print({ printBackground: true }, (success) => resolve(success)) })
   } finally {
     printWindow.close()
   }
@@ -434,6 +461,47 @@ ipcMain.handle('session:save', (_event, session) => saveSession(session))
 ipcMain.on('session:save-sync', (event, session) => {
   try { saveSession(session) } catch (error) { console.error(error) }
   event.returnValue = true
+})
+// Impostazioni e contesto di un progetto qualsiasi dell'elenco (non solo di quello aperto).
+const projectFileFor = (directory) => {
+  const target = path.resolve(String(directory || ''))
+  if (!fsSync.existsSync(target) || !fsSync.statSync(target).isDirectory()) throw new Error(t('The project folder no longer exists'))
+  return { target, file: createProjectFile({ getProjectPath: () => target }) }
+}
+ipcMain.handle('projects:get-settings', (_event, directory) => {
+  const { file } = projectFileFor(directory)
+  return file.getSettings()
+})
+ipcMain.handle('projects:save-settings', (_event, { directory, settings } = {}) => {
+  const { target, file } = projectFileFor(directory)
+  file.initialize()
+  const saved = file.saveSettings(settings)
+  if (projectPath && path.resolve(projectPath).toLowerCase() === target.toLowerCase()) applySpellcheck()
+  return saved
+})
+// Copia il contesto per l'assistente (context.md e gli altri .md di istruzioni in .ow) da un progetto a un altro.
+ipcMain.handle('projects:copy-context', (_event, { from, to, mode } = {}) => {
+  const source = projectFileFor(from)
+  const destination = projectFileFor(to)
+  if (source.target.toLowerCase() === destination.target.toLowerCase()) throw new Error(t('Choose a different project'))
+  destination.file.initialize()
+  const sourceSettings = source.file.getSettings()
+  const incoming = String(sourceSettings.ai?.context || '')
+  const extras = sourceSettings.ai?.extraContext || []
+  if (!incoming.trim() && !extras.length) throw new Error(t('The source project has no context'))
+  const current = destination.file.getSettings()
+  const existing = String(current.ai?.context || '')
+  const merged = mode === 'append' && existing.trim() ? `${existing.trimEnd()}\n\n${incoming}` : incoming
+  destination.file.saveSettings({ name: current.name, ai: { context: merged, language: current.ai.language, documentLanguage: current.ai.documentLanguage }, options: current.options, spellcheck: current.spellcheck })
+  // Gli altri file di istruzioni si copiano solo se nel progetto di destinazione non esistono già.
+  let copied = 0
+  for (const extra of extras) {
+    const target = path.join(destination.target, '.ow', extra.name)
+    if (fsSync.existsSync(target)) continue
+    fsSync.writeFileSync(target, extra.text)
+    copied += 1
+  }
+  return { characters: destination.file.getSettings().ai.context.length, extraFiles: copied }
 })
 ipcMain.handle('project:get-settings', () => projectFile.getSettings())
 ipcMain.handle('project:save-settings', (_event, settings) => {
@@ -625,6 +693,7 @@ ipcMain.handle('document:export-docx', async (_event, { html }) => {
   await fs.writeFile(docxPath, document)
   return docxPath
 })
+ipcMain.handle('document:print', (_event, { html }) => printDocument(String(html || '')))
 ipcMain.handle('document:export-pdf', async (_event, { html }) => {
   const targetPath = await chooseSavePath({
     defaultPath: `${t('New document')}.pdf`,
@@ -665,11 +734,15 @@ function loadLanguage() {
 
 function buildMenu() {
   createApplicationMenu((command) => {
-    if (command === 'settings' || command === 'open-project') mainWindow?.webContents.send('app:command', command)
+    if (['settings', 'open-project', 'about', 'check-updates'].includes(command)) mainWindow?.webContents.send('app:command', command)
     else mainWindow?.webContents.send('document:command', command)
   })
 }
 
+ipcMain.handle('app:get-version', () => app.getVersion())
+ipcMain.handle('app:latest-release', async () => fetchLatestRelease())
+// Solo pagine di GitHub: il link arriva dal renderer.
+ipcMain.handle('app:open-release', (_event, url) => (/^https:\/\/github\.com\//.test(String(url)) ? shell.openExternal(String(url)) : false))
 ipcMain.handle('i18n:set-locale', (_event, code) => {
   const before = getLocale()
   const after = setLocale(code)
