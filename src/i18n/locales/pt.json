@@ -578,6 +578,7 @@
   "{label} CLI not found": "CLI de {label} não encontrada",
   "{length} open": "{length} abertas",
   "{project}\nClick to change project": "{project}\nClique para mudar de projeto",
+  "{project}\nClick to open the folder in the file manager": "{project}\nClique para abrir a pasta no gestor de ficheiros",
   "{target} — Ctrl+click to open": "{target} — Ctrl+clique para abrir",
   "{value} client not found. Install it and try again.": "Cliente {value} não encontrado. Instale-o e tente novamente.",
   "{value} did not answer within {round} seconds": "{value} não respondeu em {round} segundos",

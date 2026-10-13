@@ -578,6 +578,7 @@
   "{label} CLI not found": "CLI {label} introuvable",
   "{length} open": "{length} ouvertes",
   "{project}\nClick to change project": "{project}\nCliquez pour changer de projet",
+  "{project}\nClick to open the folder in the file manager": "{project}\nCliquez pour ouvrir le dossier dans le gestionnaire de fichiers",
   "{target} — Ctrl+click to open": "{target} — Ctrl+clic pour ouvrir",
   "{value} client not found. Install it and try again.": "Client {value} introuvable. Installez-le et réessayez.",
   "{value} did not answer within {round} seconds": "{value} n'a pas répondu en {round} secondes",
