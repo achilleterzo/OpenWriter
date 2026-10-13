@@ -232,10 +232,10 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
     <div className={active ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
       <DocumentToolbar editor={editor} onSave={onSave} dirty={tab.dirty} sourceOpen={sourceOpen} onToggleSource={toggleSource} onCopySource={() => navigator.clipboard.writeText(sourceLatest.current)} onImage={pickImage} onFind={() => { if (findOpen) closeFind(); else { setFindOpen(true); setFocusToken((value) => value + 1) } }} findOpen={findOpen} />
       {pendingCount > 0 && !sourceOpen && (
-        <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 bg-emerald-500/10 px-4 py-2 text-xs text-slate-200">
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 bg-emerald-400/10 px-4 py-2 text-xs text-slate-200">
           <span>{t('{count} edits to review', { count: pendingCount })}</span>
-          <button type="button" className="rounded bg-emerald-500/20 px-2 py-1 text-emerald-200 transition hover:bg-emerald-500/30" onClick={() => acceptAll(editor)}>{t('Accept all')}</button>
-          <button type="button" className="rounded bg-rose-500/20 px-2 py-1 text-rose-200 transition hover:bg-rose-500/30" onClick={() => rejectAll(editor)}>{t('Reject all')}</button>
+          <button type="button" className="rounded bg-emerald-400/20 px-2 py-1 font-medium text-emerald-300 transition hover:bg-emerald-400/35" onClick={() => acceptAll(editor)}>{t('Accept all')}</button>
+          <button type="button" className="rounded bg-rose-400/20 px-2 py-1 font-medium text-rose-300 transition hover:bg-rose-400/35" onClick={() => rejectAll(editor)}>{t('Reject all')}</button>
         </div>
       )}
       <div className="relative min-h-0 flex-1">

@@ -205,8 +205,8 @@ body {
 
 /* Modifiche dell'assistente da rivedere: blocco nuovo evidenziato, sopra il vecchio barrato con Accetta / Rifiuta. */
 .document-editor .tiptap .ow-pending-new {
-  border-left: 3px solid rgb(52 211 153);
-  background: rgb(16 185 129 / 0.10);
+  border-left: 3px solid rgb(var(--emerald-400));
+  background: rgb(var(--emerald-400) / 0.12);
   padding-left: 0.75rem;
 }
 
@@ -230,14 +230,15 @@ body {
   font-size: 0.75rem;
 }
 
-.document-editor .tiptap .ow-pending-accept { background: rgb(16 185 129 / 0.2); color: rgb(167 243 208); }
-.document-editor .tiptap .ow-pending-accept:hover { background: rgb(16 185 129 / 0.35); }
-.document-editor .tiptap .ow-pending-reject { background: rgb(244 63 94 / 0.2); color: rgb(253 164 175); }
-.document-editor .tiptap .ow-pending-reject:hover { background: rgb(244 63 94 / 0.35); }
+/* Colori dalle variabili del tema: restano leggibili sia nel tema scuro sia in quello chiaro. */
+.document-editor .tiptap .ow-pending-accept { background: rgb(var(--emerald-400) / 0.2); color: rgb(var(--emerald-300)); font-weight: 600; }
+.document-editor .tiptap .ow-pending-accept:hover { background: rgb(var(--emerald-400) / 0.35); }
+.document-editor .tiptap .ow-pending-reject { background: rgb(var(--rose-400) / 0.2); color: rgb(var(--rose-300)); font-weight: 600; }
+.document-editor .tiptap .ow-pending-reject:hover { background: rgb(var(--rose-400) / 0.35); }
 
 .document-editor .tiptap .ow-pending-old {
-  border-left: 3px solid rgb(251 113 133);
-  background: rgb(244 63 94 / 0.10);
+  border-left: 3px solid rgb(var(--rose-400));
+  background: rgb(var(--rose-400) / 0.12);
   padding: 0.25rem 0 0.25rem 0.75rem;
   text-decoration: line-through;
   color: rgb(var(--slate-400));
