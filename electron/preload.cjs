@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   renamePath: (request) => ipcRenderer.invoke('workspace:rename-path', request),
   deletePath: (target) => ipcRenderer.invoke('workspace:delete-path', target),
+  openProjectFolder: () => ipcRenderer.invoke('workspace:open-project-folder'),
   revealPath: (target) => ipcRenderer.invoke('workspace:reveal-path', target),
   getSpellcheck: () => ipcRenderer.invoke('spellcheck:get'),
   setSpellcheckLanguages: (languages) => ipcRenderer.invoke('spellcheck:set-global', languages),

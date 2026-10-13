@@ -660,6 +660,7 @@ ipcMain.handle('edit:replace-misspelling', (event, text) => event.sender.replace
 ipcMain.handle('edit:add-dictionary', (event, word) => event.sender.session.addWordToSpellCheckerDictionary(String(word)))
 ipcMain.handle('workspace:rename-path', (_event, request) => renamePath(request || {}))
 ipcMain.handle('workspace:delete-path', (_event, target) => deletePath(target))
+ipcMain.handle('workspace:open-project-folder', async () => { if (!projectPath) throw new Error(t('No project open')); const failure = await shell.openPath(projectPath); if (failure) throw new Error(failure) })
 ipcMain.handle('workspace:reveal-path', (_event, target) => { shell.showItemInFolder(resolveInProject(target)) })
 ipcMain.handle('workspace:list-directory', (_event, directory) => listDirectory(directory))
 ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, saveAs }) => {
