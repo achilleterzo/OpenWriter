@@ -28,7 +28,6 @@ const projectsStore = createProjectsStore({ filePath: () => path.join(app.getPat
 const projectFile = createProjectFile({ getProjectPath: () => projectPath })
 const chatStore = createChatStore({ getProjectPath: () => projectPath })
 const memoryStore = createMemoryStore({ getProjectPath: () => projectPath })
-const projectRelative = (absolute) => path.relative(projectPath, absolute).split(path.sep).join('/')
 const notesStore = createNotesStore({ getProjectPath: () => projectPath })
 const projectTools = createProjectTools({ getProjectPath: () => projectPath, readDocument: (filePath) => readDocument(filePath) })
 const aiRequests = new Map()
@@ -213,9 +212,30 @@ async function renamePath({ path: target, newName }) {
   const caseOnlyChange = destination.toLowerCase() === source.toLowerCase()
   if (!caseOnlyChange && fsSync.existsSync(destination)) throw new Error(t('An item with this name already exists'))
   await fs.rename(source, destination)
+  moveArtifacts(source, destination)
+  return destination
+}
+
+// Tutto ciò che riguarda un file o una cartella (cronologia, note, memoria) lo segue quando viene rinominato o spostato,
+// anche in un altro progetto (sotto-progetto o progetto padre).
+function moveArtifacts(source, destination) {
   try { projectFile.moveHistory(source, destination) } catch (error) { console.error('Cronologia non spostata:', error) }
   try { notesStore.move(source, destination) } catch (error) { console.error('Note non spostate:', error) }
-  try { memoryStore.renameFile(projectRelative(source), projectRelative(destination)) } catch (error) { console.error('Memoria non aggiornata:', error) }
+  try { memoryStore.relocate(source, destination) } catch (error) { console.error('Memoria non aggiornata:', error) }
+}
+
+// Spostamento col trascinamento nell'explorer: l'elemento va dentro `toDirectory` mantenendo il nome.
+async function moveIntoDirectory({ from, toDirectory }) {
+  const source = resolveInProject(from)
+  const directory = resolveInProject(toDirectory)
+  if (source === projectPath) throw new Error(t('The project folder cannot be renamed from here'))
+  if (!(await fs.stat(directory).then((stat) => stat.isDirectory(), () => false))) throw new Error(t('The destination is not a folder'))
+  if (path.dirname(source) === directory) return source
+  if (directory === source || directory.startsWith(source + path.sep)) throw new Error(t('A folder cannot be moved into itself'))
+  const destination = path.join(directory, path.basename(source))
+  if (fsSync.existsSync(destination)) throw new Error(t('An item with this name already exists'))
+  await fs.rename(source, destination)
+  moveArtifacts(source, destination)
   return destination
 }
 
@@ -229,7 +249,9 @@ async function deletePath(target) {
     defaultId: 1,
     cancelId: 1,
     message: t('Delete "{basename}"?', { basename: path.basename(source) }),
-    detail: isDirectory ? t('The folder and all its contents will be moved to the trash.') : t('The file will be moved to the trash.'),
+    detail: isDirectory
+      ? t('The folder and all its contents will be moved to the trash.') + (fsSync.existsSync(path.join(source, projectFile.directoryName)) ? ` ${t('It is a sub-project: its history, notes and settings go with it.')}` : '')
+      : t('The file will be moved to the trash.'),
   })
   if (response !== 0) return false
   await shell.trashItem(source)
@@ -287,13 +309,15 @@ function sendEditContextMenu(webContents, params) {
 }
 
 async function listDirectory(directory) {
-  const entries = await fs.readdir(resolveInProject(directory), { withFileTypes: true })
+  const resolved = resolveInProject(directory)
+  const entries = await fs.readdir(resolved, { withFileTypes: true })
   return entries
     .filter((entry) => !entry.name.startsWith('.'))
     .filter((entry) => entry.isDirectory()
       ? !hiddenDirectories.has(entry.name)
       : documentExtensions.includes(path.extname(entry.name).toLowerCase()))
-    .map((entry) => ({ name: entry.name, path: path.join(directory, entry.name), isDirectory: entry.isDirectory() }))
+    // Una cartella con una `.ow` propria è un sotto-progetto: l'explorer la distingue dalle altre.
+    .map((entry) => ({ name: entry.name, path: path.join(directory, entry.name), isDirectory: entry.isDirectory(), isProject: entry.isDirectory() && fsSync.existsSync(path.join(resolved, entry.name, projectFile.directoryName)) }))
     .sort((left, right) => Number(right.isDirectory) - Number(left.isDirectory) || left.name.localeCompare(right.name, 'it', { sensitivity: 'base' }))
 }
 
@@ -453,7 +477,12 @@ ipcMain.handle('document:open-path', async (_event, filePath) => {
   const stats = await fs.stat(target).catch(() => null)
   if (!stats) throw new Error(t('Could not open the file'))
   if (stats.isDirectory()) throw new Error(t('Not a file'))
-  return readDocument(target)
+  const document = await readDocument(target)
+  if (document.format === 'markdown') return document
+  // DOCX e PDF del progetto diventano subito un Markdown con lo stesso nome, così l'assistente può lavorarci: se esiste già, si apre quello.
+  const markdownPath = target.replace(/\.[^.\\/]+$/, '.md')
+  if (fsSync.existsSync(markdownPath)) return readDocument(markdownPath)
+  return { ...document, convertTo: markdownPath }
 })
 ipcMain.handle('document:reopen', (_event, filePath) => readSessionDocument(filePath))
 ipcMain.handle('session:load', () => loadSession())
@@ -504,6 +533,8 @@ ipcMain.handle('projects:copy-context', (_event, { from, to, mode } = {}) => {
   return { characters: destination.file.getSettings().ai.context.length, extraFiles: copied }
 })
 ipcMain.handle('project:get-settings', () => projectFile.getSettings())
+// Contesto dell'assistente per il documento attivo: le istruzioni di tutti i progetti coinvolti, dal più esterno al più vicino.
+ipcMain.handle('project:context-chain', (_event, filePath) => (projectPath ? projectFile.getContextChain(filePath) : []))
 ipcMain.handle('project:save-settings', (_event, settings) => {
   const saved = projectFile.saveSettings(settings)
   applySpellcheck()
@@ -610,9 +641,7 @@ ipcMain.handle('tools:move-path', async (_event, { from, to } = {}) => {
   if (fsSync.existsSync(destination.target)) throw new Error(t('An item with this name already exists'))
   await fs.mkdir(path.dirname(destination.target), { recursive: true })
   await fs.rename(source.target, destination.target)
-  try { projectFile.moveHistory(source.target, destination.target) } catch (error) { console.error('Cronologia non spostata:', error) }
-  try { notesStore.move(source.target, destination.target) } catch (error) { console.error('Note non spostate:', error) }
-  try { memoryStore.renameFile(source.relative, destination.relative) } catch (error) { console.error('Memoria non aggiornata:', error) }
+  moveArtifacts(source.target, destination.target)
   return { from: source.target, to: destination.target, path: destination.relative }
 })
 ipcMain.handle('tools:create-directory', (_event, relativePath) => projectTools.createDirectory(relativePath))
@@ -661,6 +690,17 @@ ipcMain.handle('edit:add-dictionary', (event, word) => event.sender.session.addW
 ipcMain.handle('workspace:rename-path', (_event, request) => renamePath(request || {}))
 ipcMain.handle('workspace:delete-path', (_event, target) => deletePath(target))
 ipcMain.handle('workspace:open-project-folder', async () => { if (!projectPath) throw new Error(t('No project open')); const failure = await shell.openPath(projectPath); if (failure) throw new Error(failure) })
+// Trasforma una cartella del progetto in sotto-progetto: crea la sua `.ow` (impostazioni e contesto vuoti). Solo su richiesta esplicita dell'utente.
+ipcMain.handle('workspace:create-subproject', async (_event, directory) => {
+  const target = resolveInProject(directory)
+  if (target === projectPath) throw new Error(t('The project folder is already a project'))
+  if (!(await fs.stat(target).then((stat) => stat.isDirectory(), () => false))) throw new Error(t('Not a folder'))
+  if (fsSync.existsSync(path.join(target, projectFile.directoryName))) throw new Error(t('This folder is already a project'))
+  // Nasce che eredita il contesto del progetto padre; si può togliere dalle impostazioni del sotto-progetto.
+  createProjectFile({ getProjectPath: () => target }).initialize({ inherit: true })
+  return target
+})
+ipcMain.handle('workspace:move-path', (_event, request) => moveIntoDirectory(request || {}))
 ipcMain.handle('workspace:reveal-path', (_event, target) => { shell.showItemInFolder(resolveInProject(target)) })
 ipcMain.handle('workspace:list-directory', (_event, directory) => listDirectory(directory))
 ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, saveAs }) => {
@@ -675,7 +715,7 @@ ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, sa
   await fs.writeFile(markdownPath, markdown, 'utf8')
   // La cronologia non deve mai far fallire il salvataggio.
   try {
-    if (projectPath && projectFile.autoVersionsEnabled()) projectFile.addVersion(markdownPath, markdown, { auto: true })
+    if (projectPath && projectFile.autoVersionsEnabled(markdownPath)) projectFile.addVersion(markdownPath, markdown, { auto: true })
   } catch (error) {
     console.error('Versione non salvata:', error)
   }
