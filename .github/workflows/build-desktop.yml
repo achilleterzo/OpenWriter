@@ -166,25 +166,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download Windows asset
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: openwriter-windows
           path: release-assets/windows
 
       - name: Download Linux asset
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: openwriter-linux
           path: release-assets/linux
 
       - name: Download macOS asset
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: openwriter-macos
           path: release-assets/macos
 
       - name: Publish release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.version.outputs.release_tag }}
           files: |
