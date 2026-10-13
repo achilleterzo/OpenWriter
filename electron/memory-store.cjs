@@ -2,6 +2,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
+const { ownerRoot, findOwners, isInside } = require('./project-owner.cjs')
 
 const AUTHORS = ['ai', 'user']
 const MAX_ENTRIES = 300
@@ -9,18 +10,25 @@ const MAX_ENTRIES = 300
 /**
  * Memoria del progetto: informazioni importanti (decisioni, terminologia, scelte di stile…) salvate in `.ow/memory.json` come
  *   [ { id, title, text, files: ['percorso/relativo.md'], author: 'ai' | 'user', createdAt, updatedAt } ]
- * Ogni voce porta con sé i file a cui si applica (percorsi relativi al progetto, che seguono gli spostamenti).
+ * Ogni voce porta con sé i file a cui si applica. Una voce sta nella `.ow` più vicina ai suoi file (vedi project-owner.cjs) e sul disco
+ * i percorsi sono relativi a quella `.ow`; chi usa l'archivio vede invece percorsi relativi al progetto aperto e un campo `origin`
+ * (percorso del progetto proprietario relativo al progetto aperto, '' per il progetto stesso).
  */
 function createMemoryStore({ getProjectPath }) {
-  const file = () => {
-    const project = getProjectPath()
-    if (!project) throw new Error(t('No project open'))
-    return path.join(project, '.ow', 'memory.json')
+  const project = () => {
+    const current = getProjectPath()
+    if (!current) throw new Error(t('No project open'))
+    return path.resolve(current)
   }
+  const memoryFile = (base) => path.join(base, '.ow', 'memory.json')
+  const posix = (value) => value.split(path.sep).join('/')
+  const originOf = (base) => posix(path.relative(project(), base))
+  // Il progetto aperto e i suoi sotto-progetti.
+  const owners = () => [project(), ...findOwners(project())]
 
-  function read() {
+  function readAt(base) {
     try {
-      const list = JSON.parse(fs.readFileSync(file(), 'utf8'))
+      const list = JSON.parse(fs.readFileSync(memoryFile(base), 'utf8'))
       return Array.isArray(list) ? list : []
     } catch (error) {
       if (error.code === 'ENOENT') return []
@@ -28,8 +36,8 @@ function createMemoryStore({ getProjectPath }) {
     }
   }
 
-  function write(list) {
-    const target = file()
+  function writeAt(base, list) {
+    const target = memoryFile(base)
     fs.mkdirSync(path.dirname(target), { recursive: true })
     const temporary = `${target}.tmp`
     fs.writeFileSync(temporary, JSON.stringify(list, null, 2))
@@ -49,64 +57,132 @@ function createMemoryStore({ getProjectPath }) {
     return result.slice(0, 20)
   }
 
-  const list = () => read()
+  // Proprietario di una voce nuova: la `.ow` comune più vicina ai file collegati; senza file, o con file di progetti diversi, il progetto aperto.
+  function ownerFor(files) {
+    const bases = new Set(files.map((file) => ownerRoot(project(), path.join(project(), file))))
+    return bases.size === 1 ? [...bases][0] : project()
+  }
+
+  // Dal progetto aperto al proprietario, e ritorno.
+  const toOwner = (base, files) => files.map((file) => posix(path.relative(base, path.join(project(), file))))
+  const toProject = (base, files) => (files || []).map((file) => posix(path.relative(project(), path.join(base, file))))
+  const present = (base, entry) => ({ ...entry, files: toProject(base, entry.files), origin: originOf(base) })
+
+  function list() {
+    return owners().flatMap((base) => readAt(base).map((entry) => present(base, entry)))
+  }
+
+  function find(id) {
+    for (const base of owners()) {
+      const entries = readAt(base)
+      const index = entries.findIndex((entry) => entry.id === id)
+      if (index !== -1) return { base, entries, index }
+    }
+    return null
+  }
 
   function add({ title, text: body, files, author } = {}) {
     if (!text(body, 4000)) throw new Error(t('The memory text is empty'))
-    const entries = read()
+    const linked = cleanFiles(files)
+    const base = ownerFor(linked)
+    const entries = readAt(base)
     if (entries.length >= MAX_ENTRIES) throw new Error(t('The memory is full: remove some entries first'))
     const now = new Date().toISOString()
-    const entry = { id: crypto.randomUUID(), title: text(title, 120), text: text(body, 4000), files: cleanFiles(files), author: AUTHORS.includes(author) ? author : 'user', createdAt: now, updatedAt: now }
+    const entry = { id: crypto.randomUUID(), title: text(title, 120), text: text(body, 4000), files: toOwner(base, linked), author: AUTHORS.includes(author) ? author : 'user', createdAt: now, updatedAt: now }
     entries.push(entry)
-    write(entries)
-    return entry
+    writeAt(base, entries)
+    return present(base, entry)
   }
 
   function update(id, changes = {}) {
-    const entries = read()
-    const index = entries.findIndex((entry) => entry.id === id)
-    if (index === -1) throw new Error(t('Memory entry not found'))
-    const current = entries[index]
-    const next = { ...current }
+    const found = find(id)
+    if (!found) throw new Error(t('Memory entry not found'))
+    const { base, entries, index } = found
+    const next = { ...entries[index] }
     if (changes.title !== undefined) next.title = text(changes.title, 120)
     if (changes.text !== undefined) {
       next.text = text(changes.text, 4000)
       if (!next.text) throw new Error(t('The memory text is empty'))
     }
-    if (changes.files !== undefined) next.files = cleanFiles(changes.files)
+    let target = base
+    if (changes.files !== undefined) {
+      const linked = cleanFiles(changes.files)
+      // Se i nuovi file stanno in un altro progetto, la voce li segue.
+      target = linked.length ? ownerFor(linked) : base
+      next.files = toOwner(target, linked)
+    }
     next.updatedAt = new Date().toISOString()
-    entries[index] = next
-    write(entries)
-    return next
+    if (target === base) {
+      entries[index] = next
+      writeAt(base, entries)
+    } else {
+      entries.splice(index, 1)
+      writeAt(base, entries)
+      writeAt(target, [...readAt(target), next])
+    }
+    return present(target, next)
   }
 
   function remove(id) {
-    const entries = read()
-    const remaining = entries.filter((entry) => entry.id !== id)
-    if (remaining.length === entries.length) return false
-    write(remaining)
+    const found = find(id)
+    if (!found) return false
+    found.entries.splice(found.index, 1)
+    writeAt(found.base, found.entries)
     return true
   }
 
-  // Un file o una cartella è stato spostato/rinominato: i riferimenti nelle voci lo seguono.
-  function renameFile(from, to) {
-    const source = String(from || '').replace(/\\/g, '/')
-    const target = String(to || '').replace(/\\/g, '/')
-    if (!source || !target) return
-    let entries
-    try { entries = read() } catch { return }
-    let changed = false
-    for (const entry of entries) {
-      entry.files = (entry.files || []).map((item) => {
-        if (item === source) { changed = true; return target }
-        if (item.startsWith(`${source}/`)) { changed = true; return target + item.slice(source.length) }
-        return item
-      })
+  // Un file o una cartella è stato spostato/rinominato (percorsi assoluti, già sul disco nella nuova posizione):
+  // i riferimenti nelle voci lo seguono, e passano alla memoria del nuovo progetto se l'elemento ne cambia.
+  function relocate(from, to) {
+    const root = project()
+    const source = path.resolve(from)
+    const destination = path.resolve(to)
+    const sourceOwner = ownerRoot(root, source)
+    const destinationOwner = ownerRoot(root, destination)
+    for (const base of owners()) {
+      if (!isInside(base, source)) continue
+      const relFrom = posix(path.relative(base, source))
+      const inPlace = isInside(base, destination) ? posix(path.relative(base, destination)) : null
+      const migrating = base === sourceOwner && destinationOwner !== sourceOwner
+      if (!migrating && inPlace === null) continue
+      let entries
+      try { entries = readAt(base) } catch { continue }
+      const remap = (item) => (item === relFrom ? '' : item.startsWith(`${relFrom}/`) ? item.slice(relFrom.length) : null)
+      if (!migrating) {
+        let changed = false
+        for (const entry of entries) {
+          entry.files = (entry.files || []).map((item) => {
+            const rest = remap(item)
+            if (rest === null) return item
+            changed = true
+            return inPlace + rest
+          })
+        }
+        if (changed) writeAt(base, entries)
+        continue
+      }
+      const incoming = []
+      const kept = []
+      for (const entry of entries) {
+        const moved = []
+        const remaining = []
+        for (const item of entry.files || []) {
+          const rest = remap(item)
+          if (rest === null) remaining.push(item)
+          else moved.push(posix(path.relative(destinationOwner, path.join(destination, rest ? `.${rest}` : ''))))
+        }
+        if (!moved.length) { kept.push(entry); continue }
+        // Una voce che riguardava solo l'elemento spostato lo segue; se riguardava anche altri file se ne crea una copia nella nuova memoria.
+        if (!remaining.length) incoming.push({ ...entry, files: moved })
+        else { kept.push({ ...entry, files: remaining }); incoming.push({ ...entry, id: crypto.randomUUID(), files: moved }) }
+      }
+      if (!incoming.length) continue
+      writeAt(destinationOwner, [...readAt(destinationOwner), ...incoming])
+      writeAt(base, kept)
     }
-    if (changed) write(entries)
   }
 
-  return { list, add, update, remove, renameFile }
+  return { list, add, update, remove, relocate }
 }
 
 module.exports = { createMemoryStore }

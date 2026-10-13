@@ -46,7 +46,7 @@ function createProjectTools({ getProjectPath, readDocument }) {
     const entries = await fs.promises.readdir(target, { withFileTypes: true }).catch(() => { throw new Error(t('Folder not found: {path}', { path: relative || '.' })) })
     const visible = entries.filter((entry) => !EXCLUDED_NAMES.has(entry.name))
     const items = await Promise.all(visible.slice(0, MAX_LIST_ENTRIES).map(async (entry) => {
-      if (entry.isDirectory()) return { name: entry.name, type: 'directory' }
+      if (entry.isDirectory()) return { name: entry.name, type: 'directory', project: fs.existsSync(path.join(target, entry.name, '.ow')) }
       let size = null
       try { size = (await fs.promises.stat(path.join(target, entry.name))).size } catch {}
       return { name: entry.name, type: 'file', size }

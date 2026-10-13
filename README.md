@@ -46,6 +46,8 @@ The `.ow`, `.git`, and `node_modules` directories are excluded from assistant fi
 
 A project is a working directory. When it is opened, OpenWriter creates or reuses a `.ow` directory containing project settings, assistant context, conversations, attachments, notes, and document history. These files are plain text or JSON and can be committed to Git or added to `.gitignore`.
 
+A folder that contains its own `.ow` directory is a sub-project (created on request from the file explorer's context menu, and shown with a distinct icon). As with Git, the nearest `.ow` owns a document's history and notes, so they stay with the sub-project whether you work on it from the parent project or open it as a project of its own. Dragging a document into or out of a sub-project in the file explorer moves its history, notes and memory entries along with it. The assistant receives the instructions of every project enclosing the active document (the nearest one prevailing), unless the sub-project turns inheritance off.
+
 Conversations are stored as readable JSON files and support renaming, deletion, branching, copied message history, and additional conversation context. Image attachments are stored separately and referenced from the conversation log.
 
 Document history supports automatic and manually labelled versions, comparison with the current document, restore, and deletion. Up to 100 versions are retained per document, with older automatic versions removed first.

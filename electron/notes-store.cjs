@@ -2,6 +2,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
+const { ownerRoot, findOwners } = require('./project-owner.cjs')
 
 const KINDS = ['comment', 'suggestion']
 const STATUSES = ['open', 'accepted', 'rejected', 'resolved']
@@ -10,28 +11,28 @@ const AUTHORS = ['ai', 'user']
 /**
  * Note azionabili ancorate al testo di un documento, salvate fuori dal file Markdown per non sporcarlo:
  *   `<progetto>/.ow/notes/<percorso/documento.md>.json` → [ { id, kind, quote, prefix, suffix, body, replacement, status, author, createdAt, resolvedAt } ]
+ * Il percorso è relativo alla `.ow` più vicina al documento (vedi project-owner.cjs): le note di un file di un sotto-progetto stanno nel sotto-progetto.
  * `quote` è il testo ancorato; `prefix`/`suffix` servono a ritrovarlo se compare più volte.
  * `kind` = 'comment' (osservazione) oppure 'suggestion' (con `replacement` da accettare o rifiutare).
  */
 function createNotesStore({ getProjectPath }) {
-  const root = () => {
-    const project = getProjectPath()
-    if (!project) throw new Error(t('No project open'))
-    return path.join(project, '.ow', 'notes')
-  }
+  const notesRoot = (base) => path.join(base, '.ow', 'notes')
 
-  function documentKey(document) {
+  // Dove stanno le note di un documento: { base: cartella proprietaria della `.ow`, key: percorso relativo a base con "/" }; null se fuori dal progetto.
+  function locate(document) {
     const project = getProjectPath()
     if (!project || !document) return null
-    const relative = path.relative(project, path.resolve(document))
+    const resolved = path.resolve(document)
+    const relative = path.relative(project, resolved)
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null
-    return relative.split(path.sep).join('/')
+    const base = ownerRoot(project, resolved)
+    return { base, key: path.relative(base, resolved).split(path.sep).join('/') }
   }
 
   function fileFor(document) {
-    const key = documentKey(document)
-    if (!key) throw new Error(t('The document must be inside the project folder'))
-    return path.join(root(), ...key.split('/')) + '.json'
+    const place = locate(document)
+    if (!place) throw new Error(t('The document must be inside the project folder'))
+    return path.join(notesRoot(place.base), ...place.key.split('/')) + '.json'
   }
 
   function writeAtomic(file, content) {
@@ -104,41 +105,52 @@ function createNotesStore({ getProjectPath }) {
     return true
   }
 
-  // Tutte le note del progetto: [{ path, notes }].
+  // Tutte le note del progetto, anche quelle dei sotto-progetti: [{ path (relativo al progetto), notes }].
   function listAll() {
-    const base = root()
+    const project = getProjectPath()
+    if (!project) throw new Error(t('No project open'))
     const result = []
-    const walk = (directory) => {
+    const walk = (directory, base) => {
       let entries = []
       try { entries = fs.readdirSync(directory, { withFileTypes: true }) } catch { return }
       for (const entry of entries) {
         const full = path.join(directory, entry.name)
-        if (entry.isDirectory()) walk(full)
+        if (entry.isDirectory()) walk(full, base)
         else if (entry.name.endsWith('.json')) {
           try {
             const notes = readNotes(full)
-            if (notes.length) result.push({ path: path.relative(base, full).slice(0, -'.json'.length).split(path.sep).join('/'), notes })
+            if (!notes.length) continue
+            const inBase = path.relative(notesRoot(base), full).slice(0, -'.json'.length)
+            result.push({ path: path.relative(project, path.join(base, inBase)).split(path.sep).join('/'), notes })
           } catch {}
         }
       }
     }
-    walk(base)
+    for (const base of [path.resolve(project), ...findOwners(project)]) walk(notesRoot(base), base)
     return result
   }
 
-  // Segue la rinomina di un documento o di una cartella.
+  // Segue la rinomina o lo spostamento di un documento o di una cartella; se passa a un altro progetto le note lo seguono nella nuova `.ow`.
   function move(from, to) {
-    const fromKey = documentKey(from)
-    const toKey = documentKey(to)
-    if (!fromKey || !toKey) return false
+    const source = locate(from)
+    const target = locate(to)
+    if (!source || !target) return false
     let moved = false
-    for (const [source, destination] of [
-      [path.join(root(), ...fromKey.split('/')) + '.json', path.join(root(), ...toKey.split('/')) + '.json'],
-      [path.join(root(), ...fromKey.split('/')), path.join(root(), ...toKey.split('/'))],
+    const sourceRoot = notesRoot(source.base)
+    const targetRoot = notesRoot(target.base)
+    for (const [sourcePath, destination] of [
+      [path.join(sourceRoot, ...source.key.split('/')) + '.json', path.join(targetRoot, ...target.key.split('/')) + '.json'],
+      [path.join(sourceRoot, ...source.key.split('/')), path.join(targetRoot, ...target.key.split('/'))],
     ]) {
-      if (fs.existsSync(source) && !fs.existsSync(destination)) {
+      if (fs.existsSync(sourcePath) && !fs.existsSync(destination)) {
         fs.mkdirSync(path.dirname(destination), { recursive: true })
-        fs.renameSync(source, destination)
+        try {
+          fs.renameSync(sourcePath, destination)
+        } catch (error) {
+          if (error.code !== 'EXDEV') throw error
+          fs.cpSync(sourcePath, destination, { recursive: true })
+          fs.rmSync(sourcePath, { recursive: true, force: true })
+        }
         moved = true
       }
     }

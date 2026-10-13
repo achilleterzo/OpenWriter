@@ -3,6 +3,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
+const { ownerRoot, parentOwner } = require('./project-owner.cjs')
 
 const DIRECTORY_NAME = '.ow'
 const FORMAT_VERSION = 1
@@ -15,7 +16,8 @@ const MAX_CONTEXT_CHARS = 20000
  *   context.md                           contesto per l'assistente AI (testo libero)
  *   history/<documento>/index.json       metadati delle versioni di un documento
  *   history/<documento>/<id>.md          contenuto di ogni versione
- * `<documento>` è il percorso del file relativo al progetto, quindi la cronologia rispecchia la struttura delle cartelle.
+ * `<documento>` è il percorso del file relativo alla `.ow` che lo possiede (la più vicina, vedi project-owner.cjs): per un file di un
+ * sotto-progetto la cronologia sta nella `.ow` del sotto-progetto, qualunque progetto sia aperto.
  * Le chiavi sconosciute di project.json vengono conservate.
  */
 const cleanLanguages = (value) => (Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === 'string' && item))] : [])
@@ -28,24 +30,25 @@ function createProjectFile({ getProjectPath }) {
   }
   const settingsFile = () => path.join(root(), 'project.json')
   const contextFile = () => path.join(root(), 'context.md')
+  const rootAt = (base) => path.join(base, DIRECTORY_NAME)
 
   // Su Windows il prefisso "." non nasconde la cartella: serve l'attributo Nascosto (idempotente, una volta per sessione).
   const hiddenRoots = new Set()
-  function ensureHidden() {
-    if (process.platform !== 'win32') return
-    const directory = root()
+  function ensureHidden(base = getProjectPath()) {
+    if (process.platform !== 'win32' || !base) return
+    const directory = path.join(base, DIRECTORY_NAME)
     if (hiddenRoots.has(directory) || !fs.existsSync(directory)) return
     hiddenRoots.add(directory)
     try { execFileSync('attrib', ['+H', directory], { windowsHide: true, timeout: 5000 }) } catch (error) { console.error('Impossibile nascondere .ow:', error.message) }
   }
 
   // Scrittura atomica: un crash a metà non lascia un file troncato.
-  function writeAtomic(file, content) {
+  function writeAtomic(file, content, base) {
     fs.mkdirSync(path.dirname(file), { recursive: true })
     const temporary = `${file}.tmp`
     fs.writeFileSync(temporary, content)
     fs.renameSync(temporary, file)
-    ensureHidden()
+    ensureHidden(base)
   }
 
   // Un JSON corrotto blocca l'operazione: riscriverlo cancellerebbe il lavoro dell'utente.
@@ -54,8 +57,9 @@ function createProjectFile({ getProjectPath }) {
     try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { throw new Error(t('{basename} is not valid JSON: fix it or remove it', { basename: path.basename(file) })) }
   }
 
-  function readSettings() {
-    const parsed = readJson(settingsFile(), {})
+  // `base`: cartella di un altro progetto (un sotto-progetto o un progetto sopra); senza, il progetto aperto.
+  function readSettings(base) {
+    const parsed = readJson(base ? path.join(rootAt(base), 'project.json') : settingsFile(), {})
     return {
       ...parsed,
       format: FORMAT_VERSION,
@@ -66,32 +70,85 @@ function createProjectFile({ getProjectPath }) {
     }
   }
 
-  // Percorso relativo al progetto con "/"; null se il documento è fuori dal progetto.
-  function documentKey(document) {
+  // Dove sta la cronologia di un documento: { base: cartella proprietaria della `.ow`, key: percorso relativo a base con "/" };
+  // null se il documento è fuori dal progetto.
+  function locate(document) {
     const project = getProjectPath()
     if (!project || !document) return null
-    const relative = path.relative(project, path.resolve(document))
+    const resolved = path.resolve(document)
+    const relative = path.relative(project, resolved)
     if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null
-    return relative.split(path.sep).join('/')
+    const base = ownerRoot(project, resolved)
+    return { base, key: path.relative(base, resolved).split(path.sep).join('/') }
   }
 
-  const historyDirectory = (key) => path.join(root(), 'history', ...key.split('/'))
-  const indexFile = (key) => path.join(historyDirectory(key), 'index.json')
-  const readIndex = (key) => {
-    const index = readJson(indexFile(key), [])
+  const historyDirectory = ({ base, key }) => path.join(base, DIRECTORY_NAME, 'history', ...key.split('/'))
+  const indexFile = (place) => path.join(historyDirectory(place), 'index.json')
+  const readIndex = (place) => {
+    const index = readJson(indexFile(place), [])
     return Array.isArray(index) ? index : []
   }
 
   // Altri file di istruzioni per l'assistente: i .md nella radice di .ow (oltre a context.md), in ordine alfabetico.
-  function readExtraContext() {
+  function readExtraContext(base) {
+    const directory = base ? rootAt(base) : root()
     try {
-      return fs.readdirSync(root(), { withFileTypes: true })
+      return fs.readdirSync(directory, { withFileTypes: true })
         .filter((entry) => entry.isFile() && /\.md$/i.test(entry.name) && entry.name.toLowerCase() !== 'context.md')
         .map((entry) => entry.name)
         .sort((left, right) => left.localeCompare(right))
         .slice(0, 10)
-        .map((name) => ({ name, text: fs.readFileSync(path.join(root(), name), 'utf8').slice(0, MAX_CONTEXT_CHARS) }))
+        .map((name) => ({ name, text: fs.readFileSync(path.join(directory, name), 'utf8').slice(0, MAX_CONTEXT_CHARS) }))
     } catch { return [] }
+  }
+
+  function parentProject() {
+    const project = getProjectPath()
+    const parent = project ? parentOwner(project) : null
+    return parent ? { path: parent, name: readSettings(parent).name || path.basename(parent) } : null
+  }
+
+  /**
+   * Contesto dell'assistente per un documento: la catena delle `.ow` dalla più esterna alla più vicina al documento.
+   * Dentro il progetto aperto un sotto-progetto eredita dal padre, salvo `inherit: false`. Un progetto aperto da solo
+   * (autonomo) risale oltre la propria radice solo se ha `inherit: true`.
+   * Ogni voce: { path (relativo al progetto, '' per la radice, null se fuori dal progetto), name, context, extraContext, language, documentLanguage }.
+   */
+  function getContextChain(document) {
+    const project = getProjectPath()
+    if (!project) return []
+    const root = path.resolve(project)
+    const relative = document ? path.relative(root, path.resolve(document)) : ''
+    const inside = document && relative && !relative.startsWith('..') && !path.isAbsolute(relative)
+    let current = inside ? ownerRoot(root, document) : root
+    const bases = []
+    for (let guard = 0; guard < 16; guard += 1) {
+      bases.unshift(current)
+      if (current === root || readSettings(current).inherit === false) break
+      current = ownerRoot(root, current)
+    }
+    if (bases[0] === root) {
+      let top = root
+      for (let guard = 0; guard < 5 && readSettings(top).inherit === true; guard += 1) {
+        const parent = parentOwner(top)
+        if (!parent) break
+        bases.unshift(parent)
+        top = parent
+      }
+    }
+    return bases.map((base) => {
+      const settings = readSettings(base)
+      const contextPath = path.join(rootAt(base), 'context.md')
+      const toProject = path.relative(root, base)
+      return {
+        path: toProject.startsWith('..') || path.isAbsolute(toProject) ? null : toProject.split(path.sep).join('/'),
+        name: settings.name || path.basename(base),
+        context: fs.existsSync(contextPath) ? fs.readFileSync(contextPath, 'utf8') : '',
+        extraContext: readExtraContext(base),
+        language: String(settings.ai.language || ''),
+        documentLanguage: String(settings.ai.documentLanguage || ''),
+      }
+    })
   }
 
   function getSettings() {
@@ -103,14 +160,18 @@ function createProjectFile({ getProjectPath }) {
       exists: fs.existsSync(root()),
       path: root(),
       name: settings.name,
+      // Sopra questo progetto c'è un altro progetto (`.ow`)? Se sì, si può scegliere di ereditarne il contesto.
+      parent: parentProject(),
+      inherit: settings.inherit === true,
       ai: { context, extraContext: readExtraContext(), language: String(settings.ai.language || ''), documentLanguage: String(settings.ai.documentLanguage || '') },
       options: { autoVersions: settings.options.autoVersions !== false },
       spellcheck: { languages: cleanLanguages(settings.spellcheck.languages) },
     }
   }
 
-  function saveSettings({ name, ai, options, spellcheck } = {}) {
+  function saveSettings({ name, ai, options, spellcheck, inherit } = {}) {
     const settings = readSettings()
+    if (inherit !== undefined) settings.inherit = Boolean(inherit)
     settings.name = String(name || '').slice(0, 200)
     settings.ai = { ...settings.ai, language: String(ai?.language || '').slice(0, 50), documentLanguage: String(ai?.documentLanguage || '').slice(0, 50) }
     settings.options = { ...settings.options, autoVersions: options?.autoVersions !== false }
@@ -121,78 +182,87 @@ function createProjectFile({ getProjectPath }) {
   }
 
   // Da chiamare all'apertura del progetto: crea .ow con i file di base se mancano, lo nasconde e lascia intatto quanto esiste già.
-  function initialize() {
+  function initialize({ inherit } = {}) {
     if (!getProjectPath()) return
     fs.mkdirSync(root(), { recursive: true })
     if (!fs.existsSync(settingsFile())) {
-      writeAtomic(settingsFile(), JSON.stringify({ format: FORMAT_VERSION, name: '', ai: { language: '' }, options: { autoVersions: true } }, null, 2))
+      writeAtomic(settingsFile(), JSON.stringify({ format: FORMAT_VERSION, name: '', ...(inherit === undefined ? {} : { inherit }), ai: { language: '' }, options: { autoVersions: true } }, null, 2))
     }
     if (!fs.existsSync(contextFile())) writeAtomic(contextFile(), '')
     ensureHidden()
   }
 
   // Rinomina/sposta la cronologia di un file o di una cartella insieme all'elemento, così non resta orfana.
+  // Se l'elemento passa da un progetto a un altro (cambia la `.ow` proprietaria) la cronologia lo segue nella nuova `.ow`.
   function moveHistory(from, to) {
-    const fromKey = documentKey(from)
-    const toKey = documentKey(to)
-    if (!fromKey || !toKey) return false
-    const source = historyDirectory(fromKey)
-    const destination = historyDirectory(toKey)
-    if (!fs.existsSync(source) || fs.existsSync(destination)) return false
+    const source = locate(from)
+    const target = locate(to)
+    if (!source || !target) return false
+    const sourceDirectory = historyDirectory(source)
+    const destination = historyDirectory(target)
+    if (!fs.existsSync(sourceDirectory) || fs.existsSync(destination)) return false
     fs.mkdirSync(path.dirname(destination), { recursive: true })
-    fs.renameSync(source, destination)
+    try {
+      fs.renameSync(sourceDirectory, destination)
+    } catch (error) {
+      if (error.code !== 'EXDEV') throw error
+      fs.cpSync(sourceDirectory, destination, { recursive: true })
+      fs.rmSync(sourceDirectory, { recursive: true, force: true })
+    }
+    ensureHidden(target.base)
     return true
   }
 
-  const autoVersionsEnabled = () => readSettings().options.autoVersions !== false
+  // Le versioni automatiche seguono le impostazioni del progetto che possiede il documento.
+  const autoVersionsEnabled = (document) => readSettings(document ? locate(document)?.base : undefined).options.autoVersions !== false
 
   function addVersion(document, markdown, { label = '', auto = false } = {}) {
-    const key = documentKey(document)
-    if (!key) return null
-    const index = readIndex(key)
+    const place = locate(document)
+    if (!place) return null
+    const index = readIndex(place)
     const last = index.at(-1)
     if (last && !label) {
-      try { if (fs.readFileSync(path.join(historyDirectory(key), `${last.id}.md`), 'utf8') === markdown) return null } catch {}
+      try { if (fs.readFileSync(path.join(historyDirectory(place), `${last.id}.md`), 'utf8') === markdown) return null } catch {}
     }
     const id = crypto.randomUUID()
-    writeAtomic(path.join(historyDirectory(key), `${id}.md`), markdown)
+    writeAtomic(path.join(historyDirectory(place), `${id}.md`), markdown, place.base)
     index.push({ id, at: new Date().toISOString(), label: String(label).slice(0, 120), auto, size: markdown.length })
     // Oltre il limite si scartano prima le versioni automatiche più vecchie, poi le più vecchie in assoluto.
     while (index.length > MAX_VERSIONS_PER_DOCUMENT) {
       const position = index.findIndex((item) => item.auto)
       const [removed] = index.splice(position === -1 ? 0 : position, 1)
-      fs.rmSync(path.join(historyDirectory(key), `${removed.id}.md`), { force: true })
+      fs.rmSync(path.join(historyDirectory(place), `${removed.id}.md`), { force: true })
     }
-    writeAtomic(indexFile(key), JSON.stringify(index, null, 2))
+    writeAtomic(indexFile(place), JSON.stringify(index, null, 2), place.base)
     return id
   }
 
   function listVersions(document) {
-    const key = documentKey(document)
-    if (!key) return { available: false, versions: [] }
-    return { available: true, versions: readIndex(key).slice().reverse() }
+    const place = locate(document)
+    if (!place) return { available: false, versions: [] }
+    return { available: true, versions: readIndex(place).slice().reverse() }
   }
 
   function getVersion(document, id) {
-    const key = documentKey(document)
+    const place = locate(document)
     // L'id deve esistere nell'indice: così non si può uscire dalla cartella della cronologia.
-    if (!key || !readIndex(key).some((item) => item.id === id)) throw new Error(t('Version not found'))
-    return fs.readFileSync(path.join(historyDirectory(key), `${id}.md`), 'utf8')
+    if (!place || !readIndex(place).some((item) => item.id === id)) throw new Error(t('Version not found'))
+    return fs.readFileSync(path.join(historyDirectory(place), `${id}.md`), 'utf8')
   }
 
   function deleteVersion(document, id) {
-    const key = documentKey(document)
-    if (!key) return false
-    const index = readIndex(key)
+    const place = locate(document)
+    if (!place) return false
+    const index = readIndex(place)
     if (!index.some((item) => item.id === id)) return false
-    fs.rmSync(path.join(historyDirectory(key), `${id}.md`), { force: true })
+    fs.rmSync(path.join(historyDirectory(place), `${id}.md`), { force: true })
     const remaining = index.filter((item) => item.id !== id)
-    if (remaining.length) writeAtomic(indexFile(key), JSON.stringify(remaining, null, 2))
-    else fs.rmSync(historyDirectory(key), { recursive: true, force: true })
+    if (remaining.length) writeAtomic(indexFile(place), JSON.stringify(remaining, null, 2), place.base)
+    else fs.rmSync(historyDirectory(place), { recursive: true, force: true })
     return true
   }
 
-  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, saveSettings, autoVersionsEnabled, addVersion, listVersions, getVersion, deleteVersion }
+  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, getContextChain, saveSettings, autoVersionsEnabled, addVersion, listVersions, getVersion, deleteVersion }
 }
 
 module.exports = { createProjectFile }
