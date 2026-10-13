@@ -380,6 +380,9 @@ function createWindow() {
     y: windowState.y,
     minWidth: 800,
     minHeight: 600,
+    // Icona dell'app e colore di fondo iniziale (lo scuro antracite), per non far lampeggiare di bianco l'apertura.
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+    backgroundColor: '#18181a',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
