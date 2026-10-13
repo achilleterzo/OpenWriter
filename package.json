@@ -27,6 +27,7 @@
     "@tiptap/extension-heading": "^3.29.2",
     "@tiptap/extension-image": "^3.29.2",
     "@tiptap/extension-link": "^3.29.2",
+    "@tiptap/extension-list": "^3.29.2",
     "@tiptap/markdown": "^3.29.2",
     "@tiptap/pm": "^3.29.2",
     "@tiptap/react": "^3.29.2",

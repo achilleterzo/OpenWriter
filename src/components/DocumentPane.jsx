@@ -12,6 +12,8 @@ import { Search } from '../lib/searchExtension.js'
 import { KeepSelection } from '../lib/keepSelectionExtension.js'
 import { DocumentImage } from '../lib/imageExtension.js'
 import Link from '@tiptap/extension-link'
+import { TaskItem, TaskList } from '@tiptap/extension-list'
+import { FrontMatter, HtmlBlock, HtmlInline } from '../lib/rawMarkdownExtensions.js'
 import { mergeAttributes } from '@tiptap/core'
 import { displaySource, isInside, dirname, resolveDocumentLink, sourceForImage } from '../lib/imagePaths.js'
 import { t } from '../i18n/index.js'
@@ -105,6 +107,11 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
       // Un link può racchiudere codice in linea ([`file.md`](url)): nello schema predefinito il codice esclude ogni altro marchio e il Markdown non sarebbe valido.
       Code.extend({ excludes: 'bold italic strike' }),
       Heading.configure({ levels: [1, 2, 3, 4, 5, 6, 7] }),
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      FrontMatter,
+      HtmlBlock,
+      HtmlInline,
       Markdown,
       Annotations.configure({ onSelect: (id) => onNoteSelect?.(id) }),
       Search,

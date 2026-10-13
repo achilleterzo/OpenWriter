@@ -160,6 +160,49 @@ body {
   margin: 0 0 0.25rem;
 }
 
+.document-editor .tiptap ul[data-type='taskList'] {
+  padding-left: 0.25rem;
+  list-style: none;
+}
+
+.document-editor .tiptap ul[data-type='taskList'] > li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.document-editor .tiptap ul[data-type='taskList'] > li > label {
+  flex: none;
+  padding-top: 0.2rem;
+}
+
+.document-editor .tiptap ul[data-type='taskList'] > li > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.document-editor .tiptap ul[data-type='taskList'] > li[data-checked='true'] > div {
+  color: rgb(var(--slate-500));
+  text-decoration: line-through;
+}
+
+/* Front matter e HTML in blocco: testo grezzo, conservato com'è nel file. */
+.document-editor .tiptap pre.ow-raw-block {
+  white-space: pre-wrap;
+  color: rgb(var(--slate-400));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.document-editor .tiptap .ow-html-inline {
+  border-radius: 0.25rem;
+  background: rgb(var(--slate-800));
+  padding: 0.0625rem 0.25rem;
+  color: rgb(var(--slate-400));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+
 .document-editor .tiptap blockquote {
   margin: 0 0 1rem;
   border-left: 3px solid rgb(var(--accent-400));
