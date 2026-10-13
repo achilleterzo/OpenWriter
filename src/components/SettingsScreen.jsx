@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Bot, FolderCog, Palette, Settings2, SlidersHorizontal } from 'lucide-react'
+import { ArrowLeft, Bot, FolderCog, Info, Palette, Settings2, SlidersHorizontal } from 'lucide-react'
+import AboutSettings from './AboutSettings.jsx'
 import AiProviderSettings from './AiProviderSettings.jsx'
 import AppearanceSettings from './AppearanceSettings.jsx'
 import GeneralSettings from './GeneralSettings.jsx'
@@ -12,9 +13,10 @@ const sections = [
   { id: 'project', label: t('Project'), icon: FolderCog },
   { id: 'appearance', label: t('Appearance'), icon: Palette },
   { id: 'ai', label: 'AI', icon: Bot },
+  { id: 'about', label: t('About'), icon: Info },
 ]
 
-export default function SettingsScreen({ initialSection = 'general', project, onChooseProject, onBack, onOpenFile }) {
+export default function SettingsScreen({ initialSection = 'general', project, onChooseProject, onBack, onOpenFile, version, release, onCheckUpdate }) {
   const [section, setSection] = useState(initialSection)
   const current = sections.find((item) => item.id === section)
   const pressedOnBackdrop = useRef(false)
@@ -71,6 +73,7 @@ export default function SettingsScreen({ initialSection = 'general', project, on
             {section === 'project' && <ProjectSettings project={project} onEditContext={onOpenFile} />}
             {section === 'appearance' && <AppearanceSettings />}
             {section === 'ai' && <AiProviderSettings />}
+            {section === 'about' && <AboutSettings version={version} release={release} onCheck={onCheckUpdate} />}
           </div>
         </div>
       </section>
