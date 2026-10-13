@@ -21,6 +21,9 @@ const REASONING_LEVELS = {
 }
 const OLLAMA_CLOUD_URL = 'https://ollama.com'
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1'
+// Errori temporanei di OpenRouter (limiti di frequenza, provider a monte non disponibile): si ritenta con attese crescenti.
+const OPENROUTER_TRANSIENT_STATUSES = [408, 429, 500, 502, 503, 504]
+const OPENROUTER_RETRY_DELAYS_MS = [1500, 4000]
 const CLAUDE_MODEL_ALIASES = ['default', 'best', 'sonnet', 'opus', 'haiku', 'sonnet[1m]', 'opus[1m]', 'opusplan']
 const CLI_TIMEOUT_MS = 180000
 const HTTP_TIMEOUT_MS = 120000
@@ -100,6 +103,16 @@ function killTree(child) {
 }
 
 const abortError = () => Object.assign(new Error(t('Request interrupted')), { name: 'AbortError' })
+
+// Attesa interrompibile: con `signal` annullato termina subito con AbortError.
+function wait(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(abortError())
+    const onAbort = () => { clearTimeout(timer); reject(abortError()) }
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve() }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
 
 // Come runCli, ma passa ogni riga di stdout a `onLine` appena arriva e si può interrompere con `signal`.
 function runCliStream(provider, args, { cwd, input = '', timeout = CLI_TIMEOUT_MS, onLine = () => {}, onStderr = () => {}, signal } = {}) {
@@ -273,7 +286,7 @@ function streamJson(urlString, { headers = {}, sse = false, service = 'Ollama' }
         for (const line of lines) {
           const payload = sse ? ssePayload(line) : line.trim()
           if (!payload) continue
-          try { onObject(JSON.parse(payload)) } catch (error) { if (error?.fatal) { request.destroy(error); return } }
+          try { onObject(JSON.parse(payload)) } catch (error) { if (error?.fatal) { finish(error); request.destroy(); return } }
         }
       })
       response.on('end', () => {
@@ -645,16 +658,21 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
       ...(config.numPredict !== '' && config.numPredict != null ? { max_tokens: config.numPredict } : {}),
     }
     const reasoning = config.reasoning && config.reasoning !== 'default' ? { reasoning: { effort: config.reasoning } } : {}
-    const attempt = async (extra) => {
+    const once = async (extra, state) => {
       let text = ''
       let call = null
       await streamJson(`${OPENROUTER_URL}/chat/completions`, { ...openRouterOptions(), sse: true }, { model, messages, ...params, ...extra, stream: true }, (chunk) => {
-        if (chunk.error) throw Object.assign(new Error(String(chunk.error.message || chunk.error)), { fatal: true })
+        // Errore arrivato dentro lo stream (la risposta HTTP era già 200): di solito il provider a monte ha fallito.
+        if (chunk.error) {
+          log(`[AI] OpenRouter errore nello stream: ${JSON.stringify(chunk.error).slice(0, 800)}`)
+          const upstream = chunk.provider ? ` (${chunk.provider})` : ''
+          throw Object.assign(new Error(`${String(chunk.error.message || chunk.error)}${upstream}`), { fatal: true, streamError: true })
+        }
         const choice = chunk.choices?.[0]
         const delta = choice?.delta
         if (!delta) return
-        if (delta.reasoning) onEvent({ type: 'thinking', delta: delta.reasoning })
-        if (delta.content) { text += delta.content; onEvent({ type: 'text', delta: delta.content }) }
+        if (delta.reasoning) { state.emitted = true; onEvent({ type: 'thinking', delta: delta.reasoning }) }
+        if (delta.content) { state.emitted = true; text += delta.content; onEvent({ type: 'text', delta: delta.content }) }
         for (const part of delta.tool_calls || []) {
           if ((part.index ?? 0) !== 0) continue
           call ??= { name: '', arguments: '' }
@@ -670,6 +688,25 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
         onEvent({ type: 'text', delta: block })
       }
       return text
+    }
+
+    // Su un errore temporaneo si ritenta, ma solo se non è ancora arrivato nulla: il testo già mostrato non si può ritirare.
+    const attempt = async (extra) => {
+      for (let retry = 0; ; retry += 1) {
+        const state = { emitted: false }
+        try {
+          return await once(extra, state)
+        } catch (error) {
+          const transient = error.streamError || OPENROUTER_TRANSIENT_STATUSES.includes(error.httpStatus)
+          if (error.name === 'AbortError' || !transient || state.emitted || retry >= OPENROUTER_RETRY_DELAYS_MS.length) {
+            if (transient) log(`[AI] OpenRouter errore definitivo dopo ${retry + 1} tentativi: ${error.message}`)
+            throw error
+          }
+          log(`[AI] OpenRouter errore temporaneo, nuovo tentativo ${retry + 1}: ${error.message}`)
+          onEvent({ type: 'status', text: t('{name} is not responding, trying again…', { name: 'OpenRouter' }) })
+          await wait(OPENROUTER_RETRY_DELAYS_MS[retry], signal)
+        }
+      }
     }
 
     const withTools = tools.length ? { tools } : {}

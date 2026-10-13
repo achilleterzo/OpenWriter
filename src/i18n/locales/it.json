@@ -636,5 +636,6 @@
   "Hundreds of models with one API key": "Centinaia di modelli con una sola chiave API",
   "OpenRouter API key": "Chiave API di OpenRouter",
   "You can create a key on": "Puoi creare una chiave su",
-  "Maximum reply tokens (max_tokens)": "Token massimi per risposta (max_tokens)"
+  "Maximum reply tokens (max_tokens)": "Token massimi per risposta (max_tokens)",
+  "{name} is not responding, trying again…": "{name} non risponde, nuovo tentativo…"
 }
