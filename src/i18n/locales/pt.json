@@ -66,6 +66,7 @@
   "Browser tab \"{reference}\" not found: use browser_tabs to see the open ones": "Separador do navegador “{reference}” não encontrado: use browser_tabs para ver os abertos",
   "Browser: {action}": "Navegador: {action}",
   "Bulleted list": "Lista com marcadores",
+  " · context: {names}": " · contexto: {names}",
   "Edited by the assistant": "Alteração do assistente",
   "{count} edits to review": "{count} alterações por rever",
   "Accept all": "Aceitar todas",

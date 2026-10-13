@@ -66,6 +66,7 @@
   "Browser tab \"{reference}\" not found: use browser_tabs to see the open ones": "Onglet du navigateur « {reference} » introuvable : utilisez browser_tabs pour voir ceux qui sont ouverts",
   "Browser: {action}": "Navigateur : {action}",
   "Bulleted list": "Liste à puces",
+  " · context: {names}": " · contexte : {names}",
   "Edited by the assistant": "Modification de l'assistant",
   "{count} edits to review": "{count} modifications à relire",
   "Accept all": "Tout accepter",

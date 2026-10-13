@@ -108,16 +108,10 @@ function createProjectFile({ getProjectPath }) {
     return parent ? { path: parent, name: readSettings(parent).name || path.basename(parent) } : null
   }
 
-  /**
-   * Contesto dell'assistente per un documento: la catena delle `.ow` dalla più esterna alla più vicina al documento.
-   * Dentro il progetto aperto un sotto-progetto eredita dal padre, salvo `inherit: false`. Un progetto aperto da solo
-   * (autonomo) risale oltre la propria radice solo se ha `inherit: true`.
-   * Ogni voce: { path (relativo al progetto, '' per la radice, null se fuori dal progetto), name, context, extraContext, language, documentLanguage }.
-   */
-  function getContextChain(document) {
-    const project = getProjectPath()
-    if (!project) return []
-    const root = path.resolve(project)
+  // Catena di `.ow` (dalla più esterna alla più vicina) per un solo documento, o per il progetto stesso se `document` è null.
+  // Dentro il progetto aperto un sotto-progetto eredita dal padre, salvo `inherit: false`. Un progetto aperto da solo
+  // (autonomo) risale oltre la propria radice solo se ha `inherit: true`.
+  function chainBases(root, document) {
     const relative = document ? path.relative(root, path.resolve(document)) : ''
     const inside = document && relative && !relative.startsWith('..') && !path.isAbsolute(relative)
     let current = inside ? ownerRoot(root, document) : root
@@ -136,6 +130,27 @@ function createProjectFile({ getProjectPath }) {
         top = parent
       }
     }
+    return bases
+  }
+
+  /**
+   * Contesto dell'assistente per i documenti che gli si mandano (uno, più d'uno, o nessuno = il progetto stesso): le `.ow` coinvolte
+   * dalla più esterna alla più vicina. Con più documenti si uniscono le catene di ognuno.
+   * Ogni voce: { path (relativo al progetto, '' per la radice, null se fuori dal progetto), name, context, extraContext, language, documentLanguage }.
+   */
+  function getContextChain(documents) {
+    const project = getProjectPath()
+    if (!project) return []
+    const root = path.resolve(project)
+    const list = (Array.isArray(documents) ? documents : [documents]).filter(Boolean)
+    const chains = list.length ? list.map((document) => chainBases(root, document)) : [chainBases(root, null)]
+    const depth = (base) => {
+      const relative = path.relative(root, base)
+      if (!relative) return 0
+      const parts = relative.split(path.sep)
+      return relative.startsWith('..') ? -parts.filter((part) => part === '..').length : parts.length
+    }
+    const bases = [...new Set(chains.flat())].sort((a, b) => depth(a) - depth(b))
     return bases.map((base) => {
       const settings = readSettings(base)
       const contextPath = path.join(rootAt(base), 'context.md')

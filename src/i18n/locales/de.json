@@ -66,6 +66,7 @@
   "Browser tab \"{reference}\" not found: use browser_tabs to see the open ones": "Browser-Tab „{reference}“ nicht gefunden: Mit browser_tabs siehst du die geöffneten",
   "Browser: {action}": "Browser: {action}",
   "Bulleted list": "Aufzählung",
+  " · context: {names}": " · Kontext: {names}",
   "Edited by the assistant": "Änderung des Assistenten",
   "{count} edits to review": "{count} Änderungen zu prüfen",
   "Accept all": "Alle akzeptieren",
