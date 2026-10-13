@@ -38,6 +38,10 @@ export default function useDocumentFileCommands({ activeTab, getEditor, workspac
           if (await electronAPI.exportDocx(editor.getHTML())) onStatusChange(t('DOCX exported'))
         }
 
+        if (command === 'print') {
+          await electronAPI.printDocument(editor.getHTML())
+        }
+
         if (command === 'export-pdf') {
           if (await electronAPI.exportPdf(editor.getHTML())) onStatusChange(t('PDF exported'))
         }
