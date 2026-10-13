@@ -740,7 +740,8 @@ function buildMenu() {
 }
 
 ipcMain.handle('app:get-version', () => app.getVersion())
-ipcMain.handle('app:latest-release', async () => fetchLatestRelease())
+// Il controllo automatico all'avvio è silenzioso (rete assente, limite di GitHub…); quello manuale segnala l'errore.
+ipcMain.handle('app:latest-release', async (_event, silent) => fetchLatestRelease().catch((error) => { if (silent) return null; throw error }))
 // Solo pagine di GitHub: il link arriva dal renderer.
 ipcMain.handle('app:open-release', (_event, url) => (/^https:\/\/github\.com\//.test(String(url)) ? shell.openExternal(String(url)) : false))
 ipcMain.handle('i18n:set-locale', (_event, code) => {

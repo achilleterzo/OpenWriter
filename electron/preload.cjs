@@ -59,7 +59,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createFileForAi: (request) => ipcRenderer.invoke('tools:create-file', request),
   createEntry: (request) => ipcRenderer.invoke('workspace:create-entry', request),
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
-  getLatestRelease: () => ipcRenderer.invoke('app:latest-release'),
+  getLatestRelease: (silent = false) => ipcRenderer.invoke('app:latest-release', silent),
   openRelease: (url) => ipcRenderer.invoke('app:open-release', url),
   openLink: (url) => ipcRenderer.invoke('app:open-link', url),
   pickImage: () => ipcRenderer.invoke('images:pick'),
