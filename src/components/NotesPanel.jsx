@@ -122,7 +122,7 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
       </div>
 
       <div className="flex gap-1 border-b border-slate-800 px-3 py-2 text-xs">
-        {[['open', 'Aperte'], ['all', 'Tutte']].map(([value, label]) => (
+        {[['open', t('Open|notes')], ['all', t('All|notes')]].map(([value, label]) => (
           <button key={value} type="button" className={`rounded-full px-2.5 py-1 transition ${filter === value ? 'bg-accent-500/20 text-accent-400' : 'text-slate-500 hover:text-slate-200'}`} onClick={() => setFilter(value)}>{label}</button>
         ))}
         <span className="ml-auto self-center text-slate-500">{t('{length} open', { length: notes.filter((note) => note.status === 'open').length })}</span>
