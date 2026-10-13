@@ -13,7 +13,7 @@ function DialogBox({ dialog, onClose }) {
 
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (event.key === 'Escape') { event.stopPropagation(); onClose(dialog.kind === 'prompt' ? null : false) }
+      if (event.key === 'Escape') { event.stopPropagation(); onClose(dialog.kind === 'prompt' || dialog.kind === 'choice' ? null : false) }
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
@@ -22,16 +22,30 @@ function DialogBox({ dialog, onClose }) {
   const accept = () => onClose(dialog.kind === 'prompt' ? value : true)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(dialog.kind === 'prompt' ? null : false) }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(dialog.kind === 'prompt' || dialog.kind === 'choice' ? null : false) }}>
       <form role="dialog" aria-modal="true" aria-label={dialog.message} className="grid w-full max-w-sm gap-3 rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-200 shadow-xl" onSubmit={(event) => { event.preventDefault(); accept() }}>
         <p className="break-words">{dialog.message}</p>
         {dialog.kind === 'prompt' && (
           <input autoFocus value={value} className="w-full rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-slate-100 outline-none focus:border-accent-400" onChange={(event) => setValue(event.target.value)} />
         )}
+        {dialog.kind === 'choice' ? (
+          <div className="flex flex-wrap justify-end gap-2">
+            {dialog.choices.map((choice, position) => (
+              <button
+                key={choice.value}
+                type="button"
+                autoFocus={position === 0}
+                className={`rounded-md px-3 py-1.5 transition ${choice.primary ? 'bg-accent-600 font-medium text-white hover:bg-accent-500' : choice.danger ? 'text-rose-300 hover:bg-rose-500/15' : 'text-slate-300 hover:bg-slate-800'}`}
+                onClick={() => onClose(choice.value)}
+              >{choice.label}</button>
+            ))}
+          </div>
+        ) : (
         <div className="flex justify-end gap-2">
-          <button type="button" className="rounded-md px-3 py-1.5 text-slate-300 transition hover:bg-slate-800" onClick={() => onClose(dialog.kind === 'prompt' ? null : false)}>{t('Cancel')}</button>
-          <button ref={confirmRef} autoFocus={dialog.kind !== 'prompt'} type="submit" className={`rounded-md px-3 py-1.5 font-medium text-white transition ${dialog.danger ? 'bg-rose-600 hover:bg-rose-500' : 'bg-accent-600 hover:bg-accent-500'}`}>{dialog.confirmLabel || t('OK')}</button>
-        </div>
+            <button type="button" className="rounded-md px-3 py-1.5 text-slate-300 transition hover:bg-slate-800" onClick={() => onClose(dialog.kind === 'prompt' ? null : false)}>{t('Cancel')}</button>
+            <button ref={confirmRef} autoFocus={dialog.kind !== 'prompt'} type="submit" className={`rounded-md px-3 py-1.5 font-medium text-white transition ${dialog.danger ? 'bg-rose-600 hover:bg-rose-500' : 'bg-accent-600 hover:bg-accent-500'}`}>{dialog.confirmLabel || t('OK')}</button>
+          </div>
+        )}
       </form>
     </div>
   )
@@ -58,6 +72,8 @@ export function DialogProvider({ children }) {
 
   const api = useMemo(() => ({
     confirm: (message, options = {}) => open({ kind: 'confirm', message, ...options }),
+    // Scelta tra più azioni: restituisce il `value` scelto, o null se si annulla (Esc o clic fuori).
+    choose: (message, choices) => open({ kind: 'choice', message, choices }),
     prompt: (message, initial = '', options = {}) => open({ kind: 'prompt', message, initial, ...options }),
   }), [open])
 
