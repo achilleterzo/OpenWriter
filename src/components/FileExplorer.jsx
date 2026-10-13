@@ -1,7 +1,8 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderOpen, FolderPlus, FolderRoot, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderOpen, FolderPlus, FolderRoot, RefreshCw, X } from 'lucide-react'
 
 import { ContextMenuContext } from './ContextMenu.jsx'
+import ProjectSettings from './ProjectSettings.jsx'
 import { t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
@@ -100,7 +101,7 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
         type="button"
         style={indent}
         aria-expanded={expanded}
-        title={entry.isProject ? t('Sub-project: it has its own .ow folder') : undefined}
+        title={entry.isProject ? t('Sub-project') : undefined}
         draggable={menu.renaming !== entry.path}
         onDragStart={(event) => drop.start(event, entry)}
         onDragEnd={drop.end}
@@ -126,12 +127,14 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
   )
 }
 
-export default function FileExplorer({ project, activePath, refreshToken, expandedPaths, onToggle, onChooseProject, onOpenProject, onOpenFile, onStatus, onRenamed, onDeleted }) {
+export default function FileExplorer({ project, activePath, refreshToken, expandedPaths, onToggle, onChooseProject, onOpenProject, onOpenFile, onStatus, onRenamed, onDeleted, onSettingsChanged }) {
   const [entries, setEntries] = useState([])
   const [error, setError] = useState('')
   const [localRefresh, setLocalRefresh] = useState(0)
   const token = refreshToken + localRefresh
   const [dropTarget, setDropTarget] = useState(null)
+  // Impostazioni di un sotto-progetto (lingua, contesto…): { path, name } della cartella.
+  const [subSettings, setSubSettings] = useState(null)
   // Elemento che si sta trascinando (il contenuto del trascinamento non è leggibile finché non si rilascia).
   const dragged = useRef(null)
 
@@ -197,6 +200,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
           entry.isDirectory && { label: t('New document…'), onClick: () => startCreate(entry.path, 'file') },
           entry.isDirectory && { separator: true },
           entry.isDirectory && !entry.isProject && { label: t('Create sub-project…'), onClick: () => createSubproject(entry) },
+          entry.isProject && { label: t('Sub-project settings…'), onClick: () => setSubSettings({ path: entry.path, name: entry.name }) },
           entry.isProject && { label: t('Open as project'), onClick: () => onOpenProject(entry.path) },
           entry.isDirectory && { separator: true },
           { label: t('Rename'), hint: 'F2', onClick: () => setRenaming(entry.path) },
@@ -294,6 +298,13 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     electronAPI.listDirectory(project).then((list) => { setEntries(list); setError('') }).catch((reason) => setError(reason.message))
   }, [project, token])
 
+  useEffect(() => {
+    if (!subSettings) return undefined
+    const closeOnEscape = (event) => { if (event.key === 'Escape') setSubSettings(null) }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [subSettings])
+
   if (!project) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
@@ -321,6 +332,17 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
           </label>
           <input id="new-entry-name" autoFocus value={newName} maxLength={120} className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100 outline-none focus:border-accent-400" onChange={(event) => setNewName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') setCreating(null) }} />
         </form>
+      )}
+      {subSettings && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setSubSettings(null) }}>
+          <div role="dialog" aria-modal="true" aria-label={t('Sub-project settings')} className="my-4 w-full max-w-2xl rounded-xl bg-slate-900 p-1 shadow-xl">
+            <div className="flex items-center justify-between gap-2 px-5 pt-4">
+              <span className="min-w-0 truncate text-sm font-semibold text-slate-200" title={subSettings.path}>{subSettings.name}</span>
+              <button type="button" aria-label={t('Close')} title={t('Close (Esc)')} className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-50" onClick={() => setSubSettings(null)}><X size={16} /></button>
+            </div>
+            <ProjectSettings project projectPath={subSettings.path} onEditContext={(file) => { setSubSettings(null); onOpenFile(file) }} onChanged={() => onSettingsChanged?.()} />
+          </div>
+        </div>
       )}
       <div
         className={`min-h-0 flex-1 overflow-y-auto py-1 ${dropTarget === project ? 'bg-accent-500/10 ring-1 ring-inset ring-accent-400' : ''}`}
