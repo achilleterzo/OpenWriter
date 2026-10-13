@@ -65,6 +65,7 @@
   "Browser tab \"{reference}\" not found: use browser_tabs to see the open ones": "Onglet du navigateur « {reference} » introuvable : utilisez browser_tabs pour voir ceux qui sont ouverts",
   "Browser: {action}": "Navigateur : {action}",
   "Bulleted list": "Liste à puces",
+  "Task list": "Liste de tâches",
   "Cancel": "Annuler",
   "Change folder": "Changer de dossier",
   "Check": "Vérifier",

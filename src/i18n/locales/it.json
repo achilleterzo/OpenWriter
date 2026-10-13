@@ -65,6 +65,7 @@
   "Browser tab \"{reference}\" not found: use browser_tabs to see the open ones": "Scheda browser \"{reference}\" non trovata: usa browser_tabs per vedere quelle aperte",
   "Browser: {action}": "Browser: {action}",
   "Bulleted list": "Elenco puntato",
+  "Task list": "Elenco di attività",
   "Cancel": "Annulla",
   "Change folder": "Cambia cartella",
   "Check": "Verifica",
