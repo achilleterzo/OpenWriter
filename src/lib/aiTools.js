@@ -1,4 +1,4 @@
-import { anchorContext, buildTextIndex, findAll, toRange } from './anchoring.js'
+import { anchorContext, buildTextIndex, findAll, foldText, locateQuote, toRange } from './anchoring.js'
 import { t } from '../i18n/index.js'
 
 // Tools use a plain-text protocol shared by every provider (including the Codex and Claude CLIs):
@@ -76,7 +76,7 @@ export function toolsPrompt(enabled, { documentPath, native = false, maxSteps = 
   const createHint = enabled.create ? 'Before creating a document, or when the user names a document without saying where it is, look at the project structure with list_directory: if a document with that name (or the one the user means) already exists, even in a subfolder, work on that one (open_document, then edit) instead of creating a new file, and do not guess a folder: if the place is unclear, ask with ask_choice. When the user asks you to write a new document, or it is needed, create it with create_file (inside a suitable folder, created with create_directory if useful) instead of pasting the whole text in the chat; then tell the user where it is. Never overwrite existing files. If you made a mistake (a duplicate, a wrong name or folder), fix it: put the content in the right document, then remove or move the wrong file with delete_file or move_file.' : ''
   const editHint = enabled.edit ? 'To modify an existing document that is not open, first open it with open_document; then change it with replace_text or insert_text (small changes) or replace_document (full rewrite). Do not say that the files are read-only: you edit through these tools. When the user asks you to change, fix or rewrite a document, make the change with the tools instead of only describing it.' : ''
   const memoryHint = enabled.memory ? 'The project memory (listed in the conversation) holds lasting information saved by the user or by you: take it into account. Save new important information with remember when you learn it (a decision, a term, a style rule, a fact about the project), linking the files it applies to; refine your own entries with update_memory instead of duplicating them. Keep entries few and short.' : ''
-  const notesHint = enabled.notes ? "If the user asks to review or reconsider the notes: read them with list_notes, update YOUR still-open notes with update_note (text and proposed correction) and answer the user's notes by adding new ones with add_note. Accepting or rejecting a suggestion is always up to the user. When reviewing, add few, meaningful notes, all in ONE add_note call (\"notes\"), and give each correction as the complete rewritten passage in \"replacement\". If the user asks you to fix or rewrite the text, edit it directly with replace_text instead of leaving notes." : ''
+  const notesHint = enabled.notes ? "If the user asks to review or reconsider the notes: read them with list_notes, update YOUR still-open notes with update_note (text and proposed correction) and answer the user's notes by adding new ones with add_note. Accepting or rejecting a suggestion is always up to the user. When reviewing, add few, meaningful notes, all in ONE add_note call (\"notes\"), and give each correction as the complete rewritten passage in \"replacement\". If the user asks you to fix or rewrite the text, edit it directly with replace_text instead of leaving notes. Notes you have dealt with must not stay open: replace_text closes the open notes on the passage it replaces, and for any other note you have addressed (for example after replace_document or a different edit) call update_note with status \"resolved\"." : ''
   const webHint = enabled.web ? 'To know what the user is looking at in the browser use browser_tabs and then browser_read on the tab concerned; to search or open pages use web_search and web_open, choosing the tab with the tab parameter. To follow a link of a page use browser_follow_link (link number or text).' : ''
   const visionHint = enabled.vision ? 'You can look at images and screenshots with view_image, screenshot_document and screenshot_browser: use them when the visual look matters (layout, charts, images in pages). Images arrive as attachments: describe only what you really see.' : ''
   const askHint = enabled.ask ? 'When you need a decision or a piece of information that boils down to a few alternatives (which topic to cover, which way to go, which variant to prefer), use ask_choice instead of listing the options in the text, then go on according to the answer. Do not ask for needless confirmations.' : ''
@@ -335,6 +335,35 @@ export function createToolRunner(context) {
   }
 
   const needProject = () => { if (!project) throw new Error('No project open') }
+
+  // Open notes on the passage that an edit is about to replace: found by position (`range`) or, when the edit is matched in the
+  // Markdown source and has no position, by their quote being inside the replaced text (`find`). They are closed once the edit is done.
+  async function notesOnPassage(tab, editor, { range = null, find = '' } = {}) {
+    if (!context.enabled?.notes || !tab.filePath) return []
+    try {
+      const open = (await api.listNotes(tab.filePath)).filter((note) => note.status === 'open')
+      const index = buildTextIndex(editor.state.doc)
+      const needle = foldText(find)
+      return open.filter((note) => {
+        if (range) {
+          const found = locateQuote(editor.state.doc, note, index)
+          return Boolean(found) && found.from < range.to && found.to > range.from
+        }
+        return Boolean(note.quote) && needle.includes(foldText(note.quote))
+      })
+    } catch { return [] }
+  }
+
+  async function closeNotes(tab, notes) {
+    if (!notes.length) return ''
+    const closed = []
+    for (const note of notes) {
+      try { await api.updateNote({ filePath: tab.filePath, id: note.id, changes: { status: 'resolved' } }); closed.push(note.id) } catch { /* the note stays open */ }
+    }
+    if (!closed.length) return ''
+    context.onNotesChanged()
+    return ` The edit covered ${closed.length === 1 ? 'an open note' : `${closed.length} open notes`}, now marked as resolved (${closed.join(', ')}); if one of them was not really addressed, reopen it with update_note (status "open").`
+  }
   const text = (value) => String(value ?? '')
 
   // read_file shows the document as Markdown (\*escapes\*, **bold**), while the quote must match the plain text:
@@ -393,7 +422,7 @@ export function createToolRunner(context) {
       needProject()
       const { path, entries, truncated } = await api.listDirectoryForAi(text(args.path))
       if (!entries.length) return `${path}: empty folder`
-      return [`${path}:`, ...entries.map((entry) => (entry.type === 'directory' ? `  ${entry.name}/` : `  ${entry.name} (${entry.size ?? '?'} B)`)), truncated ? '… list truncated' : ''].filter(Boolean).join('\n')
+      return [`${path}:`, ...entries.map((entry) => (entry.type === 'directory' ? `  ${entry.name}/${entry.project ? '  (sub-project: it has its own instructions, notes and history)' : ''}` : `  ${entry.name} (${entry.size ?? '?'} B)`)), truncated ? '… list truncated' : ''].filter(Boolean).join('\n')
     },
 
     async read_file(args) {
@@ -647,16 +676,18 @@ export function createToolRunner(context) {
       try { located = locateUnique(editor, text(args.find), 'The text to replace') } catch (error) { if (!isNotFound(error)) throw error }
       if (!located) {
         const { markdown, hit } = locateInMarkdown(editor, text(args.find), 'The text to replace')
+        const covered = await notesOnPassage(tab, editor, { find: markdown.slice(hit.index, hit.index + hit.length) })
         await context.beforeEdit(tab, editor)
         context.onDocumentEdited?.(tab)
         rewriteMarkdown(editor, markdown.slice(0, hit.index) + text(args.replace) + markdown.slice(hit.index + hit.length))
-        return `Replaced the passage in “${tab.title}” (matched in the Markdown source). The user can undo it with Ctrl+Z; the document is saved automatically when you finish.`
+        return `Replaced the passage in “${tab.title}” (matched in the Markdown source). The user can undo it with Ctrl+Z; the document is saved automatically when you finish.${await closeNotes(tab, covered)}`
       }
       const { range } = located
+      const covered = await notesOnPassage(tab, editor, { range })
       await context.beforeEdit(tab, editor)
       context.onDocumentEdited?.(tab)
       insertAt(editor, range.from, range.to, args.replace)
-      return `Replaced the passage in “${tab.title}”. The user can undo it with Ctrl+Z; the document is saved automatically when you finish.`
+      return `Replaced the passage in “${tab.title}”. The user can undo it with Ctrl+Z; the document is saved automatically when you finish.${await closeNotes(tab, covered)}`
     },
 
     async insert_text(args) {

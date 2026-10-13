@@ -167,7 +167,7 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
                   {note.author === 'ai' ? <Bot size={12} /> : <User size={12} />}
                   {note.kind === 'suggestion' ? t('Suggestion') : t('Comment')} · {statusLabel(note.status)}
                   {note.updatedAt && <span className="text-slate-500" title={t('Revised on {formatDateTime}', { formatDateTime: formatDateTime(note.updatedAt, { dateStyle: 'medium', timeStyle: 'short' }) })}>{t('· revised')}</span>}
-                  {orphan && <span className="text-amber-400">{t('· text not found')}</span>}
+                  {orphan && <span className="text-slate-400" title={t('The passage has changed since the note was written, so it cannot be located any more. Verify whether the note still applies, or resolve it.')}>{t('· text modified')}</span>}
                 </span>
                 <span className="mt-1 block truncate border-l-2 border-slate-600 pl-2 text-xs italic text-slate-400">{note.quote}</span>
                 <span className="mt-1 block whitespace-pre-wrap text-sm text-slate-200">{note.body}</span>
