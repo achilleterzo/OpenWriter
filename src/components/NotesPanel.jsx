@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useEditorState } from '@tiptap/react'
 import { Bot, Check, MessageSquarePlus, Search, SearchCheck, Pencil, Trash2, User, X } from 'lucide-react'
+import { markdownToPlain, replaceRangeWithMarkdown } from '../lib/editorInsert.js'
 import { anchorContext, buildTextIndex, foldText, locateNote, locateQuote, noteIsShown } from '../lib/anchoring.js'
 import { formatDateTime } from '../i18n/index.js'
 import { t } from '../i18n/index.js'
@@ -98,8 +99,7 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
     const location = locateQuote(editor.state.doc, note)
     if (!location) throw new Error(t('The note\'s text is no longer in the document'))
     if (text === note.quote) throw new Error(t('The text is identical to the current one: there is nothing to correct'))
-    const { tr } = editor.state
-    editor.view.dispatch(text ? tr.insertText(text, location.from, location.to) : tr.delete(location.from, location.to))
+    replaceRangeWithMarkdown(editor, location.from, location.to, text)
     editor.commands.focus()
     await electronAPI.updateNote({ filePath: tab.filePath, id: note.id, changes: { kind: 'suggestion', replacement: text, status: 'accepted' } })
     setEditing(null)
@@ -175,7 +175,7 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
                   <span className="mt-1 block rounded bg-slate-950/50 px-2 py-1 text-xs">
                     <span className="text-rose-300 line-through">{note.quote}</span>
                     <span className="mx-1 text-slate-500">→</span>
-                    <span className="text-emerald-300">{note.replacement || t('(delete)')}</span>
+                    <span className="text-emerald-300">{markdownToPlain(note.replacement) || t('(delete)')}</span>
                   </span>
                 )}
               </button>
@@ -203,6 +203,7 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
                     {!orphan && <button type="button" className={`${smallButton} bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25`} onClick={() => applyCorrection(note, note.replacement ?? '')}><Check size={12} /> {t('Accept')}</button>}
                     {!orphan && <button type="button" className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600`} onClick={() => setEditing({ id: note.id, text: note.replacement ?? '' })}><Pencil size={12} /> {t('Edit…')}</button>}
                     <button type="button" className={`${smallButton} bg-rose-500/15 text-rose-300 hover:bg-rose-500/25`} onClick={() => setStatus(note, 'rejected')}><X size={12} /> {t('Reject')}</button>
+                    <button type="button" className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600`} title={t('Closes the note without changing the document')} onClick={() => setStatus(note, 'resolved')}><Check size={12} /> {t('Resolve')}</button>
                   </>
                 )}
                 {note.status === 'open' && note.kind === 'comment' && (

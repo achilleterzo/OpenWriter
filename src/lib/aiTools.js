@@ -1,5 +1,7 @@
 import { anchorContext, buildTextIndex, findAll, foldText, locateQuote, toRange } from './anchoring.js'
 import { t } from '../i18n/index.js'
+import { replaceRangeWithMarkdown } from './editorInsert.js'
+import { trackEdit } from './pendingChangesExtension.js'
 
 // Tools use a plain-text protocol shared by every provider (including the Codex and Claude CLIs):
 // the model answers with a <tool_call>{"name": …, "arguments": {…}}</tool_call> block, the app runs it
@@ -394,21 +396,16 @@ export function createToolRunner(context) {
     return { markdown, hit: hits[0] }
   }
 
+  // Every direct edit goes through trackEdit: the changed blocks stay applied but are marked for the user to accept or reject.
   function rewriteMarkdown(editor, markdown) {
-    editor.chain().insertContentAt({ from: 0, to: editor.state.doc.content.size }, markdown, { contentType: 'markdown' }).run()
+    trackEdit(editor, () => editor.chain().insertContentAt({ from: 0, to: editor.state.doc.content.size }, markdown, { contentType: 'markdown' }).run())
   }
 
   const isNotFound = (error) => /not found in the document/.test(error.message)
 
+  // The text may contain Markdown (**bold**, *italic*, links): it is parsed, not inserted as literal characters.
   function insertAt(editor, from, to, content) {
-    const value = text(content)
-    if (value.includes('\n')) {
-      editor.chain().insertContentAt({ from, to }, value, { contentType: 'markdown' }).run()
-    } else if (value === '') {
-      editor.view.dispatch(editor.state.tr.delete(from, to))
-    } else {
-      editor.view.dispatch(editor.state.tr.insertText(value, from, to))
-    }
+    trackEdit(editor, () => replaceRangeWithMarkdown(editor, from, to, text(content)))
   }
 
   const formatNote = (note, path) => {
@@ -665,7 +662,7 @@ export function createToolRunner(context) {
       }
       await context.beforeEdit(tab, editor)
       context.onDocumentEdited?.(tab)
-      editor.chain().insertContentAt({ from: 0, to: editor.state.doc.content.size }, value, { contentType: 'markdown' }).run()
+      rewriteMarkdown(editor, value)
       return `Rewrote the whole document "${tab.title}". The user can undo it with Ctrl+Z; the document is saved automatically when you finish.`
     },
 
