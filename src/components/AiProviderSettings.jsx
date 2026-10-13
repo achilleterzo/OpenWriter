@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Bot, CheckCircle2, RefreshCw } from 'lucide-react'
 import { reasoningByProvider } from '../lib/aiOptions.js'
+import ParameterSlider, { InfoTip } from './ParameterSlider.jsx'
 import ollamaLogo from '../assets/provider-logos/ollama.svg'
 import codexLogo from '../assets/provider-logos/codex.svg'
 import claudeCodeLogo from '../assets/provider-logos/claude-code.svg'
@@ -257,6 +258,28 @@ export default function AiProviderSettings() {
               {reasoningByProvider[provider].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </label>
+
+          {(provider === 'ollama' || provider === 'ollama-cloud') && (
+            <details className="rounded-lg border border-slate-800 p-3 text-sm text-slate-300">
+              <summary className="cursor-pointer select-none text-slate-300">{t('Advanced')}</summary>
+              <p className="mt-2 text-xs text-slate-500">{t('Generation parameters sent with every request. Leave a field empty to use the model\'s default.')}</p>
+              <div className="mt-3 grid gap-4">
+                <ParameterSlider id="ollama-num-ctx" label={t('Context window (num_ctx)')} help={t('How much text the model can keep in mind at once: your documents, the conversation and the instructions together. Larger values let the assistant read longer documents but use more memory and make replies slower. Typical values: 4096 to 32768.')} value={config.numCtx} onChange={(value) => updateConfig({ numCtx: value })} stops={[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]} format={(value) => value.toLocaleString()} />
+                <ParameterSlider id="ollama-num-predict" label={t('Maximum reply tokens (num_predict)')} help={t('Upper limit on the length of a single reply, in tokens (about three quarters of a word each). Lower it to keep replies short and fast; if replies are cut off, raise it. Reasoning models count their thinking too.')} value={config.numPredict} onChange={(value) => updateConfig({ numPredict: value })} stops={[64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]} format={(value) => value.toLocaleString()} />
+                <ParameterSlider id="ollama-temperature" label={t('Temperature')} help={t('How much freedom the model takes. Low values (0 to 0.3) give precise, repeatable replies, good for proofreading; high values (0.8 to 1.5) give more varied, creative wording. Above 1.5 the text may become incoherent.')} value={config.temperature} onChange={(value) => updateConfig({ temperature: value })} min={0} max={2} step={0.1} format={(value) => value.toFixed(1)} />
+                {provider === 'ollama' && (
+                  <div className="relative block text-xs text-slate-400">
+                    <div className="flex items-center gap-1.5">
+                      <label htmlFor="ollama-keep-alive">{t('Keep the model loaded (keep_alive)')}</label>
+                      <InfoTip text={t('How long Ollama keeps the model in memory after a reply, so the next one starts at once. Use a number of seconds or a value like 5m or 1h; 0 unloads it immediately and -1 keeps it loaded.')} />
+                    </div>
+                    <input id="ollama-keep-alive" placeholder={t('Default (5m)')} value={config.keepAlive ?? ''} className={fieldClass} onChange={(event) => updateConfig({ keepAlive: event.target.value })} />
+                  </div>
+                )}
+              </div>
+              <p className="mt-2 text-xs text-slate-500">{t('A smaller context window and a lower token limit make replies faster; a larger window lets the assistant see more of the documents. Ollama Cloud may ignore some of these.')}</p>
+            </details>
+          )}
 
           {provider === 'codex' && (
             <details className="rounded-lg border border-slate-800 p-3 text-sm text-slate-300">

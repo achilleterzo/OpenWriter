@@ -288,6 +288,15 @@ function normalizeProviderConfig(provider, value = {}) {
   const normalized = { model: String(config.model || ''), reasoning: REASONING_LEVELS[provider].includes(config.reasoning) ? config.reasoning : REASONING_LEVELS[provider][0] }
   // Sandbox di Codex (solo per Codex): impostazione avanzata, predefinito workspace-write.
   if (provider === 'codex') normalized.sandbox = CODEX_SANDBOXES.includes(config.sandbox) ? config.sandbox : 'workspace-write'
+  // Parametri di generazione (impostazioni avanzate di Ollama): vuoto = predefinito del modello.
+  if (provider === 'ollama' || provider === 'ollama-cloud') {
+    const whole = (value, min, max) => { const number = Math.round(Number(value)); return value !== '' && value != null && Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : '' }
+    const temperature = Number(config.temperature)
+    normalized.numCtx = whole(config.numCtx, 512, 1048576)
+    normalized.numPredict = whole(config.numPredict, 1, 131072)
+    normalized.temperature = config.temperature !== '' && config.temperature != null && Number.isFinite(temperature) ? Math.min(2, Math.max(0, temperature)) : ''
+    if (provider === 'ollama') normalized.keepAlive = /^-?\d+(?:[smh])?$/.test(String(config.keepAlive || '').trim()) ? String(config.keepAlive).trim() : ''
+  }
   if (provider === 'ollama') normalized.endpoint = String(config.endpoint || 'http://localhost:11434').replace(/\/$/, '')
   return normalized
 }
@@ -509,11 +518,24 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
   // Ollama in streaming: ragionamento (message.thinking) e testo (message.content) arrivano a pezzi.
   // Con `tools` si usa la chiamata nativa agli strumenti: una `tool_calls` del modello viene tradotta nel blocco
   // <tool_call> che il renderer già sa leggere, così il protocollo resta uno solo per tutti i provider.
+  // Opzioni di generazione impostate dall'utente (solo quelle presenti), nel formato dell'API di Ollama.
+  function generationParams(provider) {
+    const config = providerConfig(provider)
+    const options = {}
+    if (config.numCtx !== '' && config.numCtx != null) options.num_ctx = config.numCtx
+    if (config.numPredict !== '' && config.numPredict != null) options.num_predict = config.numPredict
+    if (config.temperature !== '' && config.temperature != null) options.temperature = config.temperature
+    return {
+      ...(Object.keys(options).length ? { options } : {}),
+      ...(provider === 'ollama' && config.keepAlive ? { keep_alive: /^-?\d+$/.test(config.keepAlive) ? Number(config.keepAlive) : config.keepAlive } : {}),
+    }
+  }
+
   async function streamOllama(endpoint, body, provider, options, onEvent, signal, tools = []) {
     const attempt = async (extra) => {
       let text = ''
       let nativeCall = null
-      await streamJson(`${endpoint}/api/chat`, options, { ...body, ...extra, stream: true }, (line) => {
+      await streamJson(`${endpoint}/api/chat`, options, { ...body, ...generationParams(provider), ...extra, stream: true }, (line) => {
         if (line.error) throw Object.assign(new Error(String(line.error)), { fatal: true })
         if (line.message?.thinking) onEvent({ type: 'thinking', delta: line.message.thinking })
         if (line.message?.content) { text += line.message.content; onEvent({ type: 'text', delta: line.message.content }) }
