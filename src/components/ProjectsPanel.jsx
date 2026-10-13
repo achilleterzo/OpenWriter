@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { FolderOpen, FolderPlus, X } from 'lucide-react'
+import { FolderOpen, FolderPlus, Settings, X } from 'lucide-react'
+import ProjectSettings from './ProjectSettings.jsx'
 import { formatDateTime, t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
@@ -25,13 +26,13 @@ function LanguageSelect({ id, value, onChange }) {
   )
 }
 
-export default function ProjectsPanel({ project, onOpen, onChoose, onCreate, onSettingsChanged }) {
+export default function ProjectsPanel({ project, onOpen, onOpenFile, onChoose, onCreate, onSettingsChanged }) {
   const [projects, setProjects] = useState([])
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
   const [error, setError] = useState('')
   const [newLanguage, setNewLanguage] = useState('')
-  const [documentLanguage, setDocumentLanguage] = useState('')
+  const [settingsFor, setSettingsFor] = useState(null)
 
   const refresh = useCallback(async () => {
     try { setProjects(await electronAPI.listProjects()) } catch (reason) { setError(reason.message) }
@@ -39,18 +40,6 @@ export default function ProjectsPanel({ project, onOpen, onChoose, onCreate, onS
 
   // Si rilegge anche quando cambia il progetto aperto: l'elenco si riordina per ultimo utilizzo.
   useEffect(() => { refresh() }, [refresh, project])
-
-  // Lingua dei documenti del progetto aperto.
-  useEffect(() => {
-    if (!project) { setDocumentLanguage(''); return }
-    electronAPI.getProjectSettings().then((settings) => setDocumentLanguage(settings.ai.documentLanguage || '')).catch(() => setDocumentLanguage(''))
-  }, [project])
-
-  const changeLanguage = (value) => run(async () => {
-    setDocumentLanguage(value)
-    await saveDocumentLanguage(value)
-    onSettingsChanged?.()
-  })
 
   async function run(action) {
     setError('')
@@ -60,7 +49,7 @@ export default function ProjectsPanel({ project, onOpen, onChoose, onCreate, onS
   const create = () => run(async () => {
     const created = await onCreate(name.trim())
     if (created) {
-      if (newLanguage) { await saveDocumentLanguage(newLanguage); setDocumentLanguage(newLanguage); onSettingsChanged?.() }
+      if (newLanguage) { await saveDocumentLanguage(newLanguage); onSettingsChanged?.() }
       setCreating(false)
       setName('')
     }
@@ -97,11 +86,12 @@ export default function ProjectsPanel({ project, onOpen, onChoose, onCreate, onS
         {projects.map((item) => (
           <li key={item.path} className={`border-b border-slate-800/60 ${sameProject(item) ? 'bg-slate-800/60' : ''}`}>
             <div className="group flex items-center">
+            <button type="button" disabled={item.missing} aria-label={t('Project settings')} title={t('Project settings')} className="ml-2 shrink-0 rounded p-1 text-slate-500 transition hover:bg-slate-800 hover:text-slate-50 disabled:opacity-30 disabled:hover:bg-transparent" onClick={() => setSettingsFor(item)}><Settings size={14} /></button>
             <button
               type="button"
               disabled={item.missing}
               title={item.path}
-              className="min-w-0 flex-1 px-3 py-2 text-left disabled:opacity-60"
+              className="min-w-0 flex-1 px-2 py-2 text-left disabled:opacity-60"
               onClick={() => !sameProject(item) && run(() => onOpen(item.path))}
             >
               <span className="flex items-center gap-1.5 truncate text-sm text-slate-100">
@@ -115,16 +105,21 @@ export default function ProjectsPanel({ project, onOpen, onChoose, onCreate, onS
               <button type="button" aria-label={t('Remove from the list')} title={t('Remove from the list')} className="mr-2 rounded p-1 text-slate-600 opacity-0 transition hover:bg-slate-800 hover:text-slate-50 focus:opacity-100 group-hover:opacity-100" onClick={() => remove(item)}><X size={14} /></button>
             )}
             </div>
-            {sameProject(item) && (
-              <div className="grid gap-1 px-3 pb-2.5">
-                <label className="text-xs text-slate-400" htmlFor="project-document-language">{t('Language of the documents in this project')}</label>
-                <LanguageSelect id="project-document-language" value={documentLanguage} onChange={changeLanguage} />
-              </div>
-            )}
           </li>
         ))}
         {!projects.length && <li className="px-3 py-2 text-xs text-slate-500">{t('No projects yet. Create one or open an existing folder.')}</li>}
       </ul>
+      {settingsFor && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsFor(null) }}>
+          <div role="dialog" aria-modal="true" aria-label={t('Project settings')} className="my-4 w-full max-w-2xl rounded-xl bg-slate-900 p-1 shadow-xl">
+            <div className="flex items-center justify-between gap-2 px-5 pt-4">
+              <span className="min-w-0 truncate text-sm font-semibold text-slate-200" title={settingsFor.path}>{settingsFor.name}</span>
+              <button type="button" aria-label={t('Close')} title={t('Close (Esc)')} className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-50" onClick={() => setSettingsFor(null)}><X size={16} /></button>
+            </div>
+            <ProjectSettings project projectPath={settingsFor.path} onEditContext={project && settingsFor.path.toLowerCase() === project.toLowerCase() ? (file) => { setSettingsFor(null); onOpenFile(file) } : undefined} onChanged={() => { refresh(); if (project && settingsFor.path.toLowerCase() === project.toLowerCase()) onSettingsChanged?.() }} />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

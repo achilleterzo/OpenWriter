@@ -14,8 +14,8 @@ const sections = [
   { id: 'ai', label: 'AI', icon: Bot },
 ]
 
-export default function SettingsScreen({ project, onChooseProject, onBack }) {
-  const [section, setSection] = useState('general')
+export default function SettingsScreen({ initialSection = 'general', project, onChooseProject, onBack, onOpenFile }) {
+  const [section, setSection] = useState(initialSection)
   const current = sections.find((item) => item.id === section)
   const pressedOnBackdrop = useRef(false)
 
@@ -68,7 +68,7 @@ export default function SettingsScreen({ project, onChooseProject, onBack }) {
 
           <div role="tabpanel" className="min-w-0 flex-1 overflow-y-auto p-6 sm:p-8">
             {section === 'general' && <GeneralSettings project={project} onChooseProject={onChooseProject} />}
-            {section === 'project' && <ProjectSettings project={project} />}
+            {section === 'project' && <ProjectSettings project={project} onEditContext={onOpenFile} />}
             {section === 'appearance' && <AppearanceSettings />}
             {section === 'ai' && <AiProviderSettings />}
           </div>
