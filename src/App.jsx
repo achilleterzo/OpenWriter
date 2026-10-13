@@ -17,6 +17,7 @@ import SettingsScreen from './components/SettingsScreen.jsx'
 import TabBar from './components/TabBar.jsx'
 import useDocumentFileCommands from './hooks/useDocumentFileCommands.js'
 import { setAnnotations } from './lib/annotationExtension.js'
+import { foldText, noteIsShown } from './lib/anchoring.js'
 import { relativeToProject } from './lib/aiTools.js'
 import { PANELS, clampWidth, fitLayout, loadLayout, maxWidthFor, saveLayout } from './lib/layout.js'
 import { AFTER_LANGUAGE_RELOAD_KEY, t } from './i18n/index.js'
@@ -102,6 +103,10 @@ export default function App() {
   })
   // Scheda con cui si aprono le impostazioni: Generale, salvo dall'ingranaggio dell'assistente (IA).
   const [settingsSection, setSettingsSection] = useState('general')
+  // Note mostrate: 'open' (predefinito) | 'all' | 'mine' (scritte dall'utente) | 'none' (nascoste). Vale per l'elenco e per le evidenziazioni nel testo.
+  const [noteView, setNoteViewState] = useState(() => { try { return ['open', 'all', 'mine', 'none'].includes(localStorage.getItem('openwriter.noteView')) ? localStorage.getItem('openwriter.noteView') : 'open' } catch { return 'open' } })
+  const setNoteView = (value) => { setNoteViewState(value); try { localStorage.setItem('openwriter.noteView', value) } catch { /* solo una preferenza */ } }
+  const [noteSearch, setNoteSearch] = useState('')
   const [aboutOpen, setAboutOpen] = useState(false)
   const [aboutCheck, setAboutCheck] = useState(false)
   const [appVersion, setAppVersion] = useState('')
@@ -340,10 +345,36 @@ export default function App() {
       setActiveId(tab.id)
       setStatus(t('Opened'))
     },
+    // Salva una scheda: se ha già un file lo sovrascrive, altrimenti (o con "salva con nome") chiede dove. Restituisce true se salvata.
+    async saveTab(id, { saveAs = false } = {}) {
+      const { tabs: currentTabs, editors: currentEditors } = latest.current
+      const tab = currentTabs.find((item) => item.id === id)
+      const editor = currentEditors[id]
+      if (!tab || !editor) return false
+      try {
+        const savedPath = await electronAPI.saveMarkdown({ filePath: tab.filePath, markdown: editor.getMarkdown(), saveAs })
+        if (!savedPath) return false
+        workspaceRef.current.markSaved(id, savedPath)
+        return true
+      } catch (error) {
+        console.error(error)
+        setStatus(t('The operation failed'))
+        return false
+      }
+    },
     async closeTab(id) {
       const tab = latest.current.tabs.find((item) => item.id === id)
       if (!tab) return
-      if (tab.dirty && !(await dialogsRef.current.confirm(t('"{title}" has unsaved changes. Close it anyway?', { title: tab.title }), { danger: true, confirmLabel: t('Close') }))) return
+      // Con modifiche non salvate si propone di salvare prima di chiudere (annullando il salvataggio la scheda resta aperta).
+      if (tab.dirty) {
+        const choice = await dialogsRef.current.choose(t('Save the changes to “{title}” before closing?', { title: tab.title }), [
+          { value: 'save', label: t('Save'), primary: true },
+          { value: 'discard', label: t('Don\'t save'), danger: true },
+          { value: 'cancel', label: t('Cancel') },
+        ])
+        if (!choice || choice === 'cancel') return
+        if (choice === 'save' && !(await workspaceRef.current.saveTab(id))) return
+      }
       const current = latest.current.tabs
       const remaining = current.filter((item) => item.id !== id)
       const next = remaining.some(isDocument) ? remaining : [...remaining, createTab()]
@@ -535,7 +566,8 @@ export default function App() {
         console.warn('Versione di sicurezza non salvata', error)
       }
     },
-    onNotesChanged: () => setNotesVersion((value) => value + 1),
+    // Quando l'assistente aggiunge o rivede note, si apre la scheda Note per mostrarle.
+    onNotesChanged: () => { setNotesVersion((value) => value + 1); setSideTab('notes') },
     // Testo attuale (Markdown) di un documento aperto, per il contesto della chat; null se l'editor non è pronto.
     documentMarkdown(id) {
       const editor = latest.current.editors[id]
@@ -583,9 +615,19 @@ export default function App() {
     return () => { cancelled = true }
   }, [project, contextTab?.filePath, notesVersion])
 
+  // Una nota che si chiude (risolta, accettata o rifiutata, anche dall'assistente) smette di essere "selezionata":
+  // altrimenti resterebbe in elenco e nel testo anche con la vista "Aperte".
+  const noteStatuses = useRef(new Map())
   useEffect(() => {
-    for (const tab of tabs) if (isDocument(tab)) setAnnotations(editors[tab.id], tab.id === contextTab?.id ? notes : [], activeNoteId)
-  }, [notes, activeNoteId, editors, tabs, contextTab?.id])
+    const previous = noteStatuses.current
+    const next = new Map(notes.map((note) => [note.id, note.status]))
+    if (activeNoteId && previous.get(activeNoteId) === 'open' && next.get(activeNoteId) && next.get(activeNoteId) !== 'open') setActiveNoteId(null)
+    noteStatuses.current = next
+  }, [notes, activeNoteId])
+
+  useEffect(() => {
+    for (const tab of tabs) if (isDocument(tab)) setAnnotations(editors[tab.id], tab.id === contextTab?.id ? notes.filter((note) => noteIsShown(note, noteView, activeNoteId, foldText(noteSearch.trim()))) : [], activeNoteId)
+  }, [notes, activeNoteId, noteView, noteSearch, editors, tabs, contextTab?.id])
 
   const selectNote = useCallback((id) => {
     setActiveNoteId(id)
@@ -653,7 +695,7 @@ export default function App() {
             )}
             {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} />}
             {sideTab === 'notes' && (editors[contextTab?.id]
-              ? <NotesPanel tab={contextTab} editor={editors[contextTab.id]} project={project} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} />
+              ? <NotesPanel noteView={noteView} onNoteViewChange={setNoteView} search={noteSearch} onSearchChange={setNoteSearch} tab={contextTab} editor={editors[contextTab.id]} project={project} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} />
               : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>)}
             {sideTab === 'memory' && <MemoryPanel project={project} memoryVersion={memoryVersion} activePath={contextTab?.filePath ? relativeToProject(project, contextTab.filePath) : null} onOpenFile={(relative) => openFromExplorer(`${project}/${relative}`)} onStatus={setStatus} />}
             {sideTab === 'history' && (
@@ -666,7 +708,7 @@ export default function App() {
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
             {tabs.map((tab) => (tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} />
-              : <DocumentPane key={tab.id} tab={tab} project={project} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onNoteSelect={selectNote} />))}
+              : <DocumentPane key={tab.id} tab={tab} project={project} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onNoteSelect={selectNote} />))}
           </section>
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>

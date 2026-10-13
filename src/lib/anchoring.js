@@ -72,3 +72,23 @@ export function locateQuote(doc, note, index = buildTextIndex(doc)) {
   const range = toRange(index, best)
   return range ? { ...range, count: hits.length } : null
 }
+
+// Posizione di una nota di qualunque stato: la citazione; per una correzione accettata, il testo che ora sta al suo posto.
+export function locateNote(doc, note, index = buildTextIndex(doc)) {
+  const found = locateQuote(doc, note, index)
+  if (found || note.status !== 'accepted' || !note.replacement) return found
+  return locateQuote(doc, { ...note, quote: note.replacement }, index)
+}
+
+// Testo senza maiuscole né accenti, per la ricerca nelle note.
+export const foldText = (value) => String(value || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+
+// Quali note si mostrano (nell'elenco e nel testo): 'open' solo le aperte, 'all' tutte, 'mine' solo quelle scritte dall'utente (di qualunque stato), 'none' nessuna, e che contengano la ricerca
+// (`search`, già normalizzata con foldText); la nota selezionata si vede sempre.
+export function noteIsShown(note, view, activeId, search = '') {
+  if (note.id === activeId) return true
+  if (!(view === 'all' || (view === 'open' && note.status === 'open') || (view === 'mine' && note.author === 'user'))) return false
+  return !search || foldText(`${note.quote}
+${note.body}
+${note.replacement ?? ''}`).includes(search)
+}

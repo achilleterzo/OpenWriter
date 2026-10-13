@@ -1,7 +1,7 @@
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import { buildTextIndex, locateQuote } from './anchoring.js'
+import { buildTextIndex, locateNote } from './anchoring.js'
 
 export const annotationKey = new PluginKey('owAnnotations')
 
@@ -9,10 +9,12 @@ function buildDecorations(doc, notes, activeId) {
   const index = buildTextIndex(doc)
   const decorations = []
   for (const note of notes) {
-    const location = locateQuote(doc, note, index)
+    const location = locateNote(doc, note, index)
     if (!location || location.to <= location.from) continue
+    // Aperte: evidenziazione piena (commento o suggerimento); chiuse (risolte, accettate, rifiutate): evidenziatore sottile.
+    const kind = note.status === 'open' ? `ow-note ow-note-${note.kind}` : 'ow-note-done'
     decorations.push(Decoration.inline(location.from, location.to, {
-      class: `ow-note ow-note-${note.kind}${note.id === activeId ? ' ow-note-active' : ''}`,
+      class: `${kind}${note.id === activeId ? ' ow-note-active' : ''}`,
       'data-note-id': note.id,
       title: note.body,
     }))
@@ -20,7 +22,7 @@ function buildDecorations(doc, notes, activeId) {
   return DecorationSet.create(doc, decorations)
 }
 
-// Evidenzia nel testo le note aperte senza modificare il documento: sono solo decorazioni.
+// Evidenzia nel testo le note senza modificare il documento: sono solo decorazioni.
 export const Annotations = Extension.create({
   name: 'annotations',
 
@@ -56,9 +58,8 @@ export const Annotations = Extension.create({
   },
 })
 
-// Aggiorna le note mostrate in un editor (solo quelle aperte vengono evidenziate).
+// Aggiorna le note mostrate in un editor: tutte, con un'evidenziazione diversa per quelle aperte e per quelle chiuse.
 export function setAnnotations(editor, notes, activeId = null) {
   if (!editor || editor.isDestroyed) return
-  const open = (notes || []).filter((note) => note.status === 'open')
-  editor.view.dispatch(editor.state.tr.setMeta(annotationKey, { notes: open, activeId }))
+  editor.view.dispatch(editor.state.tr.setMeta(annotationKey, { notes: notes || [], activeId }))
 }

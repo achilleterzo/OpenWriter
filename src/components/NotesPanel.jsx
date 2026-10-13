@@ -1,16 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useEditorState } from '@tiptap/react'
-import { Bot, Check, MessageSquarePlus, SearchCheck, Pencil, Trash2, User, X } from 'lucide-react'
-import { anchorContext, buildTextIndex, locateQuote } from '../lib/anchoring.js'
+import { Bot, Check, MessageSquarePlus, Search, SearchCheck, Pencil, Trash2, User, X } from 'lucide-react'
+import { anchorContext, buildTextIndex, foldText, locateNote, locateQuote, noteIsShown } from '../lib/anchoring.js'
 import { formatDateTime } from '../i18n/index.js'
 import { t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
 const statusLabel = (status) => ({ open: t('Open|note'), accepted: t('Accepted'), rejected: t('Rejected'), resolved: t('Resolved') })[status]
 
-export default function NotesPanel({ tab, editor, project, notes, activeNoteId, onSelectNote, onChanged, onStatus, onAskAi }) {
-  const [filter, setFilter] = useState('open')
-  const [draft, setDraft] = useState({ body: '', replacement: '' })
+export default function NotesPanel({ tab, editor, project, notes, activeNoteId, noteView, onNoteViewChange, search, onSearchChange, onSelectNote, onChanged, onStatus, onAskAi }) {
+  const listRef = useRef(null)
+  const [draft, setDraft] = useState({ body: '' })
   const [error, setError] = useState('')
   // Correzione in modifica: { id, text }. Per un suggerimento parte dalla proposta, per un commento dal testo citato.
   const [editing, setEditing] = useState(null)
@@ -22,10 +22,19 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
   })
   const found = JSON.parse(located)
 
+  // Selezionando una nota (dall'elenco o cliccandola nel testo) l'elenco scorre fino alla sua scheda.
+  useEffect(() => {
+    if (!activeNoteId) return
+    const card = [...(listRef.current?.querySelectorAll('[data-note-card]') || [])].find((item) => item.getAttribute('data-note-card') === activeNoteId)
+    card?.scrollIntoView({ block: 'nearest' })
+  }, [activeNoteId, noteView, notes.length])
+
   if (!project) return <p className="px-3 py-3 text-xs text-slate-500">{t('Open a project to use notes.')}</p>
   if (!tab.filePath) return <p className="px-3 py-3 text-xs text-slate-500">{t('Save the document as Markdown inside the project to add notes.')}</p>
 
-  const visible = notes.filter((note) => filter === 'all' || note.status === filter)
+  const needle = foldText(search.trim())
+  const visible = notes.filter((note) => noteIsShown(note, noteView, activeNoteId, needle))
+
 
   async function run(action) {
     try {
@@ -75,7 +84,7 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
 
   function focusNote(note) {
     onSelectNote(note.id)
-    const location = locateQuote(editor.state.doc, note)
+    const location = locateNote(editor.state.doc, note)
     if (location) editor.chain().focus().setTextSelection({ from: location.from, to: location.to }).scrollIntoView().run()
   }
 
@@ -93,6 +102,7 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
     onStatus(t('Correction applied (not saved yet)'))
   })
 
+  // Nota scritta a mano: solo la nota, ancorata al testo selezionato (per far lavorare l'assistente sul testo si usa la chat, che ha già la selezione).
   const addNote = () => run(async () => {
     const { from, to, empty } = editor.state.selection
     if (empty) throw new Error(t('Select in the document the text to attach the note to'))
@@ -105,9 +115,9 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
     const context = offset === -1 ? { prefix: '', suffix: '' } : anchorContext(index, { index: offset, length: quote.length })
     await electronAPI.addNote({
       filePath: tab.filePath,
-      note: { kind: draft.replacement.trim() ? 'suggestion' : 'comment', quote, ...context, body: draft.body, replacement: draft.replacement.trim() ? draft.replacement : null, author: 'user' },
+      note: { kind: 'comment', quote, ...context, body: draft.body, replacement: null, author: 'user' },
     })
-    setDraft({ body: '', replacement: '' })
+    setDraft({ body: '' })
   })
 
   const fieldClass = 'w-full rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400'
@@ -116,26 +126,38 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="grid gap-2 border-b border-slate-800 p-3">
-        <textarea rows={2} value={draft.body} placeholder={t('Note on the selected text…')} className={`${fieldClass} resize-none`} onChange={(event) => setDraft({ ...draft, body: event.target.value })} />
-        <input value={draft.replacement} placeholder={t('Proposed correction (optional)')} className={fieldClass} onChange={(event) => setDraft({ ...draft, replacement: event.target.value })} />
+        <textarea rows={3} value={draft.body} placeholder={t('Note on the selected text…')} className={`${fieldClass} resize-none`} onChange={(event) => setDraft({ body: event.target.value })} />
         <button type="button" className="flex items-center justify-center gap-1.5 rounded-md bg-accent-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-accent-500" onClick={addNote}><MessageSquarePlus size={15} /> {t('Add to selection')}</button>
       </div>
 
       <div className="flex gap-1 border-b border-slate-800 px-3 py-2 text-xs">
-        {[['open', t('Open|notes')], ['all', t('All|notes')]].map(([value, label]) => (
-          <button key={value} type="button" className={`rounded-full px-2.5 py-1 transition ${filter === value ? 'bg-accent-500/20 text-accent-400' : 'text-slate-500 hover:text-slate-200'}`} onClick={() => setFilter(value)}>{label}</button>
+        {[['open', t('Open|notes')], ['all', t('All|notes')], ['mine', t('Mine|notes')], ['none', t('Hide|notes')]].map(([value, label]) => (
+          <button key={value} type="button" className={`rounded-full px-2.5 py-1 transition ${noteView === value ? 'bg-accent-500/20 text-accent-400' : 'text-slate-500 hover:text-slate-200'}`} title={t('Which notes to show in the list and in the text (the selected note is always shown)')} onClick={() => onNoteViewChange(value)}>{label}</button>
         ))}
         <span className="ml-auto self-center text-slate-500">{t('{length} open', { length: notes.filter((note) => note.status === 'open').length })}</span>
       </div>
 
+      <div className="relative border-b border-slate-800 px-3 py-2">
+        <Search size={13} className="pointer-events-none absolute left-5 top-1/2 -translate-y-1/2 text-slate-500" />
+        <input
+          value={search}
+          placeholder={t('Search notes…')}
+          aria-label={t('Search notes…')}
+          className="w-full rounded-md border border-slate-700 bg-slate-800 py-1.5 pl-7 pr-7 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400"
+          onChange={(event) => onSearchChange(event.target.value)}
+          onKeyDown={(event) => { if (event.key === 'Escape') onSearchChange('') }}
+        />
+        {search && <button type="button" aria-label={t('Clear search')} title={t('Clear search')} className="absolute right-5 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-500 hover:text-slate-50" onClick={() => onSearchChange('')}><X size={12} /></button>}
+      </div>
+
       {error && <p className="px-3 py-2 text-xs text-rose-400">{error}</p>}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {!visible.length && <p className="px-4 py-6 text-center text-xs text-slate-500">{filter === 'open' ? t('No open notes. The assistant can add some during a review.') : t('No notes.')}</p>}
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
+        {!visible.length && <p className="px-4 py-6 text-center text-xs text-slate-500">{needle ? t('No notes match the search.') : noteView === 'none' ? t('Notes are hidden. Pick “Open”, “All” or “Mine” to show them.') : noteView === 'mine' ? t('You have not written any notes yet.') : noteView === 'open' ? t('No open notes. The assistant can add some during a review.') : t('No notes.')}</p>}
         {visible.map((note) => {
           const index = notes.indexOf(note)
           const orphan = note.status === 'open' && !found[index]
           return (
-            <div key={note.id} className={`border-b border-slate-800/60 px-3 py-2.5 ${note.id === activeNoteId ? 'bg-slate-800/60' : ''}`}>
+            <div key={note.id} data-note-card={note.id} className={`border-b border-slate-800/60 px-3 py-2.5 ${note.id === activeNoteId ? 'bg-slate-800/60' : ''}`}>
               <button type="button" className="block w-full text-left" onClick={() => focusNote(note)}>
                 <span className="flex items-center gap-1.5 text-xs text-slate-500">
                   {note.author === 'ai' ? <Bot size={12} /> : <User size={12} />}
