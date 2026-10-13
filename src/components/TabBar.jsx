@@ -36,7 +36,7 @@ export default function TabBar({ tabs, activeId, onSelect, onClose, onTogglePin,
             onAuxClick={(event) => { if (event.button === 1) onClose(tab.id) }}
           >
             {tab.kind === 'browser' ? <Globe size={14} className="shrink-0" /> : <FileText size={14} className="shrink-0" />}
-            <span className="truncate">{tab.title}</span>
+            <span className={`truncate ${tab.closed ? 'italic opacity-60' : ''}`}>{tab.title}</span>
             {tab.kind !== 'browser' && (
               <button
                 type="button"

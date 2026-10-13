@@ -58,6 +58,8 @@ function createTab(document = null, id = crypto.randomUUID()) {
 // La scheda del browser non è un documento: non ha editor, file né bozze, e non viene salvata nella sessione.
 const createBrowserTab = () => ({ id: crypto.randomUUID(), kind: 'browser', title: t('Browser'), filePath: null, sourcePath: null, dirty: false })
 const isDocument = (tab) => tab && tab.kind !== 'browser'
+// Una scheda fissata chiusa resta al suo posto senza documento caricato (con il pulsante "Apri"): non ha editor.
+const isLive = (tab) => isDocument(tab) && !tab.closed
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms) })
 const samePath = (left, right) => Boolean(left) && Boolean(right) && left.replace(/\\/g, '/').toLowerCase() === right.replace(/\\/g, '/').toLowerCase()
 
@@ -68,6 +70,10 @@ async function restoreTabs(session) {
   const anyPinned = (session?.tabs || []).some((saved) => saved.pinned)
   for (const saved of session?.tabs || []) {
     if (anyPinned && !saved.pinned && saved.markdown === undefined) continue
+    if (saved.closed && saved.pinned && saved.sourcePath) {
+      tabs.push({ id: saved.id, filePath: saved.filePath, sourcePath: saved.sourcePath, title: saved.title, content: '', contentType: 'markdown', dirty: false, pinned: true, closed: true })
+      continue
+    }
     try {
       // Il numero dei documenti senza titolo è un dato salvato, non si ricava dal titolo (che può cambiare con la lingua).
       if (Number.isInteger(saved.untitled)) untitledCounter = Math.max(untitledCounter, saved.untitled)
@@ -133,9 +139,9 @@ export default function App() {
   const lastBrowserId = useRef(null)
 
   const activeTab = tabs.find((tab) => tab.id === activeId) || tabs[0]
-  if (isDocument(activeTab)) lastDocumentId.current = activeTab.id
+  if (isLive(activeTab)) lastDocumentId.current = activeTab.id
   // Il documento "di contesto" è quello attivo, oppure l'ultimo usato quando in primo piano c'è il browser.
-  const contextTab = isDocument(activeTab) ? activeTab : tabs.find((tab) => tab.id === lastDocumentId.current && isDocument(tab)) || tabs.find(isDocument)
+  const contextTab = isLive(activeTab) ? activeTab : tabs.find((tab) => tab.id === lastDocumentId.current && isLive(tab)) || tabs.find(isLive) || tabs.find(isDocument)
 
   // Gli ultimi valori restano in un ref: serve a salvare la sessione anche dai timer e da beforeunload.
   const latest = useRef({})
@@ -163,6 +169,7 @@ export default function App() {
           untitled: tab.untitled,
           dirty: tab.dirty,
           pinned: Boolean(tab.pinned),
+          closed: Boolean(tab.closed),
           ...(keepText ? { markdown: editor.getMarkdown() } : {}),
         }
       }),
@@ -278,10 +285,10 @@ export default function App() {
   const createProject = useCallback((name) => switchProject(() => electronAPI.createProject(name)), [switchProject])
 
   // Nuova versione: controllo all'avvio (e a richiesta dalla finestra Informazioni), confronto con la versione in uso.
-  const checkForUpdate = useCallback(async () => {
+  const checkForUpdate = useCallback(async (silent = false) => {
     const version = await electronAPI.getAppVersion()
     setAppVersion(version)
-    const release = await electronAPI.getLatestRelease()
+    const release = await electronAPI.getLatestRelease(silent)
     const newer = release?.version && compareVersions(release.version, version) > 0
     setUpdateRelease(newer ? release : null)
     return Boolean(newer)
@@ -290,7 +297,7 @@ export default function App() {
   useEffect(() => {
     if (!electronAPI) return
     electronAPI.getAppVersion().then(setAppVersion).catch(() => {})
-    checkForUpdate().catch(() => {})
+    checkForUpdate(true).catch(() => {})
   }, [checkForUpdate])
 
   useEffect(() => {
@@ -339,11 +346,30 @@ export default function App() {
     },
     openDocument(document) {
       const existing = latest.current.tabs.find((tab) => tab.sourcePath === document.filePath)
+      if (existing?.closed) {
+        // Scheda fissata chiusa: si ricarica il documento al suo posto.
+        setTabs((current) => current.map((tab) => (tab.id === existing.id ? { ...createTab(document, existing.id), pinned: true } : tab)))
+        setActiveId(existing.id)
+        return
+      }
       if (existing) { setActiveId(existing.id); return }
       const tab = createTab(document)
       setTabs((current) => [...current, tab])
       setActiveId(tab.id)
       setStatus(t('Opened'))
+    },
+    // Pulsante "Apri" di una scheda fissata chiusa: rilegge il documento dal file.
+    async reopenTab(id) {
+      const tab = latest.current.tabs.find((item) => item.id === id)
+      if (!tab?.closed) return
+      try {
+        const document = await electronAPI.reopenDocument(tab.sourcePath)
+        setTabs((current) => current.map((item) => (item.id === id ? { ...createTab(document, id), pinned: true } : item)))
+        setActiveId(id)
+      } catch (error) {
+        console.error(error)
+        setStatus(t('Could not open the file'))
+      }
     },
     // Salva una scheda: se ha già un file lo sovrascrive, altrimenti (o con "salva con nome") chiede dove. Restituisce true se salvata.
     async saveTab(id, { saveAs = false } = {}) {
@@ -374,6 +400,11 @@ export default function App() {
         ])
         if (!choice || choice === 'cancel') return
         if (choice === 'save' && !(await workspaceRef.current.saveTab(id))) return
+      }
+      // Una scheda fissata con un file non sparisce: resta al suo posto senza documento, con il pulsante "Apri".
+      if (tab.pinned && tab.sourcePath && !tab.closed) {
+        setTabs((list) => list.map((item) => (item.id === id ? { ...item, closed: true, dirty: false, content: '' } : item)))
+        return
       }
       const current = latest.current.tabs
       const remaining = current.filter((item) => item.id !== id)
@@ -406,6 +437,8 @@ export default function App() {
     },
     // Fissa o stacca una scheda; le fissate stanno sempre a sinistra.
     togglePin(id) {
+      // Staccare una scheda fissata già chiusa la elimina (non ha documento da tenere aperto).
+      if (latest.current.tabs.find((tab) => tab.id === id)?.closed) { setTabs((current) => current.filter((tab) => tab.id !== id)); return }
       setTabs((current) => keepPinnedFirst(current.map((tab) => (tab.id === id ? { ...tab, pinned: !tab.pinned } : tab))))
     },
     // Trascinamento: la scheda `id` passa davanti a `beforeId` (restando nel proprio gruppo, fissate o no).
@@ -431,6 +464,11 @@ export default function App() {
     },
     setTitle(id, title) {
       setTabs((current) => current.map((tab) => (tab.id === id && title ? { ...tab, title } : tab)))
+    },
+    // Il testo è tornato uguale a quello salvato (per esempio dopo "Annulla"): la scheda non è più modificata.
+    markClean(id) {
+      setTabs((current) => (current.some((tab) => tab.id === id && tab.dirty) ? current.map((tab) => (tab.id === id ? { ...tab, dirty: false } : tab)) : current))
+      scheduleSave()
     },
     markDirty(id) {
       setTabs((current) => (current.some((tab) => tab.id === id && !tab.dirty) ? current.map((tab) => (tab.id === id ? { ...tab, dirty: true } : tab)) : current))
@@ -468,7 +506,7 @@ export default function App() {
     const toolBridge = {
     getDocument(relativePath) {
       const { tabs: currentTabs, editors: currentEditors, project: currentProject, contextTabId } = latest.current
-      const documents = currentTabs.filter(isDocument)
+      const documents = currentTabs.filter(isLive)
       const wanted = relativePath ? `${currentProject}/${String(relativePath).replace(/\\/g, '/')}` : null
       const tab = wanted
         ? documents.find((item) => samePath(item.filePath, wanted) || samePath(item.sourcePath, wanted))
@@ -482,7 +520,7 @@ export default function App() {
       const { tabs: currentTabs, editors: currentEditors, project: currentProject } = latest.current
       if (!currentProject) return null
       const wanted = `${currentProject}/${String(relativePath).replace(/\\/g, '/')}`
-      const tab = currentTabs.filter(isDocument).find((item) => samePath(item.filePath, wanted) || samePath(item.sourcePath, wanted))
+      const tab = currentTabs.filter(isLive).find((item) => samePath(item.filePath, wanted) || samePath(item.sourcePath, wanted))
       const editor = tab && currentEditors[tab.id]
       return editor ? { text: editor.getMarkdown(), dirty: tab.dirty } : null
     },
@@ -658,7 +696,7 @@ export default function App() {
 
   openFileRef.current = openFromExplorer
 
-  const openDocuments = useMemo(() => tabs.filter(isDocument).map((item) => ({ id: item.id, title: item.title })), [tabs])
+  const openDocuments = useMemo(() => tabs.filter(isLive).map((item) => ({ id: item.id, title: item.title })), [tabs])
 
   if (!ready || !activeTab) return <div className="h-screen bg-slate-950" />
 
@@ -708,7 +746,7 @@ export default function App() {
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
             {tabs.map((tab) => (tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} />
-              : <DocumentPane key={tab.id} tab={tab} project={project} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onNoteSelect={selectNote} />))}
+              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onNoteSelect={selectNote} />))}
           </section>
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>
@@ -746,7 +784,7 @@ export default function App() {
           <button type="button" aria-label={t('Dismiss')} className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-50" onClick={() => setUpdateNoticeVisible(false)}>×</button>
         </div>
       )}
-      {aboutOpen && <AboutDialog version={appVersion} release={updateRelease} checkOnOpen={aboutCheck} onCheck={checkForUpdate} onClose={() => setAboutOpen(false)} />}
+      {aboutOpen && <AboutDialog version={appVersion} release={updateRelease} checkOnOpen={aboutCheck} onCheck={() => checkForUpdate(false)} onClose={() => setAboutOpen(false)} />}
       {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} onChooseProject={chooseProject} onOpenFile={(file) => { setScreen('editor'); setSettingsVersion((value) => value + 1); openFromExplorer(file) }} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
     </ContextMenuContext.Provider>
   )
