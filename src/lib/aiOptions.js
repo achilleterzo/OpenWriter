@@ -11,6 +11,7 @@ const defaultReasoning = { value: 'default', label: t('Client default') }
 export const reasoningByProvider = {
   ollama: ollamaReasoning,
   'ollama-cloud': ollamaReasoning,
+  openrouter: [defaultReasoning, ...ollamaReasoning.slice(1)],
   codex: [defaultReasoning, ...ollamaReasoning.slice(1), { value: 'xhigh', label: t('Very high') }],
   claude: [defaultReasoning, ...ollamaReasoning.slice(1), { value: 'xhigh', label: t('Very high') }, { value: 'max', label: t('Maximum') }],
 }

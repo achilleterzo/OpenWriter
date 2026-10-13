@@ -338,7 +338,6 @@
   "No project is open. The project folder is the working directory.": "Es ist kein Projekt geöffnet. Der Projektordner ist das Arbeitsverzeichnis.",
   "No project open": "Kein Projekt geöffnet",
   "No projects yet. Create one or open an existing folder.": "Noch keine Projekte. Erstelle eines oder öffne einen vorhandenen Ordner.",
-  "No response from Ollama for {value} seconds": "Seit {value} Sekunden keine Antwort von Ollama",
   "No results": "Keine Ergebnisse",
   "No sandbox": "Keine Sandbox",
   "No sign-in in progress. Press Sign in again.": "Keine Anmeldung im Gange. Drücke erneut auf Anmelden.",
@@ -359,7 +358,6 @@
   "Ollama Cloud API key": "Ollama-Cloud-API-Schlüssel",
   "Ollama Cloud API key required": "Ollama-Cloud-API-Schlüssel erforderlich",
   "Ollama endpoint": "Ollama-Endpunkt",
-  "Ollama request timed out after {value} seconds": "Ollama-Anfrage nach {value} Sekunden abgelaufen",
   "Only .md and .txt documents can be created": "Es können nur .md- und .txt-Dokumente erstellt werden",
   "Only http and https addresses are allowed": "Nur http- und https-Adressen sind erlaubt",
   "Open": "Öffnen",
@@ -630,5 +628,13 @@
   "· error": "· Fehler",
   "· revised": "· überarbeitet",
   "… ({count} characters)": "… ({count} Zeichen)",
-  "− saved version": "− gespeicherte Version"
+  "− saved version": "− gespeicherte Version",
+  "{name} request timed out after {value} seconds": "Anfrage an {name} nach {value} Sekunden abgelaufen",
+  "No response from {name} for {value} seconds": "Seit {value} Sekunden keine Antwort von {name}",
+  "OpenRouter API key required": "OpenRouter-API-Schlüssel erforderlich",
+  "Configure the OpenRouter API key and model in the settings": "Richte den API-Schlüssel und das Modell von OpenRouter in den Einstellungen ein",
+  "Hundreds of models with one API key": "Hunderte Modelle mit einem API-Schlüssel",
+  "OpenRouter API key": "OpenRouter-API-Schlüssel",
+  "You can create a key on": "Einen Schlüssel kannst du erstellen auf",
+  "Maximum reply tokens (max_tokens)": "Maximale Tokens pro Antwort (max_tokens)"
 }

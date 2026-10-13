@@ -85,7 +85,7 @@ function transcriptOf(conversation) {
 }
 
 // Messaggi da inviare al modello. Nel formato testuale i risultati degli strumenti tornano come messaggi dell'utente;
-// in quello nativo (Ollama) si usano `tool_calls` e i messaggi con ruolo "tool". Le immagini viaggiano come allegati
+// in quello nativo (Ollama, OpenRouter) si usano `tool_calls` e i messaggi con ruolo "tool". Le immagini viaggiano come allegati
 // di un messaggio dell'utente (i messaggi "tool" non possono contenerne).
 function toModelMessages(messages, context, native, loaded = new Map()) {
   const usable = messages.filter((message) => !(message.error && message.role === 'assistant'))
@@ -521,10 +521,10 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
 
   const provider = settings?.provider
   const model = settings?.providers?.[provider]?.model
-  const providerLabel = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', codex: 'Codex', claude: 'Claude' }[provider]
+  const providerLabel = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', openrouter: 'OpenRouter', codex: 'Codex', claude: 'Claude' }[provider]
   const enabled = Boolean(settings?.aiEnabled)
-  // Per Ollama il modello va scelto per forza; Claude e Codex hanno un predefinito.
-  const canUseNativeProvider = ['ollama', 'ollama-cloud'].includes(provider)
+  // Per Ollama e OpenRouter il modello va scelto per forza; Claude e Codex hanno un predefinito.
+  const canUseNativeProvider = ['ollama', 'ollama-cloud', 'openrouter'].includes(provider)
   // Prompt suggerito dall'ultima risposta dell'assistente, finché la conversazione non prosegue.
   const lastMessage = current.messages[current.messages.length - 1]
   const suggestion = !busy && lastMessage?.role === 'assistant' && !lastMessage.error && editingIndex === null ? lastMessage.nextPrompt || '' : ''
@@ -723,7 +723,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       memory: Boolean(toolSettings.memory && project),
     }
     const anyTool = Object.values(toolsOn).some(Boolean)
-    const canUseNative = ['ollama', 'ollama-cloud'].includes(settings.provider)
+    const canUseNative = ['ollama', 'ollama-cloud', 'openrouter'].includes(settings.provider)
     const snapshotted = new Set()
     // Documenti modificati dall'assistente in questa richiesta: a lavoro finito vengono salvati (la versione precedente è archiviata da beforeEdit).
     const editedTabs = new Set()

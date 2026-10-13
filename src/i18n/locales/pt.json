@@ -338,7 +338,6 @@
   "No project is open. The project folder is the working directory.": "Nenhum projeto está aberto. A pasta do projeto é o diretório de trabalho.",
   "No project open": "Nenhum projeto aberto",
   "No projects yet. Create one or open an existing folder.": "Ainda não há projetos. Crie um ou abra uma pasta existente.",
-  "No response from Ollama for {value} seconds": "Sem resposta do Ollama há {value} segundos",
   "No results": "Sem resultados",
   "No sandbox": "Sem sandbox",
   "No sign-in in progress. Press Sign in again.": "Nenhum início de sessão em curso. Prima Iniciar sessão novamente.",
@@ -359,7 +358,6 @@
   "Ollama Cloud API key": "Chave de API do Ollama Cloud",
   "Ollama Cloud API key required": "Chave de API do Ollama Cloud necessária",
   "Ollama endpoint": "Endpoint do Ollama",
-  "Ollama request timed out after {value} seconds": "O pedido ao Ollama expirou após {value} segundos",
   "Only .md and .txt documents can be created": "Só podem ser criados documentos .md e .txt",
   "Only http and https addresses are allowed": "Só são permitidos endereços http e https",
   "Open": "Abrir",
@@ -630,5 +628,13 @@
   "· error": "· erro",
   "· revised": "· revista",
   "… ({count} characters)": "… ({count} carateres)",
-  "− saved version": "− versão guardada"
+  "− saved version": "− versão guardada",
+  "{name} request timed out after {value} seconds": "O pedido a {name} expirou após {value} segundos",
+  "No response from {name} for {value} seconds": "Sem resposta de {name} há {value} segundos",
+  "OpenRouter API key required": "É necessária a chave de API do OpenRouter",
+  "Configure the OpenRouter API key and model in the settings": "Configure a chave de API e o modelo do OpenRouter nas definições",
+  "Hundreds of models with one API key": "Centenas de modelos com uma só chave de API",
+  "OpenRouter API key": "Chave de API do OpenRouter",
+  "You can create a key on": "Pode criar uma chave em",
+  "Maximum reply tokens (max_tokens)": "Tokens máximos por resposta (max_tokens)"
 }

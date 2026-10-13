@@ -88,8 +88,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     login: (provider) => ipcRenderer.invoke('ai:login', provider),
     submitLoginCode: (code) => ipcRenderer.invoke('ai:login-code', code),
     listModels: (request) => ipcRenderer.invoke('ai:models', request),
-    hasApiKey: () => ipcRenderer.invoke('ai:has-api-key'),
-    saveApiKey: (value) => ipcRenderer.invoke('ai:save-api-key', value),
+    hasApiKey: (provider) => ipcRenderer.invoke('ai:has-api-key', provider),
+    saveApiKey: (value, provider) => ipcRenderer.invoke('ai:save-api-key', value, provider),
     chat: (messages) => ipcRenderer.invoke('ai:chat', messages),
     getCapabilities: (model) => ipcRenderer.invoke('ai:capabilities', model),
     // Risposta in streaming: onEvent riceve { type: 'text' | 'thinking' | 'status', delta | text }; cancel() interrompe.
