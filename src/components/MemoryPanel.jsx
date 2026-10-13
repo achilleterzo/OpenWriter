@@ -67,6 +67,7 @@ export default function MemoryPanel({ project, memoryVersion, activePath, onOpen
             <span className="flex items-center gap-1.5 text-xs text-slate-500" title={entry.author === 'ai' ? t('Written by the assistant') : t('Written by you')}>
               {entry.author === 'ai' ? <Bot size={12} /> : <User size={12} />}
               {formatDateTime(entry.updatedAt, { dateStyle: 'medium', timeStyle: 'short' })}
+              {entry.origin && <span className="truncate text-amber-400" title={t('Memory of the sub-project {name}', { name: entry.origin })}>· {entry.origin}</span>}
             </span>
             {entry.title && <span className="mt-1 block text-sm font-semibold text-slate-100">{entry.title}</span>}
             {editing?.id === entry.id ? (

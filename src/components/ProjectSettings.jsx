@@ -25,7 +25,7 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
     // Con `projectPath` si modificano le impostazioni di quel progetto (anche non aperto); altrimenti quelle del progetto aperto.
     ;(projectPath ? electronAPI.getProjectSettingsFor(projectPath) : electronAPI.getProjectSettings()).then((settings) => {
       setInfo(settings)
-      setForm({ name: settings.name, language: settings.ai.language, documentLanguage: settings.ai.documentLanguage || '', context: settings.ai.context, autoVersions: settings.options.autoVersions, spellcheck: settings.spellcheck.languages })
+      setForm({ name: settings.name, language: settings.ai.language, documentLanguage: settings.ai.documentLanguage || '', context: settings.ai.context, autoVersions: settings.options.autoVersions, inherit: settings.inherit === true, spellcheck: settings.spellcheck.languages })
     }).catch((reason) => setError(reason.message))
   }, [project, projectPath, reloadToken])
 
@@ -36,7 +36,7 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
 
   async function save() {
     try {
-      const payload = ({ name: form.name, ai: { context: form.context, language: form.language, documentLanguage: form.documentLanguage }, options: { autoVersions: form.autoVersions }, spellcheck: { languages: form.spellcheck } })
+      const payload = ({ name: form.name, ai: { context: form.context, language: form.language, documentLanguage: form.documentLanguage }, options: { autoVersions: form.autoVersions }, ...(info.parent ? { inherit: form.inherit } : {}), spellcheck: { languages: form.spellcheck } })
       const result = await (projectPath ? electronAPI.saveProjectSettingsFor(projectPath, payload) : electronAPI.saveProjectSettings(payload))
       onChanged?.()
       setInfo(result)
@@ -66,6 +66,15 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
 
       <label className="text-sm text-slate-300">{t('Project name')}<input value={form.name} maxLength={200} className={fieldClass} placeholder={t('Optional')} onChange={(event) => update({ name: event.target.value })} />
       </label>
+
+      {info.parent && (
+        <label className="flex items-start gap-3 text-sm text-slate-300">
+          <input type="checkbox" checked={Boolean(form.inherit)} className="mt-1 accent-accent-500" onChange={(event) => update({ inherit: event.target.checked })} />
+          <span>{t('Inherit the context of the parent project “{name}”', { name: info.parent.name })}
+            <span className="mt-1 block text-xs text-slate-500">{t('The assistant also receives the parent project\'s instructions, followed by this project\'s, which take precedence. When this project is worked on from the parent, it always inherits unless you turn this off.')}</span>
+          </span>
+        </label>
+      )}
 
       <label className="text-sm text-slate-300">{t('Context for the AI')}<textarea
           value={form.context}

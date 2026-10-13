@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, FilePlus, FileText, Folder, FolderOpen, FolderPlus, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderOpen, FolderPlus, FolderRoot, RefreshCw } from 'lucide-react'
 
 import { ContextMenuContext } from './ContextMenu.jsx'
 import { t } from '../i18n/index.js'
@@ -7,6 +7,10 @@ import { t } from '../i18n/index.js'
 const electronAPI = window.electronAPI
 const revealLabel = /Win/.test(navigator.platform) ? t('Show in File Explorer') : /Mac/.test(navigator.platform) ? t('Reveal in Finder') : t('Show in file manager')
 const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes('Files')
+// Trascinamento interno: un elemento dell'albero spostato in un'altra cartella.
+const INTERNAL_DRAG = 'application/x-openwriter-path'
+const parentOf = (target) => target.replace(/[\\/][^\\/]*$/, '')
+const hasInternal = (event) => Array.from(event.dataTransfer?.types || []).includes(INTERNAL_DRAG)
 
 // Campo di rinomina in linea: Invio conferma, Esc annulla, la perdita del focus conferma. Seleziona il nome senza estensione.
 function RenameInput({ entry, onCommit, onCancel }) {
@@ -71,13 +75,20 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
         type="button"
         style={indent}
         title={entry.path}
+        draggable={menu.renaming !== entry.path}
+        onDragStart={(event) => drop.start(event, entry)}
+        onDragEnd={drop.end}
+        onDragOver={(event) => drop.over(event, parentOf(entry.path))}
+        onDrop={(event) => drop.drop(event, parentOf(entry.path))}
         className={`${rowClass} ${active ? 'bg-slate-800 text-slate-50' : 'text-slate-400'}`}
         onClick={() => onOpenFile(entry.path)}
         onContextMenu={(event) => menu.open(event, entry)}
         onKeyDown={(event) => menu.key(event, entry)}
       >
         <span className="w-3.5 shrink-0" />
-        <FileText size={14} className="shrink-0 text-slate-500" />
+        {/\.(md|markdown|mdown)$/i.test(entry.name)
+          ? <FileText size={14} className="shrink-0 text-accent-400" />
+          : <File size={14} className="shrink-0 text-slate-500" />}
         {menu.renaming === entry.path ? <RenameInput entry={entry} onCommit={menu.commitRename} onCancel={menu.cancelRename} /> : <span className="truncate">{entry.name}</span>}
       </button>
     )
@@ -89,6 +100,10 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
         type="button"
         style={indent}
         aria-expanded={expanded}
+        title={entry.isProject ? t('Sub-project: it has its own .ow folder') : undefined}
+        draggable={menu.renaming !== entry.path}
+        onDragStart={(event) => drop.start(event, entry)}
+        onDragEnd={drop.end}
         className={`${rowClass} text-slate-300 ${drop.target === entry.path ? 'bg-accent-500/20 ring-1 ring-inset ring-accent-400' : ''}`}
         onClick={() => onToggle(entry.path)}
         onContextMenu={(event) => menu.open(event, entry)}
@@ -97,7 +112,9 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
         onDrop={(event) => drop.drop(event, entry.path)}
       >
         {expanded ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
-        {expanded ? <FolderOpen size={14} className="shrink-0 text-accent-400" /> : <Folder size={14} className="shrink-0 text-accent-400" />}
+        {entry.isProject
+          ? <FolderRoot size={14} className="shrink-0 text-amber-400" aria-label={t('Sub-project')} />
+          : expanded ? <FolderOpen size={14} className="shrink-0 text-accent-400" /> : <Folder size={14} className="shrink-0 text-accent-400" />}
         {menu.renaming === entry.path ? <RenameInput entry={entry} onCommit={menu.commitRename} onCancel={menu.cancelRename} /> : <span className="truncate">{entry.name}</span>}
       </button>
       {expanded && error && <p style={indent} className="py-1 text-xs text-rose-400">{error}</p>}
@@ -109,12 +126,14 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
   )
 }
 
-export default function FileExplorer({ project, activePath, refreshToken, expandedPaths, onToggle, onChooseProject, onOpenFile, onStatus, onRenamed, onDeleted }) {
+export default function FileExplorer({ project, activePath, refreshToken, expandedPaths, onToggle, onChooseProject, onOpenProject, onOpenFile, onStatus, onRenamed, onDeleted }) {
   const [entries, setEntries] = useState([])
   const [error, setError] = useState('')
   const [localRefresh, setLocalRefresh] = useState(0)
   const token = refreshToken + localRefresh
   const [dropTarget, setDropTarget] = useState(null)
+  // Elemento che si sta trascinando (il contenuto del trascinamento non è leggibile finché non si rilascia).
+  const dragged = useRef(null)
 
   const [renaming, setRenaming] = useState(null)
   // Nuova cartella o nuovo documento: { parent, type: 'directory' | 'file' } con il nome in corso di digitazione.
@@ -130,6 +149,16 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       }
     } catch (reason) {
       onStatus(t('Delete failed: {message}', { message: reason.message }))
+    }
+  }
+
+  async function createSubproject(entry) {
+    try {
+      await electronAPI.createSubproject(entry.path)
+      setLocalRefresh((value) => value + 1)
+      onStatus(t('“{name}” is now a sub-project', { name: entry.name }))
+    } catch (reason) {
+      onStatus(t('Could not create: {message}', { message: reason.message }))
     }
   }
 
@@ -167,6 +196,9 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
           entry.isDirectory && { label: t('New folder…'), onClick: () => startCreate(entry.path, 'directory') },
           entry.isDirectory && { label: t('New document…'), onClick: () => startCreate(entry.path, 'file') },
           entry.isDirectory && { separator: true },
+          entry.isDirectory && !entry.isProject && { label: t('Create sub-project…'), onClick: () => createSubproject(entry) },
+          entry.isProject && { label: t('Open as project'), onClick: () => onOpenProject(entry.path) },
+          entry.isDirectory && { separator: true },
           { label: t('Rename'), hint: 'F2', onClick: () => setRenaming(entry.path) },
           { label: t('Delete'), hint: t('Del'), danger: true, onClick: () => deleteEntry(entry) },
           { separator: true },
@@ -197,18 +229,52 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   // Trascinando file dal sistema si copiano nella cartella sotto il puntatore, o nella radice del progetto.
   const drop = {
     target: dropTarget,
+    start(event, entry) {
+      dragged.current = entry.path
+      event.dataTransfer.setData(INTERNAL_DRAG, entry.path)
+      event.dataTransfer.effectAllowed = 'copyMove'
+    },
+    end() {
+      dragged.current = null
+      setDropTarget(null)
+    },
+    // Rilasciare un elemento nella cartella in cui già sta (o su sé stesso) non sposta nulla: il rilascio non è nemmeno consentito.
+    isNoop: (event, directory) => hasInternal(event) && dragged.current !== null && (parentOf(dragged.current) === directory || dragged.current === directory),
     over(event, directory) {
-      if (!hasFiles(event)) return
+      if (!hasFiles(event) && !hasInternal(event)) return
+      if (drop.isNoop(event, directory)) {
+        event.stopPropagation()
+        event.dataTransfer.dropEffect = 'none'
+        setDropTarget(null)
+        return
+      }
       event.preventDefault()
       event.stopPropagation()
-      event.dataTransfer.dropEffect = 'copy'
+      event.dataTransfer.dropEffect = hasInternal(event) ? 'move' : 'copy'
       setDropTarget(directory)
     },
     async drop(event, directory) {
-      if (!hasFiles(event)) return
+      if (!hasFiles(event) && !hasInternal(event)) return
       event.preventDefault()
       event.stopPropagation()
       setDropTarget(null)
+      if (drop.isNoop(event, directory)) { dragged.current = null; return }
+      if (hasInternal(event)) {
+        // Cronologia, note e memoria dell'elemento lo seguono, anche se la cartella è un sotto-progetto.
+        const from = event.dataTransfer.getData(INTERNAL_DRAG)
+        try {
+          const destination = await electronAPI.moveIntoDirectory({ from, toDirectory: directory })
+          if (destination !== from) {
+            onRenamed(from, destination)
+            if (directory !== project && !expandedPaths.has(directory)) onToggle(directory)
+            setLocalRefresh((value) => value + 1)
+            onStatus(t('Moved to {folder}', { folder: directory === project ? name : directory.split(/[\\/]/).filter(Boolean).at(-1) }))
+          }
+        } catch (reason) {
+          onStatus(t('Move failed: {message}', { message: reason.message }))
+        }
+        return
+      }
       const paths = electronAPI.getDroppedPaths(Array.from(event.dataTransfer.files))
       try {
         const result = await electronAPI.importFiles({ paths, targetDirectory: directory })
