@@ -80,7 +80,11 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
     })
   }
 
-  const setStatus = (note, status) => run(() => electronAPI.updateNote({ filePath: tab.filePath, id: note.id, changes: { status } }))
+  const setStatus = (note, status) => run(async () => {
+    await electronAPI.updateNote({ filePath: tab.filePath, id: note.id, changes: { status } })
+    // Una nota chiusa non resta "selezionata": la selezione la terrebbe in elenco e nel testo anche con la vista "Aperte".
+    if (status !== 'open' && note.id === activeNoteId) onSelectNote(null)
+  })
 
   function focusNote(note) {
     onSelectNote(note.id)
