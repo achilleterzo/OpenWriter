@@ -11,6 +11,8 @@ import { Annotations } from '../lib/annotationExtension.js'
 import { Search } from '../lib/searchExtension.js'
 import { KeepSelection } from '../lib/keepSelectionExtension.js'
 import { DocumentImage } from '../lib/imageExtension.js'
+import { PendingChanges, acceptAll, getPending, rejectAll } from '../lib/pendingChangesExtension.js'
+import { useEditorState } from '@tiptap/react'
 import Link from '@tiptap/extension-link'
 import { TaskItem, TaskList } from '@tiptap/extension-list'
 import { FrontMatter, HtmlBlock, HtmlInline } from '../lib/rawMarkdownExtensions.js'
@@ -116,6 +118,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
       Annotations.configure({ onSelect: (id) => onNoteSelect?.(id) }),
       Search,
       KeepSelection,
+      PendingChanges.configure({ labels: { caption: t('Edited by the assistant'), accept: t('Accept'), reject: t('Reject') } }),
     ],
     content: tab.content,
     contentType: tab.contentType,
@@ -220,11 +223,21 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
     editor?.commands.focus()
   }
 
+  // Modifiche dell'assistente ancora da rivedere in questo documento.
+  const pendingCount = useEditorState({ editor, selector: ({ editor: current }) => (current ? getPending(current.state).length : 0) })
+
   if (!editor) return null
 
   return (
     <div className={active ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
       <DocumentToolbar editor={editor} onSave={onSave} dirty={tab.dirty} sourceOpen={sourceOpen} onToggleSource={toggleSource} onCopySource={() => navigator.clipboard.writeText(sourceLatest.current)} onImage={pickImage} onFind={() => { if (findOpen) closeFind(); else { setFindOpen(true); setFocusToken((value) => value + 1) } }} findOpen={findOpen} />
+      {pendingCount > 0 && !sourceOpen && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 bg-emerald-500/10 px-4 py-2 text-xs text-slate-200">
+          <span>{t('{count} edits to review', { count: pendingCount })}</span>
+          <button type="button" className="rounded bg-emerald-500/20 px-2 py-1 text-emerald-200 transition hover:bg-emerald-500/30" onClick={() => acceptAll(editor)}>{t('Accept all')}</button>
+          <button type="button" className="rounded bg-rose-500/20 px-2 py-1 text-rose-200 transition hover:bg-rose-500/30" onClick={() => rejectAll(editor)}>{t('Reject all')}</button>
+        </div>
+      )}
       <div className="relative min-h-0 flex-1">
         {findOpen && !sourceOpen && <FindBar editor={editor} replaceMode={replaceMode} onReplaceMode={setReplaceMode} focusToken={focusToken} onClose={closeFind} />}
         {sourceOpen && (

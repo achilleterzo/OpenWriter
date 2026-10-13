@@ -203,6 +203,48 @@ body {
   font-size: 0.85em;
 }
 
+/* Modifiche dell'assistente da rivedere: blocco nuovo evidenziato, sopra il vecchio barrato con Accetta / Rifiuta. */
+.document-editor .tiptap .ow-pending-new {
+  border-left: 3px solid rgb(52 211 153);
+  background: rgb(16 185 129 / 0.10);
+  padding-left: 0.75rem;
+}
+
+.document-editor .tiptap .ow-pending-widget {
+  margin: 0 0 0.5rem;
+  user-select: none;
+}
+
+.document-editor .tiptap .ow-pending-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+  font-size: 0.75rem;
+  color: rgb(var(--slate-400));
+}
+
+.document-editor .tiptap .ow-pending-bar button {
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+.document-editor .tiptap .ow-pending-accept { background: rgb(16 185 129 / 0.2); color: rgb(167 243 208); }
+.document-editor .tiptap .ow-pending-accept:hover { background: rgb(16 185 129 / 0.35); }
+.document-editor .tiptap .ow-pending-reject { background: rgb(244 63 94 / 0.2); color: rgb(253 164 175); }
+.document-editor .tiptap .ow-pending-reject:hover { background: rgb(244 63 94 / 0.35); }
+
+.document-editor .tiptap .ow-pending-old {
+  border-left: 3px solid rgb(251 113 133);
+  background: rgb(244 63 94 / 0.10);
+  padding: 0.25rem 0 0.25rem 0.75rem;
+  text-decoration: line-through;
+  color: rgb(var(--slate-400));
+}
+
+.document-editor .tiptap .ow-pending-old > :last-child { margin-bottom: 0; }
+
 .document-editor .tiptap blockquote {
   margin: 0 0 1rem;
   border-left: 3px solid rgb(var(--accent-400));
