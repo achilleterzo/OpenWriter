@@ -733,7 +733,7 @@ export default function App() {
             )}
             {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} />}
             {sideTab === 'notes' && (editors[contextTab?.id]
-              ? <NotesPanel noteView={noteView} onNoteViewChange={setNoteView} search={noteSearch} onSearchChange={setNoteSearch} tab={contextTab} editor={editors[contextTab.id]} project={project} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} />
+              ? <NotesPanel noteView={noteView} onNoteViewChange={(view) => { setNoteView(view); setActiveNoteId(null) }} search={noteSearch} onSearchChange={setNoteSearch} tab={contextTab} editor={editors[contextTab.id]} project={project} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} />
               : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>)}
             {sideTab === 'memory' && <MemoryPanel project={project} memoryVersion={memoryVersion} activePath={contextTab?.filePath ? relativeToProject(project, contextTab.filePath) : null} onOpenFile={(relative) => openFromExplorer(`${project}/${relative}`)} onStatus={setStatus} />}
             {sideTab === 'history' && (
@@ -763,7 +763,7 @@ export default function App() {
             contextPins={contextPins}
             onContextPinsChange={setContextPins}
             toolBridge={toolBridge}
-            request={chatRequest}
+            request={chatRequest} onRequestHandled={() => setChatRequest(null)}
             onOpenNote={selectNote}
             project={project}
             settingsVersion={settingsVersion}

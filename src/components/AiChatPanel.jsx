@@ -418,7 +418,7 @@ const ChatInput = forwardRef(function ChatInput({ busy, suggestion, onSend, onSt
   )
 })
 
-export default function AiChatPanel({ editor, contextTab, openDocuments = [], contextPins, onContextPinsChange, toolBridge, request, onOpenNote, project, settingsVersion, conversationId, onConversationChange, onOpenSettings }) {
+export default function AiChatPanel({ editor, contextTab, openDocuments = [], contextPins, onContextPinsChange, toolBridge, request, onRequestHandled, onOpenNote, project, settingsVersion, conversationId, onConversationChange, onOpenSettings }) {
   const [settings, setSettings] = useState(null)
   const [capabilities, setCapabilities] = useState(null)
   const [viewer, setViewer] = useState(null)
@@ -613,6 +613,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   useEffect(() => {
     if (!request || handledRequest.current === request.id || busy || !enabled || !settings) return
     handledRequest.current = request.id
+    // Consumata: altrimenti, rimontando il pannello (es. dopo le impostazioni), la stessa richiesta ripartirebbe da sola.
+    onRequestHandled?.()
     send(request.text, request.attachment)
   })
 
