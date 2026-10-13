@@ -52,7 +52,7 @@ function createTab(document = null, id = crypto.randomUUID()) {
   }
   // Solo i Markdown si possono risalvare nello stesso file: DOCX e PDF diventano nuovi documenti.
   const savable = document.format === 'markdown'
-  return { id, filePath: savable ? document.filePath : null, sourcePath: document.filePath, title: baseName(document.filePath), content: document.content, contentType: document.contentType, dirty: false }
+  return { id, filePath: savable ? document.filePath : null, sourcePath: document.filePath, title: baseName(document.filePath), content: document.content, contentType: document.contentType, dirty: false, ...(document.convertTo ? { convertTo: document.convertTo } : {}) }
 }
 
 // La scheda del browser non è un documento: non ha editor, file né bozze, e non viene salvata nella sessione.
@@ -475,7 +475,7 @@ export default function App() {
       scheduleSave()
     },
     markSaved(id, filePath) {
-      setTabs((current) => current.map((tab) => (tab.id === id ? { ...tab, filePath, sourcePath: filePath, title: baseName(filePath), dirty: false } : tab)))
+      setTabs((current) => current.map((tab) => (tab.id === id ? { ...tab, filePath, sourcePath: filePath, title: baseName(filePath), dirty: false, convertTo: undefined } : tab)))
       setExplorerRefresh((value) => value + 1)
       setHistoryVersion((value) => value + 1)
     },
@@ -667,6 +667,27 @@ export default function App() {
     for (const tab of tabs) if (isDocument(tab)) setAnnotations(editors[tab.id], tab.id === contextTab?.id ? notes.filter((note) => noteIsShown(note, noteView, activeNoteId, foldText(noteSearch.trim()))) : [], activeNoteId)
   }, [notes, activeNoteId, noteView, noteSearch, editors, tabs, contextTab?.id])
 
+  // DOCX o PDF aperti dal progetto: appena l'editor li ha caricati si salvano come Markdown con lo stesso nome, e la scheda passa a quel file.
+  const converting = useRef(new Set())
+  useEffect(() => {
+    for (const tab of tabs) {
+      const editor = editors[tab.id]
+      if (!tab.convertTo || !editor || converting.current.has(tab.id)) continue
+      converting.current.add(tab.id)
+      electronAPI.saveMarkdown({ filePath: tab.convertTo, markdown: editor.getMarkdown(), saveAs: false })
+        .then((saved) => {
+          if (saved) { workspaceRef.current.markSaved(tab.id, saved); setStatus(t('Converted to Markdown: {name}', { name: baseName(saved) })) }
+          else setTabs((current) => current.map((item) => (item.id === tab.id ? { ...item, convertTo: undefined } : item)))
+        })
+        .catch((error) => {
+          console.error(error)
+          setStatus(t('Could not convert the document to Markdown'))
+          setTabs((current) => current.map((item) => (item.id === tab.id ? { ...item, convertTo: undefined } : item)))
+        })
+        .finally(() => converting.current.delete(tab.id))
+    }
+  }, [tabs, editors])
+
   const selectNote = useCallback((id) => {
     setActiveNoteId(id)
     setSideTab('notes')
@@ -729,7 +750,7 @@ export default function App() {
             <h2 className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{sideTabs.find((item) => item.id === sideTab)?.label}</h2>
             {sideTab === 'projects' && <ProjectsPanel project={project} onOpenFile={(file) => openFromExplorer(file)} onOpen={openProject} onChoose={chooseProject} onCreate={createProject} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
             {sideTab === 'files' && (
-              <FileExplorer project={project} activePath={contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} />
+              <FileExplorer project={project} activePath={contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} />
             )}
             {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} />}
             {sideTab === 'notes' && (editors[contextTab?.id]
@@ -770,6 +791,7 @@ export default function App() {
             conversationId={conversationId}
             onConversationChange={setConversationId}
             onOpenSettings={() => openSettings('ai')}
+            onOpenProjects={() => setSideTab('projects')}
           />
         </aside>
       </div>
@@ -785,7 +807,7 @@ export default function App() {
         </div>
       )}
       {aboutOpen && <AboutDialog version={appVersion} release={updateRelease} checkOnOpen={aboutCheck} onCheck={() => checkForUpdate(false)} onClose={() => setAboutOpen(false)} />}
-      {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} onChooseProject={chooseProject} onOpenFile={(file) => { setScreen('editor'); setSettingsVersion((value) => value + 1); openFromExplorer(file) }} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
+      {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} version={appVersion} release={updateRelease} onCheckUpdate={() => checkForUpdate(false)} onChooseProject={chooseProject} onOpenFile={(file) => { setScreen('editor'); setSettingsVersion((value) => value + 1); openFromExplorer(file) }} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
     </ContextMenuContext.Provider>
   )
 }
