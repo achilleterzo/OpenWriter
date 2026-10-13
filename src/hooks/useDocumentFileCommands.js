@@ -23,15 +23,7 @@ export default function useDocumentFileCommands({ activeTab, getEditor, workspac
         if (!editor) return undefined
 
         if (command === 'save' || command === 'save-as') {
-          const savedPath = await electronAPI.saveMarkdown({
-            filePath: activeTab.filePath,
-            markdown: editor.getMarkdown(),
-            saveAs: command === 'save-as',
-          })
-          if (savedPath) {
-            workspace.markSaved(activeTab.id, savedPath)
-            onStatusChange(t('Saved'))
-          }
+          if (await workspace.saveTab(activeTab.id, { saveAs: command === 'save-as' })) onStatusChange(t('Saved'))
         }
 
         if (command === 'export-docx') {

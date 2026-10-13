@@ -8,6 +8,7 @@ import DocumentToolbar from './DocumentToolbar.jsx'
 import FindBar from './FindBar.jsx'
 import { Annotations } from '../lib/annotationExtension.js'
 import { Search } from '../lib/searchExtension.js'
+import { KeepSelection } from '../lib/keepSelectionExtension.js'
 import { DocumentImage } from '../lib/imageExtension.js'
 import Link from '@tiptap/extension-link'
 import { mergeAttributes } from '@tiptap/core'
@@ -32,7 +33,14 @@ const DocumentLink = Link.configure({ openOnClick: false }).extend({
   },
 })
 
-export default function DocumentPane({ tab, project, active, findRequest, onReady, onDirty, onNoteSelect, onStatus, onOpenLink }) {
+export default function DocumentPane({ tab, project, active, findRequest, onReady, onDirty, onNoteSelect, onStatus, onOpenLink, onSave }) {
+  // Vista sorgente: il Markdown grezzo del documento in un campo di testo. È solo un modo di lavorare o copiare il testo:
+  // note, assistente e ricerca restano sull'editor visuale, che si aggiorna man mano che si scrive.
+  const [sourceOpen, setSourceOpen] = useState(false)
+  const [sourceText, setSourceText] = useState('')
+  const sourceTimer = useRef(null)
+  const sourceLatest = useRef('')
+  const applyingSource = useRef(false)
   const [findOpen, setFindOpen] = useState(false)
   const [replaceMode, setReplaceMode] = useState(false)
   const [focusToken, setFocusToken] = useState(0)
@@ -96,6 +104,7 @@ export default function DocumentPane({ tab, project, active, findRequest, onRead
       Markdown,
       Annotations.configure({ onSelect: (id) => onNoteSelect?.(id) }),
       Search,
+      KeepSelection,
     ],
     content: tab.content,
     contentType: tab.contentType,
@@ -104,6 +113,58 @@ export default function DocumentPane({ tab, project, active, findRequest, onRead
 
   const editorRef = useRef(null)
   editorRef.current = editor
+
+  function applySource(text) {
+    const current = editorRef.current
+    if (!current) return
+    applyingSource.current = true
+    try {
+      if (text.trim()) current.chain().insertContentAt({ from: 0, to: current.state.doc.content.size }, text, { contentType: 'markdown' }).run()
+      else current.chain().clearContent(true).run()
+    } finally {
+      applyingSource.current = false
+    }
+  }
+
+  function flushSource() {
+    if (sourceTimer.current === null) return
+    clearTimeout(sourceTimer.current)
+    sourceTimer.current = null
+    applySource(sourceLatest.current)
+  }
+
+  function toggleSource() {
+    if (sourceOpen) {
+      flushSource()
+      setSourceOpen(false)
+    } else {
+      const text = editorRef.current.getMarkdown()
+      sourceLatest.current = text
+      setSourceText(text)
+      setSourceOpen(true)
+      setFindOpen(false)
+    }
+  }
+
+  function editSource(text) {
+    setSourceText(text)
+    sourceLatest.current = text
+    clearTimeout(sourceTimer.current)
+    sourceTimer.current = setTimeout(() => { sourceTimer.current = null; applySource(text) }, 500)
+  }
+
+  // Se il documento cambia per altre vie mentre la vista sorgente è aperta (per esempio le modifiche dell'assistente), il testo si aggiorna.
+  useEffect(() => {
+    if (!editor || !sourceOpen) return undefined
+    const refresh = () => {
+      if (applyingSource.current || sourceTimer.current !== null) return
+      const text = editor.getMarkdown()
+      sourceLatest.current = text
+      setSourceText(text)
+    }
+    editor.on('update', refresh)
+    return () => editor.off('update', refresh)
+  }, [editor, sourceOpen])
 
   async function pickImage() {
     const imagePath = await electronAPI.pickImage()
@@ -139,10 +200,19 @@ export default function DocumentPane({ tab, project, active, findRequest, onRead
 
   return (
     <div className={active ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
-      <DocumentToolbar editor={editor} onImage={pickImage} onFind={() => { if (findOpen) closeFind(); else { setFindOpen(true); setFocusToken((value) => value + 1) } }} findOpen={findOpen} />
+      <DocumentToolbar editor={editor} onSave={onSave} dirty={tab.dirty} sourceOpen={sourceOpen} onToggleSource={toggleSource} onCopySource={() => navigator.clipboard.writeText(sourceLatest.current)} onImage={pickImage} onFind={() => { if (findOpen) closeFind(); else { setFindOpen(true); setFocusToken((value) => value + 1) } }} findOpen={findOpen} />
       <div className="relative min-h-0 flex-1">
-        {findOpen && <FindBar editor={editor} replaceMode={replaceMode} onReplaceMode={setReplaceMode} focusToken={focusToken} onClose={closeFind} />}
-        <div className="h-full overflow-y-auto" data-document-scroll={tab.id}>
+        {findOpen && !sourceOpen && <FindBar editor={editor} replaceMode={replaceMode} onReplaceMode={setReplaceMode} focusToken={focusToken} onClose={closeFind} />}
+        {sourceOpen && (
+          <textarea
+            value={sourceText}
+            spellCheck={false}
+            aria-label={t('Markdown source')}
+            className="document-source h-full w-full resize-none border-0 bg-transparent p-6 font-mono text-sm leading-6 text-slate-200 outline-none"
+            onChange={(event) => editSource(event.target.value)}
+          />
+        )}
+        <div className={`h-full overflow-y-auto ${sourceOpen ? 'hidden' : ''}`} data-document-scroll={tab.id}>
           <EditorContent editor={editor} className="document-editor mx-auto" />
         </div>
       </div>

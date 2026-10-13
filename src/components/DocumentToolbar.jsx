@@ -1,6 +1,9 @@
 import {
   Bold,
+  Check,
   Code2,
+  Copy,
+  FileCode,
   Image as ImageIcon,
   Italic,
   Link as LinkIcon,
@@ -9,6 +12,7 @@ import {
   Minus,
   Quote,
   Redo2,
+  Save,
   Search,
   Strikethrough,
   Undo2,
@@ -17,10 +21,12 @@ import { useEditorState } from '@tiptap/react'
 import { ToolbarButton, ToolbarDivider } from './ToolbarButton.jsx'
 import { t } from '../i18n/index.js'
 import { useDialogs } from './Dialogs.jsx'
+import { useState } from 'react'
 
 const headingLevels = [1, 2, 3, 4, 5, 6, 7]
 
-export default function DocumentToolbar({ editor, onImage, onFind, findOpen }) {
+export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onSave, dirty, sourceOpen, onToggleSource, onCopySource }) {
+  const [copied, setCopied] = useState(false)
   const active = useEditorState({
     editor,
     selector: ({ editor: currentEditor }) => ({
@@ -51,8 +57,27 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen }) {
     if (url) editor.chain().focus().setLink({ href: url }).run()
   }
 
+  const saveButton = (
+      <ToolbarButton label={t('Save (Ctrl+S)')} active={Boolean(dirty)} onClick={onSave}><Save size={17} /></ToolbarButton>
+  )
+
+  // Vista sorgente: la barra mostra solo salvataggio, copia e ritorno alla vista formattata.
+  if (sourceOpen) {
+    return (
+      <div className="flex flex-wrap items-center gap-1 border-b border-slate-800 bg-slate-950/40 p-3">
+        {saveButton}
+        <ToolbarDivider />
+        <ToolbarButton label={copied ? t('Copied') : t('Copy all')} onClick={() => { onCopySource(); setCopied(true); setTimeout(() => setCopied(false), 1500) }}>{copied ? <Check size={17} /> : <Copy size={17} />}</ToolbarButton>
+        <span className="ml-2 text-xs text-slate-500">{t('Markdown source: changes are applied to the document as you type.')}</span>
+        <span className="ml-auto"><ToolbarButton label={t('Back to the formatted view')} active onClick={onToggleSource}><FileCode size={17} /></ToolbarButton></span>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-1 border-b border-slate-800 bg-slate-950/40 p-3">
+      {saveButton}
+      <ToolbarDivider />
       <label className="sr-only" htmlFor="block-type">{t('Block type')}</label>
       <select
         id="block-type"
@@ -90,6 +115,7 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen }) {
 
       <ToolbarDivider />
       <ToolbarButton label={t('Find and replace (Ctrl+F)')} active={findOpen} onClick={onFind}><Search size={17} /></ToolbarButton>
+      <ToolbarButton label={t('Markdown source')} onClick={onToggleSource}><FileCode size={17} /></ToolbarButton>
     </div>
   )
 }
