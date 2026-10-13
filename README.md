@@ -104,4 +104,10 @@ Please keep changes focused and include a clear description of the user-facing b
 
 ## License
 
-This project is currently under active development. Licensing information will be added before the first public release.
+OpenWriter is released under the MIT License. See [LICENSE](LICENSE) for the full license terms.
+
+## Support
+
+If you find this project useful and want to support its development:
+
+[Buy me a coffee](https://buymeacoffee.com/achilleterb)
