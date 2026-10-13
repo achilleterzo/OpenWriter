@@ -258,6 +258,23 @@ export default function AiProviderSettings() {
             </select>
           </label>
 
+          {provider === 'codex' && (
+            <details className="rounded-lg border border-slate-800 p-3 text-sm text-slate-300">
+              <summary className="cursor-pointer select-none text-slate-300">{t('Advanced')}</summary>
+              <label className="mt-3 block">{t('Codex sandbox')}
+                <select className={fieldClass} value={config.sandbox || 'workspace-write'} onChange={(event) => updateConfig({ sandbox: event.target.value })}>
+                  <option value="read-only">{t('Read-only')}</option>
+                  <option value="workspace-write">{t('Workspace write (default)')}</option>
+                  <option value="danger-full-access">{t('No sandbox')}</option>
+                </select>
+              </label>
+              <p className="mt-2 text-xs text-slate-500">{t('OpenWriter already turns off Codex\'s own shell, apps and browser: the assistant works only through OpenWriter\'s tools, which run in the app, outside this sandbox. The sandbox only limits commands Codex would run by itself.')}</p>
+              {config.sandbox === 'danger-full-access' && (
+                <p className="mt-2 text-xs text-amber-400">{t('Without a sandbox, if Codex ever runs commands, they would have full access to your files. Use it only if the sandbox gets in the way.')}</p>
+              )}
+            </details>
+          )}
+
           <fieldset className="grid gap-3 rounded-lg border border-slate-800 p-4">
             <legend className="px-1 text-sm text-slate-300">{t('Assistant tools')}</legend>
             {toolOptions.map(({ key, label, help }) => (

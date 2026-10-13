@@ -7,6 +7,7 @@ const path = require('node:path')
 const { t } = require('./i18n.cjs')
 
 const PROVIDERS = ['ollama', 'ollama-cloud', 'codex', 'claude']
+const CODEX_SANDBOXES = ['read-only', 'workspace-write', 'danger-full-access']
 const LABELS = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', codex: 'Codex', claude: 'Claude' }
 // Livelli di ragionamento supportati da ciascun provider; il primo è il predefinito.
 const REASONING_LEVELS = {
@@ -285,6 +286,8 @@ function streamJson(urlString, { headers = {} } = {}, body, onObject, signal) {
 function normalizeProviderConfig(provider, value = {}) {
   const config = value && typeof value === 'object' ? value : {}
   const normalized = { model: String(config.model || ''), reasoning: REASONING_LEVELS[provider].includes(config.reasoning) ? config.reasoning : REASONING_LEVELS[provider][0] }
+  // Sandbox di Codex (solo per Codex): impostazione avanzata, predefinito workspace-write.
+  if (provider === 'codex') normalized.sandbox = CODEX_SANDBOXES.includes(config.sandbox) ? config.sandbox : 'workspace-write'
   if (provider === 'ollama') normalized.endpoint = String(config.endpoint || 'http://localhost:11434').replace(/\/$/, '')
   return normalized
 }
@@ -423,7 +426,8 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
         return file
       })
       // Codex lavora solo con gli strumenti di OpenWriter: niente shell, app o browser propri (senza shell non può scrivere nulla da solo; il sandbox "read-only" invece gli faceva dire che l'ambiente è in sola lettura e rifiutare le modifiche degli strumenti di OpenWriter), né i server MCP della configurazione dell'utente (l'autenticazione resta quella di CODEX_HOME).
-      const args = ['exec', '--json', '--sandbox', 'workspace-write', '--skip-git-repo-check', '--ignore-user-config', '--disable', 'shell_tool', '--disable', 'apps', '--disable', 'browser_use', '--disable', 'computer_use', ...(model ? ['--model', model] : []), ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : []), ...(imageFiles.length ? ['--image', ...imageFiles, '--'] : []), '-']
+      const sandbox = CODEX_SANDBOXES.includes(providerConfig(provider).sandbox) ? providerConfig(provider).sandbox : 'workspace-write'
+      const args = ['exec', '--json', '--sandbox', sandbox, '--skip-git-repo-check', '--ignore-user-config', '--disable', 'shell_tool', '--disable', 'apps', '--disable', 'browser_use', '--disable', 'computer_use', ...(model ? ['--model', model] : []), ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : []), ...(imageFiles.length ? ['--image', ...imageFiles, '--'] : []), '-']
       // Traccia del turno, scritta nel log se Codex non risponde con testo o fallisce.
       const trace = []
       let stderrTail = ''
