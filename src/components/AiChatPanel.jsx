@@ -51,6 +51,18 @@ const ellipsize = (value, limit) => (value.length > limit ? `${value.slice(0, li
 const blankConversation = () => ({ id: null, title: '', parentId: null, branchedAt: null, contextFrom: [], messages: [] })
 const SHORT_DATE = { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }
 
+// Lingua dell'assistente o dei documenti: vale quella impostata dal progetto più vicino al documento.
+const chainValue = (chain, key) => [...chain].reverse().map((owner) => owner[key]).find(Boolean) || ''
+
+// Istruzioni di progetto per il documento attivo: tutte le `.ow` coinvolte, dalla più esterna alla più vicina (che prevale).
+function chainInstructions(chain) {
+  const blocks = chain
+    .map((owner) => ({ owner, text: [owner.context, ...(owner.extraContext || []).map((file) => `## ${file.name}\n${file.text}`)].filter((part) => part && part.trim()).join('\n\n') }))
+    .filter((block) => block.text)
+  if (blocks.length <= 1) return blocks[0]?.text || ''
+  return blocks.map(({ owner, text }, index) => `# Instructions of the ${index === blocks.length - 1 ? 'project the document belongs to (more specific: it prevails on conflicts)' : 'enclosing project'} "${owner.name}"\n${text}`).join('\n\n').slice(0, 40000)
+}
+
 const systemPrompt = (language, projectContext = '', previousChats = [], toolsText = '', documentLanguage = '', memoryText = '') => [
   'You are the writing assistant built into OpenWriter, a Markdown document editor.',
   `Reply in ${language}, unless asked otherwise. Be concise.`,
@@ -418,7 +430,7 @@ const ChatInput = forwardRef(function ChatInput({ busy, suggestion, onSend, onSt
   )
 })
 
-export default function AiChatPanel({ editor, contextTab, openDocuments = [], contextPins, onContextPinsChange, toolBridge, request, onRequestHandled, onOpenNote, project, settingsVersion, conversationId, onConversationChange, onOpenSettings }) {
+export default function AiChatPanel({ editor, contextTab, openDocuments = [], contextPins, onContextPinsChange, toolBridge, request, onRequestHandled, onOpenNote, project, settingsVersion, conversationId, onConversationChange, onOpenSettings, onOpenProjects }) {
   const [settings, setSettings] = useState(null)
   const [capabilities, setCapabilities] = useState(null)
   const [viewer, setViewer] = useState(null)
@@ -426,6 +438,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const [models, setModels] = useState([])
   const pendingAskRef = useRef(null)
   const [projectSettings, setProjectSettings] = useState(null)
+  const [contextChain, setContextChain] = useState([])
   const [conversations, setConversations] = useState([])
   const [current, setCurrent] = useState(blankConversation)
   const [renaming, setRenaming] = useState(false)
@@ -473,6 +486,14 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     if (!project) { setProjectSettings(null); return }
     api.getProjectSettings().then(setProjectSettings).catch(() => setProjectSettings(null))
   }, [project, settingsVersion])
+
+  // Contesto del documento attivo: cambia col documento (un sotto-progetto ha le sue istruzioni, oltre a quelle del padre).
+  useEffect(() => {
+    if (!project) { setContextChain([]); return undefined }
+    let cancelled = false
+    api.getContextChain(contextTab?.filePath || null).then((chain) => { if (!cancelled) setContextChain(chain) }).catch(() => { if (!cancelled) setContextChain([]) })
+    return () => { cancelled = true }
+  }, [project, settingsVersion, contextTab?.filePath])
 
   // Carica le conversazioni del progetto e riapre l'ultima in uso. Senza progetto la chat resta solo in memoria.
   useEffect(() => {
@@ -690,14 +711,15 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     }
 
     const toolSettings = settings.tools || {}
+    // Gli strumenti dell'assistente richiedono un progetto aperto: senza, restano tutti disattivati.
     const toolsOn = {
       files: Boolean(toolSettings.files && project),
       create: Boolean(toolSettings.create && project),
       notes: Boolean(toolSettings.notes && project),
-      edit: Boolean(toolSettings.edit && (editor || project)),
-      web: Boolean(toolSettings.web),
-      vision: Boolean(toolSettings.vision && capabilities?.vision),
-      ask: Boolean(toolSettings.ask),
+      edit: Boolean(toolSettings.edit && project),
+      web: Boolean(toolSettings.web && project),
+      vision: Boolean(toolSettings.vision && capabilities?.vision && project),
+      ask: Boolean(toolSettings.ask && project),
       memory: Boolean(toolSettings.memory && project),
     }
     const anyTool = Object.values(toolsOn).some(Boolean)
@@ -767,10 +789,14 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
           selection && `Text selected by the user:\n"""\n${selection}\n"""`,
         ].filter(Boolean).join('\n\n')
         // La memoria si rilegge a ogni passaggio: l'assistente può averla aggiornata nel frattempo.
+        // Il contesto si rilegge all'invio: le istruzioni possono essere cambiate dopo l'apertura del documento.
+        let chain = contextChain
+        try { chain = await api.getContextChain(contextTab?.filePath || null) } catch { /* si usa l'ultimo noto */ }
         let memoryText = ''
         if (toolsOn.memory) {
           try {
-            const entries = await api.listMemory()
+            const origins = new Set(chain.map((owner) => owner.path).filter((value) => value !== null))
+            const entries = (await api.listMemory()).filter((entry) => !chain.length || origins.has(entry.origin))
             memoryText = entries.map((entry) => `- [${entry.id}] ${entry.author}: ${entry.title ? `${entry.title} — ` : ''}${entry.text}${entry.files?.length ? ` (files: ${entry.files.join(', ')})` : ''}`).join('\n').slice(0, 10000)
           } catch { /* senza memoria si lavora comunque */ }
         }
@@ -779,11 +805,11 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
           // Un modello che rifiuta gli strumenti nativi viene ricordato e da lì in poi usa il formato testuale.
           const attemptReply = async (native) => {
             const system = systemPrompt(
-              projectSettings?.ai?.language || settings.language || languageEnglishName(),
-              [projectSettings?.ai?.context, ...(projectSettings?.ai?.extraContext || []).map((file) => `## ${file.name}\n${file.text}`)].filter((part) => part && part.trim()).join('\n\n'),
+              chainValue(chain, 'language') || projectSettings?.ai?.language || settings.language || languageEnglishName(),
+              chain.length ? chainInstructions(chain) : [projectSettings?.ai?.context, ...(projectSettings?.ai?.extraContext || []).map((file) => `## ${file.name}\n${file.text}`)].filter((part) => part && part.trim()).join('\n\n'),
               previous,
               anyTool ? toolsPrompt(toolsOn, { documentPath: toolBridge.activeDocumentPath(), native, maxSteps }) : '',
-              projectSettings?.ai?.documentLanguage || '',
+              chainValue(chain, 'documentLanguage') || projectSettings?.ai?.documentLanguage || '',
               memoryText,
             )
             const loadedImages = await loadRecentImages(conversation.messages)
@@ -916,7 +942,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400"><Sparkles size={13} className="text-accent-400" /> {t('AI assistant')}</h2>
-            {enabled && <p className="truncate text-xs text-slate-500">{providerLabel}{model ? ` · ${model}` : ''}{projectSettings?.ai?.context?.trim() ? t(' · project context') : ''}</p>}
+            {enabled && <p className="truncate text-xs text-slate-500">{providerLabel}{model ? ` · ${model}` : ''}{(contextChain.length ? contextChain.some((owner) => owner.context?.trim()) : projectSettings?.ai?.context?.trim()) ? t(' · project context') : ''}</p>}
           </div>
           <div className="flex shrink-0 gap-0.5">
             <button type="button" aria-label={t('New conversation')} title={t('New conversation')} disabled={busy || !current.messages.length} className={iconButton} onClick={() => openConversation(null)}><Plus size={14} /></button>
@@ -957,7 +983,13 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         )}
       </header>
 
-      {!ai || !settings ? null : !enabled ? (
+      {!ai || !settings ? null : !project ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+          <FolderOpen size={30} className="text-slate-500" />
+          <p className="text-sm text-slate-400">{t('The assistant works inside a project: conversations, notes and document history are saved in its folder. Open or create a project to use it.')}</p>
+          <button type="button" className="rounded-md bg-accent-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-accent-500" onClick={onOpenProjects}>{t('Open or create a project')}</button>
+        </div>
+      ) : !enabled ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
           <Sparkles size={30} className="text-slate-500" />
           <p className="text-sm text-slate-400">{t('The AI assistant is turned off. Enable it and choose a provider in the settings.')}</p>
@@ -967,7 +999,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         <>
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
             {!current.messages.length && !busy && (
-              <p className="m-auto max-w-[16rem] text-center text-sm text-slate-500">{t('Ask to proofread, rewrite or discuss the document. If you select some text, the assistant works on that.')}{!project && t(' Without an open project the conversation is not saved.')}
+              <p className="m-auto max-w-[16rem] text-center text-sm text-slate-500">{t('Ask to proofread, rewrite or discuss the document. If you select some text, the assistant works on that.')}
               </p>
             )}
             {current.messages.map((message, index) => <Message key={index} message={message} index={index} editor={editor} onBranch={canBranch ? onBranchStable : null} onEdit={message.role === 'user' && !busy ? onEditStable : null} onOpenImage={setViewer} onOpenNote={onOpenNote} />)}
