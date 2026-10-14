@@ -833,5 +833,13 @@
   "Link updated": "Collegamento aggiornato",
   "Could not update the link: {message}": "Impossibile aggiornare il collegamento: {message}",
   "Link not found": "Collegamento non trovato",
-  "Choose the file this link should point to": "Scegli il file a cui deve puntare il collegamento"
+  "Choose the file this link should point to": "Scegli il file a cui deve puntare il collegamento",
+  "Save all": "Salva tutto",
+  "Save all modified documents ({count})": "Salva tutti i documenti modificati ({count})",
+  "No documents to save": "Nessun documento da salvare",
+  "Save {count} documents? {pending} of them have edits by the assistant still to review: saving accepts them all.": "Salvare {count} documenti? In {pending} ci sono modifiche dell'assistente ancora da rivedere: salvando vengono accettate tutte.",
+  "Save and accept all": "Salva e accetta tutto",
+  "Saved {count} documents; {skipped} not saved yet (they have no file)": "Salvati {count} documenti; {skipped} non ancora salvati (non hanno un file)",
+  "Saved {count} documents": "Salvati {count} documenti",
+  "Preview: it is replaced by the next file you open, until you work on it. Double-click to keep it.": "Anteprima: viene sostituita dal prossimo file che apri, finché non ci lavori. Doppio clic per tenerla."
 }

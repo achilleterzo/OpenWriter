@@ -833,5 +833,13 @@
   "Link updated": "Vínculo actualizado",
   "Could not update the link: {message}": "No se pudo actualizar el vínculo: {message}",
   "Link not found": "Vínculo no encontrado",
-  "Choose the file this link should point to": "Elige el archivo al que debe apuntar el vínculo"
+  "Choose the file this link should point to": "Elige el archivo al que debe apuntar el vínculo",
+  "Save all": "Guardar todo",
+  "Save all modified documents ({count})": "Guardar todos los documentos modificados ({count})",
+  "No documents to save": "No hay documentos que guardar",
+  "Save {count} documents? {pending} of them have edits by the assistant still to review: saving accepts them all.": "¿Guardar {count} documentos? {pending} tienen cambios del asistente pendientes de revisar: al guardar se aceptan todos.",
+  "Save and accept all": "Guardar y aceptar todo",
+  "Saved {count} documents; {skipped} not saved yet (they have no file)": "{count} documentos guardados; {skipped} aún sin guardar (no tienen archivo)",
+  "Saved {count} documents": "{count} documentos guardados",
+  "Preview: it is replaced by the next file you open, until you work on it. Double-click to keep it.": "Vista previa: la sustituye el siguiente archivo que abras, hasta que trabajes en ella. Doble clic para conservarla."
 }

@@ -11,6 +11,7 @@ import ProjectsPanel from './components/ProjectsPanel.jsx'
 import MemoryPanel from './components/MemoryPanel.jsx'
 import AboutDialog from './components/AboutDialog.jsx'
 import { useDialogs } from './components/Dialogs.jsx'
+import { acceptAll, getPending } from './lib/pendingChangesExtension.js'
 import OutlinePanel from './components/OutlinePanel.jsx'
 import PanelResizer from './components/PanelResizer.jsx'
 import SettingsScreen from './components/SettingsScreen.jsx'
@@ -389,7 +390,9 @@ export default function App() {
       setTabs((current) => [...current, tab])
       setActiveId(tab.id)
     },
-    openDocument(document) {
+    // `preview`: aperto con un clic dall'elenco dei file, come anteprima: il prossimo file aperto così prende il suo posto, finché non ci si lavora
+    // (modifica, scorrimento, clic nel testo, doppio clic, fissare la scheda). `permanent`: se è già un'anteprima, la rende una scheda a tutti gli effetti.
+    openDocument(document, { preview = false, permanent = false } = {}) {
       const existing = latest.current.tabs.find((tab) => tab.sourcePath === document.filePath)
       if (existing?.closed) {
         // Scheda fissata chiusa: si ricarica il documento al suo posto.
@@ -397,9 +400,20 @@ export default function App() {
         setActiveId(existing.id)
         return
       }
-      if (existing) { setActiveId(existing.id); return }
-      const tab = createTab(document)
-      setTabs((current) => [...current, tab])
+      if (existing) {
+        if (permanent && existing.preview) setTabs((current) => current.map((tab) => (tab.id === existing.id ? { ...tab, preview: false } : tab)))
+        setActiveId(existing.id)
+        return
+      }
+      const tab = { ...createTab(document), ...(preview && !permanent ? { preview: true } : {}) }
+      setTabs((current) => {
+        if (tab.preview) {
+          // L'anteprima precedente (mai toccata, non fissata) si chiude: la nuova prende il suo posto.
+          const index = current.findIndex((item) => isDocument(item) && item.preview && !item.dirty && !item.pinned && !item.closed)
+          if (index !== -1) return current.map((item, position) => (position === index ? tab : item))
+        }
+        return [...current, tab]
+      })
       setActiveId(tab.id)
       setStatus(t('Opened'))
     },
@@ -484,7 +498,7 @@ export default function App() {
     togglePin(id) {
       // Staccare una scheda fissata già chiusa la elimina (non ha documento da tenere aperto).
       if (latest.current.tabs.find((tab) => tab.id === id)?.closed) { setTabs((current) => current.filter((tab) => tab.id !== id)); return }
-      setTabs((current) => keepPinnedFirst(current.map((tab) => (tab.id === id ? { ...tab, pinned: !tab.pinned } : tab))))
+      setTabs((current) => keepPinnedFirst(current.map((tab) => (tab.id === id ? { ...tab, pinned: !tab.pinned, preview: false } : tab))))
     },
     // Trascinamento: la scheda `id` passa davanti a `beforeId` (restando nel proprio gruppo, fissate o no).
     moveTab(id, beforeId) {
@@ -515,8 +529,12 @@ export default function App() {
       setTabs((current) => (current.some((tab) => tab.id === id && tab.dirty) ? current.map((tab) => (tab.id === id ? { ...tab, dirty: false } : tab)) : current))
       scheduleSave()
     },
+    // L'utente (o l'assistente) ha lavorato sul documento: l'anteprima diventa una scheda a tutti gli effetti.
+    promoteTab(id) {
+      setTabs((current) => (current.some((tab) => tab.id === id && tab.preview) ? current.map((tab) => (tab.id === id ? { ...tab, preview: false } : tab)) : current))
+    },
     markDirty(id) {
-      setTabs((current) => (current.some((tab) => tab.id === id && !tab.dirty) ? current.map((tab) => (tab.id === id ? { ...tab, dirty: true } : tab)) : current))
+      setTabs((current) => (current.some((tab) => tab.id === id && !tab.dirty) ? current.map((tab) => (tab.id === id ? { ...tab, dirty: true, preview: false } : tab)) : current))
       scheduleSave()
     },
     markSaved(id, filePath) {
@@ -767,11 +785,40 @@ export default function App() {
     else if (target.kind === 'unresolved') setStatus(t('Save the document first to follow relative links'))
   }
   const workspaceRef = useRef(null)
+
+  // Documenti aperti con modifiche da salvare e già associati a un file (gli altri chiederebbero dove salvare, uno per uno).
+  const unsavedTabs = (currentTabs) => currentTabs.filter((tab) => isLive(tab) && tab.dirty && tab.filePath)
+
+  // Salva tutte le schede modificate. Le modifiche dell'assistente ancora da rivedere si accettano: con conferma, perché è una scelta irreversibile
+  // per il segno "da rivedere" (il testo precedente resta comunque nella cronologia).
+  async function saveAllTabs() {
+    const { tabs: currentTabs, editors: currentEditors } = latest.current
+    const targets = unsavedTabs(currentTabs).filter((tab) => currentEditors[tab.id])
+    const skipped = currentTabs.filter((tab) => isLive(tab) && tab.dirty && !tab.filePath).length
+    if (!targets.length) { setStatus(t('No documents to save')); return }
+    const pending = targets.filter((tab) => getPending(currentEditors[tab.id].state).length)
+    if (pending.length) {
+      const message = t('Save {count} documents? {pending} of them have edits by the assistant still to review: saving accepts them all.', { count: targets.length, pending: pending.length })
+      if (!(await dialogsRef.current.confirm(message, { confirmLabel: t('Save and accept all') }))) return
+    }
+    let saved = 0
+    for (const tab of targets) {
+      const editor = latest.current.editors[tab.id]
+      if (!editor) continue
+      if (getPending(editor.state).length) acceptAll(editor)
+      if (await workspaceRef.current.saveTab(tab.id)) saved += 1
+    }
+    setStatus(skipped
+      ? t('Saved {count} documents; {skipped} not saved yet (they have no file)', { count: saved, skipped })
+      : t('Saved {count} documents', { count: saved }))
+  }
   workspaceRef.current = workspace
 
+  // `options`: { preview, permanent } valgono per le schede (vedi openDocument); il resto (es. { original }) va al processo principale.
   async function openFromExplorer(filePath, options) {
+    const { preview, permanent, ...ipcOptions } = options || {}
     try {
-      workspace.openDocument(await electronAPI.openDocumentPath(filePath, options))
+      workspace.openDocument(await electronAPI.openDocumentPath(filePath, ipcOptions), { preview, permanent })
     } catch (error) {
       console.error(error)
       setStatus(t('Could not open the file'))
@@ -834,11 +881,11 @@ export default function App() {
           </aside>
         )}
         <main className="flex min-w-0 flex-1 flex-col">
-          <TabBar tabs={tabs} activeId={activeTab.id} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
+          <TabBar tabs={tabs} onPromote={workspace.promoteTab} unsavedCount={unsavedTabs(tabs).length} onSaveAll={saveAllTabs} activeId={activeTab.id} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
             {tabs.map((tab) => (tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
-              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onNoteSelect={selectNote} />))}
+              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onNoteSelect={selectNote} />))}
           </section>
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>

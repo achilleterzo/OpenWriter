@@ -833,5 +833,13 @@
   "Link updated": "Verknüpfung aktualisiert",
   "Could not update the link: {message}": "Die Verknüpfung konnte nicht aktualisiert werden: {message}",
   "Link not found": "Verknüpfung nicht gefunden",
-  "Choose the file this link should point to": "Wähle die Datei, auf die die Verknüpfung zeigen soll"
+  "Choose the file this link should point to": "Wähle die Datei, auf die die Verknüpfung zeigen soll",
+  "Save all": "Alles speichern",
+  "Save all modified documents ({count})": "Alle geänderten Dokumente speichern ({count})",
+  "No documents to save": "Keine Dokumente zu speichern",
+  "Save {count} documents? {pending} of them have edits by the assistant still to review: saving accepts them all.": "{count} Dokumente speichern? Bei {pending} gibt es noch zu prüfende Änderungen des Assistenten: Beim Speichern werden alle akzeptiert.",
+  "Save and accept all": "Speichern und alles akzeptieren",
+  "Saved {count} documents; {skipped} not saved yet (they have no file)": "{count} Dokumente gespeichert; {skipped} noch nicht gespeichert (ohne Datei)",
+  "Saved {count} documents": "{count} Dokumente gespeichert",
+  "Preview: it is replaced by the next file you open, until you work on it. Double-click to keep it.": "Vorschau: Sie wird vom nächsten geöffneten Dokument ersetzt, bis du daran arbeitest. Doppelklick, um sie zu behalten."
 }

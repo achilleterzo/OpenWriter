@@ -833,5 +833,13 @@
   "Link updated": "Lien mis à jour",
   "Could not update the link: {message}": "Impossible de mettre à jour le lien : {message}",
   "Link not found": "Lien introuvable",
-  "Choose the file this link should point to": "Choisissez le fichier vers lequel le lien doit pointer"
+  "Choose the file this link should point to": "Choisissez le fichier vers lequel le lien doit pointer",
+  "Save all": "Tout enregistrer",
+  "Save all modified documents ({count})": "Enregistrer tous les documents modifiés ({count})",
+  "No documents to save": "Aucun document à enregistrer",
+  "Save {count} documents? {pending} of them have edits by the assistant still to review: saving accepts them all.": "Enregistrer {count} documents ? {pending} contiennent des modifications de l'assistant à vérifier : enregistrer les accepte toutes.",
+  "Save and accept all": "Enregistrer et tout accepter",
+  "Saved {count} documents; {skipped} not saved yet (they have no file)": "{count} documents enregistrés ; {skipped} pas encore enregistrés (sans fichier)",
+  "Saved {count} documents": "{count} documents enregistrés",
+  "Preview: it is replaced by the next file you open, until you work on it. Double-click to keep it.": "Aperçu : il est remplacé par le prochain fichier ouvert, tant que vous n'y travaillez pas. Double-clic pour le garder."
 }

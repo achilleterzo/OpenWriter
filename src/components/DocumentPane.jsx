@@ -38,7 +38,7 @@ const DocumentLink = Link.configure({ openOnClick: false }).extend({
   },
 })
 
-function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onNoteSelect, onStatus, onOpenLink, onSave }) {
+function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onInteract, onNoteSelect, onStatus, onOpenLink, onSave }) {
   // Vista sorgente: il Markdown grezzo del documento in un campo di testo. È solo un modo di lavorare o copiare il testo:
   // note, assistente e ricerca restano sull'editor visuale, che si aggiorna man mano che si scrive.
   const [sourceOpen, setSourceOpen] = useState(false)
@@ -136,6 +136,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
 
   const editorRef = useRef(null)
   editorRef.current = editor
+  const interact = () => { if (tab.preview) onInteract?.(tab.id) }
 
   // Quando la scheda non è modificata (appena aperta o salvata) quello che c'è nell'editor è il testo di riferimento.
   useEffect(() => {
@@ -250,7 +251,8 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
             onChange={(event) => editSource(event.target.value)}
           />
         )}
-        <div className={`h-full overflow-y-auto ${sourceOpen ? 'hidden' : ''}`} data-document-scroll={tab.id}>
+        {/* Qualunque operazione sul documento (anche uno scorrimento o un clic) toglie alla scheda lo stato di anteprima. */}
+        <div className={`h-full overflow-y-auto ${sourceOpen ? 'hidden' : ''}`} data-document-scroll={tab.id} onScroll={interact} onWheel={interact} onMouseDown={interact} onKeyDown={interact}>
           <EditorContent editor={editor} className="document-editor mx-auto" />
         </div>
       </div>

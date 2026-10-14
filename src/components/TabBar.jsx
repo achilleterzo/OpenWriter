@@ -1,9 +1,9 @@
 import { useContext, useRef, useState } from 'react'
-import { FileText, Globe, PanelRight, Pin, Plus, X } from 'lucide-react'
+import { FileText, Globe, PanelRight, Pin, Plus, SaveAll, X } from 'lucide-react'
 import { ContextMenuContext } from './ContextMenu.jsx'
 import { t } from '../i18n/index.js'
 
-export default function TabBar({ tabs, activeId, onSelect, onClose, onTogglePin, onMove, onNew, onNewBrowser, assistantOpen, onToggleAssistant }) {
+export default function TabBar({ tabs, onPromote, unsavedCount = 0, onSaveAll, activeId, onSelect, onClose, onTogglePin, onMove, onNew, onNewBrowser, assistantOpen, onToggleAssistant }) {
   const openMenu = useContext(ContextMenuContext)
   const dragging = useRef(null)
   const [dropTarget, setDropTarget] = useState(null)
@@ -33,10 +33,11 @@ export default function TabBar({ tabs, activeId, onSelect, onClose, onTogglePin,
               ].filter(Boolean) })
             }}
             onClick={() => onSelect(tab.id)}
+            onDoubleClick={() => { if (tab.preview) onPromote?.(tab.id) }}
             onAuxClick={(event) => { if (event.button === 1) onClose(tab.id) }}
           >
             {tab.kind === 'browser' ? <Globe size={14} className="shrink-0" /> : <FileText size={14} className="shrink-0" />}
-            <span className={`truncate ${tab.closed ? 'italic opacity-60' : ''}`}>{tab.title}</span>
+            <span className={`truncate ${tab.closed ? 'italic opacity-60' : tab.preview ? 'italic' : ''}`} title={tab.preview ? t('Preview: it is replaced by the next file you open, until you work on it. Double-click to keep it.') : undefined}>{tab.title}</span>
             {tab.kind !== 'browser' && (
               <button
                 type="button"
@@ -65,12 +66,18 @@ export default function TabBar({ tabs, activeId, onSelect, onClose, onTogglePin,
       <button type="button" aria-label={t('Open the browser')} title={t('New browser tab')} className="px-3 text-slate-500 transition hover:bg-slate-900 hover:text-slate-50" onClick={onNewBrowser}>
         <Globe size={16} />
       </button>
+      {unsavedCount > 0 && (
+        <button type="button" aria-label={t('Save all')} title={t('Save all modified documents ({count})', { count: unsavedCount })} className="relative ml-auto shrink-0 px-3 text-slate-400 transition hover:bg-slate-900 hover:text-slate-50" onClick={onSaveAll}>
+          <SaveAll size={16} />
+          <span className="absolute right-1 top-1 min-w-[14px] rounded-full bg-accent-500 px-1 text-center text-[9px] font-semibold leading-[14px] text-white">{unsavedCount}</span>
+        </button>
+      )}
       <button
         type="button"
         aria-label={t('AI assistant')}
         aria-pressed={assistantOpen}
         title={assistantOpen ? t('Hide AI assistant') : t('Show AI assistant')}
-        className={`sticky right-0 ml-auto shrink-0 border-l border-slate-800 bg-slate-950 px-3 transition ${assistantOpen ? 'text-accent-400' : 'text-slate-500 hover:text-slate-50'}`}
+        className={`sticky right-0 ${unsavedCount > 0 ? '' : 'ml-auto'} shrink-0 border-l border-slate-800 bg-slate-950 px-3 transition ${assistantOpen ? 'text-accent-400' : 'text-slate-500 hover:text-slate-50'}`}
         onClick={onToggleAssistant}
       >
         <PanelRight size={17} />

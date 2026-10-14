@@ -833,5 +833,13 @@
   "Link updated": "Ligação atualizada",
   "Could not update the link: {message}": "Não foi possível atualizar a ligação: {message}",
   "Link not found": "Ligação não encontrada",
-  "Choose the file this link should point to": "Escolhe o ficheiro para onde a ligação deve apontar"
+  "Choose the file this link should point to": "Escolhe o ficheiro para onde a ligação deve apontar",
+  "Save all": "Guardar tudo",
+  "Save all modified documents ({count})": "Guardar todos os documentos modificados ({count})",
+  "No documents to save": "Nenhum documento para guardar",
+  "Save {count} documents? {pending} of them have edits by the assistant still to review: saving accepts them all.": "Guardar {count} documentos? Em {pending} há alterações do assistente ainda por rever: ao guardar, todas são aceites.",
+  "Save and accept all": "Guardar e aceitar tudo",
+  "Saved {count} documents; {skipped} not saved yet (they have no file)": "{count} documentos guardados; {skipped} ainda não guardados (não têm ficheiro)",
+  "Saved {count} documents": "{count} documentos guardados",
+  "Preview: it is replaced by the next file you open, until you work on it. Double-click to keep it.": "Pré-visualização: é substituída pelo próximo ficheiro que abrires, até trabalhares nela. Duplo clique para a manter."
 }
