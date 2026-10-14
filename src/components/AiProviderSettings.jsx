@@ -184,7 +184,7 @@ export default function AiProviderSettings() {
       </div>
 
       {settings.aiEnabled && (
-        <div className="mt-6 grid gap-4">
+        <div className="mt-6 grid grid-cols-1 gap-4">
           <div className="grid gap-2">
             <span className="text-sm text-slate-300">{t('Provider')}</span>
             <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t('AI provider')}>

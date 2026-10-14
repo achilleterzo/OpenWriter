@@ -43,8 +43,8 @@ export default function AppearanceSettings() {
   }, [])
 
   return (
-    <div className="grid gap-6">
-      <section className="grid gap-6 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+    <div className="grid grid-cols-1 gap-6">
+      <section className="grid grid-cols-1 gap-6 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
         <h2 className="text-lg font-semibold">{t('Interface')}</h2>
         <Segmented label={t('Theme')} options={themes} value={appearance.theme} onChange={(theme) => updateAppearance({ theme })} />
         <div className="grid gap-2">
@@ -69,7 +69,7 @@ export default function AppearanceSettings() {
         </div>
       </section>
 
-      <section className="grid gap-6 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+      <section className="grid grid-cols-1 gap-6 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
         <div className="flex items-center justify-between gap-4">
           <h2 className="text-lg font-semibold">{t('Editor')}</h2>
           <button type="button" className="flex items-center gap-1.5 text-xs text-slate-500 transition hover:text-slate-50" onClick={() => updateAppearance(defaultAppearance)}>

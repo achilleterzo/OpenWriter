@@ -18,8 +18,8 @@ export default function GeneralSettings({ project, onChooseProject }) {
   }
 
   return (
-    <div className="grid gap-6">
-      <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+    <div className="grid grid-cols-1 gap-6">
+      <section className="grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
         <div className="flex items-center gap-2">
           <Languages className="text-accent-400" size={20} />
           <h2 className="text-lg font-semibold">{t('Language')}</h2>
@@ -36,7 +36,7 @@ export default function GeneralSettings({ project, onChooseProject }) {
         </select>
       </section>
 
-      <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+      <section className="grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
         <div className="flex items-center gap-2">
           <FolderOpen className="text-accent-400" size={20} />
           <h2 className="text-lg font-semibold">{t('Project')}</h2>
@@ -51,7 +51,7 @@ export default function GeneralSettings({ project, onChooseProject }) {
       </section>
 
       {spellcheck && (
-        <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+        <section className="grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
           <div className="flex items-center gap-2">
             <SpellCheck2 className="text-accent-400" size={20} />
             <h2 className="text-lg font-semibold">{t('Spell checker')}</h2>

@@ -245,7 +245,7 @@ export default function SkillsManager({ scope, projectPath = null, onChanged }) 
   const origin = (skill) => (skill.scope === 'global' ? t('Global') : skill.base === own?.base ? t('This project') : skill.owner)
 
   return (
-    <div className="grid gap-3">
+    <div className="grid grid-cols-1 gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className={smallButton} onClick={() => setEditing({ ...emptySkill() })}><Plus size={13} /> {t('New skill')}</button>
         <button type="button" className={smallButton} onClick={() => setGenerating(true)}><Wand2 size={13} /> {t('Create from a text…')}</button>
@@ -255,12 +255,12 @@ export default function SkillsManager({ scope, projectPath = null, onChanged }) 
 
       {shown.length === 0 && <p className="text-sm text-slate-500">{project ? t('No skills yet. Create one here, or add skills to the global library in Settings → Skills.') : t('No skills yet. A skill collects style, tone and rules that you can reuse in every project.')}</p>}
 
-      <ul className="grid gap-1.5">
+      <ul className="grid grid-cols-1 gap-1.5">
         {shown.map((skill) => {
           const from = inherited.get(skill.id)
           const active = ownActive.includes(skill.id) || Boolean(from)
           return (
-            <li key={`${skill.scope}:${skill.base}:${skill.id}`} className="flex items-start gap-3 rounded-lg border border-slate-800 px-3 py-2">
+            <li key={`${skill.scope}:${skill.base}:${skill.id}`} className="flex min-w-0 items-start gap-3 rounded-lg border border-slate-800 px-3 py-2">
               {project && (
                 <input
                   type="checkbox"

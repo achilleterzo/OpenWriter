@@ -120,7 +120,7 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
   if (!form) return null
 
   return (
-    <section className={embedded ? 'grid gap-5 p-5' : 'grid gap-5 rounded-xl border border-slate-800 bg-slate-950/40 p-6'}>
+    <section className={embedded ? 'grid grid-cols-1 gap-5 p-5' : 'grid grid-cols-1 gap-5 rounded-xl border border-slate-800 bg-slate-950/40 p-6'}>
       <div>
         <div className="flex items-center gap-2">
           <FolderCog className="text-accent-400" size={20} />

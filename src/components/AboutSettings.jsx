@@ -20,7 +20,7 @@ export default function AboutSettings({ version, release, onCheck }) {
 
   return (
     <div className="flex min-h-full flex-col gap-6">
-      <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+      <section className="grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
         <div className="flex items-center gap-4">
           <img src={appIcon} alt="" className="h-14 w-14" />
           <div>
@@ -31,7 +31,7 @@ export default function AboutSettings({ version, release, onCheck }) {
         <p className="max-w-xl text-sm leading-6 text-slate-400">{t('A local-first Markdown editor with an AI writing assistant.')}</p>
       </section>
 
-      <section className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+      <section className="grid grid-cols-1 gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
         <h2 className="text-lg font-semibold">{t('Updates')}</h2>
         {release ? (
           <div className="grid justify-items-start gap-2 rounded-lg border border-accent-500/40 bg-accent-500/10 p-3 text-sm text-slate-200">

@@ -72,14 +72,14 @@ export default function SettingsScreen({ initialSection = 'general', project, on
             ))}
           </nav>
 
-          <div role="tabpanel" className="min-w-0 flex-1 overflow-y-auto p-6 sm:p-8">
+          <div role="tabpanel" className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-6 sm:p-8">
             {section === 'general' && <GeneralSettings project={project} onChooseProject={onChooseProject} />}
             {section === 'project' && <ProjectSettings project={project} onEditContext={onOpenFile} onMove={onMoveProject} />}
             {section === 'appearance' && <AppearanceSettings />}
             {section === 'ai' && <AiProviderSettings />}
             {section === 'actions' && <QuickActionsSettings />}
             {section === 'skills' && (
-              <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+              <section className="grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
                 <p className="max-w-xl text-sm leading-6 text-slate-400">{t('Writing skills collect style, tone of voice and rules that you want to reuse. The ones here are available in every project: activate them by default in the project settings, or add them to a single conversation from the chat.')}</p>
                 <SkillsManager scope="global" />
               </section>
