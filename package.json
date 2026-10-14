@@ -23,6 +23,7 @@
     "pdf-parse": "^1.1.1"
   },
   "devDependencies": {
+    "@mozilla/readability": "^0.6.0",
     "@tiptap/core": "^3.29.2",
     "@tiptap/extension-code": "^3.29.2",
     "@tiptap/extension-heading": "^3.29.2",
@@ -45,6 +46,8 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "tailwindcss": "^3.4.17",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2",
     "vite": "latest",
     "wait-on": "latest"
   },

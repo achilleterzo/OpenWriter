@@ -743,5 +743,19 @@
   "Models": "Modelli",
   "Reads images": "Legge le immagini",
   "Reads PDF files": "Legge i file PDF",
-  "No models match": "Nessun modello corrisponde"
+  "No models match": "Nessun modello corrisponde",
+  "Show the original": "Mostra l'originale",
+  "Hide the original": "Nascondi l'originale",
+  "Original, read-only": "Originale, sola lettura",
+  "No article to show in reading view on this page": "Nessun articolo da mostrare nella vista lettura in questa pagina",
+  "Could not open the reading view": "Impossibile aprire la vista lettura",
+  "Source": "Fonte",
+  "Saved as Markdown: {name}": "Salvato come Markdown: {name}",
+  "Could not save the article": "Impossibile salvare l'articolo",
+  "Exit reading view": "Esci dalla vista lettura",
+  "Reading view": "Vista lettura",
+  "Smaller text": "Testo più piccolo",
+  "Larger text": "Testo più grande",
+  "Switch light/dark": "Passa a chiaro/scuro",
+  "Save as Markdown": "Salva come Markdown"
 }

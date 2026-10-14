@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, Loader2, RotateCw } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BookOpen, FileDown, Loader2, Minus, Moon, Plus, RotateCw, Sun } from 'lucide-react'
+import { articleFileName, articleToMarkdown, extractArticle, readerDocument } from '../lib/readerMode.js'
 import { t } from '../i18n/index.js'
 
 const SETTLE_MS = 700
@@ -15,11 +16,16 @@ function toAddress(input) {
 }
 
 // Scheda browser basata su <webview> isolato. Registra un controller con cui l'assistente può navigare e leggere la pagina.
-export default function BrowserPane({ tab, active, onRegister, onTitle }) {
+export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved, onStatus }) {
   const viewRef = useRef(null)
   const [address, setAddress] = useState('')
   const [loading, setLoading] = useState(false)
   const [history, setHistory] = useState({ back: false, forward: false })
+  // Vista lettura: l'articolo estratto dalla pagina (null = pagina normale), con tema e dimensione del testo.
+  const [reader, setReader] = useState(null)
+  const [readerDark, setReaderDark] = useState(true)
+  const [readerSize, setReaderSize] = useState(18)
+  const [readerBusy, setReaderBusy] = useState(false)
 
   useEffect(() => {
     const view = viewRef.current
@@ -32,12 +38,15 @@ export default function BrowserPane({ tab, active, onRegister, onTitle }) {
     }
     const onDomReady = () => { domReady = true }
     const onNavigate = (event) => { setAddress(event.url); syncHistory() }
+    // Cambiando pagina si esce dalla vista lettura (non per i cambi interni di una stessa pagina).
+    const onPageChange = () => setReader(null)
     const onTitleUpdated = (event) => onTitle(tab.id, event.title)
     const onStart = () => setLoading(true)
     const onStop = () => { setLoading(false); syncHistory() }
 
     view.addEventListener('dom-ready', onDomReady)
     view.addEventListener('did-navigate', onNavigate)
+    view.addEventListener('did-navigate', onPageChange)
     view.addEventListener('did-navigate-in-page', onNavigate)
     view.addEventListener('page-title-updated', onTitleUpdated)
     view.addEventListener('did-start-loading', onStart)
@@ -79,6 +88,7 @@ export default function BrowserPane({ tab, active, onRegister, onTitle }) {
       onRegister(tab.id, null)
       view.removeEventListener('dom-ready', onDomReady)
       view.removeEventListener('did-navigate', onNavigate)
+      view.removeEventListener('did-navigate', onPageChange)
       view.removeEventListener('did-navigate-in-page', onNavigate)
       view.removeEventListener('page-title-updated', onTitleUpdated)
       view.removeEventListener('did-start-loading', onStart)
@@ -89,6 +99,33 @@ export default function BrowserPane({ tab, active, onRegister, onTitle }) {
   function submit(event) {
     event.preventDefault()
     if (address.trim()) viewRef.current.loadURL(toAddress(address)).catch(() => {})
+  }
+
+  async function toggleReader() {
+    if (reader) { setReader(null); return }
+    setReaderBusy(true)
+    try {
+      const { html, url } = await viewRef.current.executeJavaScript('({ html: document.documentElement.outerHTML, url: location.href })')
+      const article = /^https?:/i.test(url) ? extractArticle(html, url) : null
+      if (article) setReader(article)
+      else onStatus?.(t('No article to show in reading view on this page'))
+    } catch (error) {
+      console.error(error)
+      onStatus?.(t('Could not open the reading view'))
+    } finally {
+      setReaderBusy(false)
+    }
+  }
+
+  async function saveReader() {
+    try {
+      const markdown = articleToMarkdown(reader, { sourceLabel: t('Source') })
+      const saved = await window.electronAPI.saveMarkdown({ filePath: null, markdown, saveAs: true, defaultName: articleFileName(reader) })
+      if (saved) { onStatus?.(t('Saved as Markdown: {name}', { name: saved.split(/[\\/]/).pop() })); onSaved?.(saved) }
+    } catch (error) {
+      console.error(error)
+      onStatus?.(t('Could not save the article'))
+    }
   }
 
   const buttonClass = 'rounded p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-slate-50 disabled:opacity-30 disabled:hover:bg-transparent'
@@ -108,8 +145,18 @@ export default function BrowserPane({ tab, active, onRegister, onTitle }) {
           onChange={(event) => setAddress(event.target.value)}
           onFocus={(event) => event.target.select()}
         />
+        <button type="button" aria-label={reader ? t('Exit reading view') : t('Reading view')} title={reader ? t('Exit reading view') : t('Reading view')} aria-pressed={Boolean(reader)} disabled={readerBusy} className={`${buttonClass} ${reader ? 'bg-slate-800 text-accent-400' : ''}`} onClick={toggleReader}>{readerBusy ? <Loader2 size={16} className="animate-spin" /> : <BookOpen size={16} />}</button>
+        {reader && (
+          <>
+            <button type="button" aria-label={t('Smaller text')} title={t('Smaller text')} disabled={readerSize <= 14} className={buttonClass} onClick={() => setReaderSize((value) => value - 2)}><Minus size={16} /></button>
+            <button type="button" aria-label={t('Larger text')} title={t('Larger text')} disabled={readerSize >= 28} className={buttonClass} onClick={() => setReaderSize((value) => value + 2)}><Plus size={16} /></button>
+            <button type="button" aria-label={t('Switch light/dark')} title={t('Switch light/dark')} className={buttonClass} onClick={() => setReaderDark((value) => !value)}>{readerDark ? <Sun size={16} /> : <Moon size={16} />}</button>
+            <button type="button" aria-label={t('Save as Markdown')} title={t('Save as Markdown')} className={buttonClass} onClick={saveReader}><FileDown size={16} /></button>
+          </>
+        )}
       </form>
-      <webview ref={viewRef} partition="persist:openwriter-browser" src="about:blank" className="min-h-0 flex-1 bg-white" />
+      {reader && <iframe title={t('Reading view')} sandbox="" srcDoc={readerDocument(reader, { dark: readerDark, size: readerSize })} className="min-h-0 flex-1 border-0" />}
+      <webview ref={viewRef} partition="persist:openwriter-browser" src="about:blank" className={`min-h-0 flex-1 bg-white ${reader ? 'hidden' : ''}`} />
     </div>
   )
 }
