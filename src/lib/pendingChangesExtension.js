@@ -129,6 +129,49 @@ export function trackEdit(editor, edit) {
   return true
 }
 
+// Le modifiche in sosta devono sopravvivere a un riavvio o a un cambio di progetto: nella sessione si salvano per blocchi di primo livello
+// (non per posizioni, che dipendono dal testo letto di nuovo) con il testo precedente in JSON.
+const blockStarts = (doc) => {
+  const starts = []
+  let position = 0
+  doc.forEach((node) => { starts.push(position); position += node.nodeSize })
+  return starts
+}
+
+// Dati da salvare nella sessione, o null se non c'è nulla da rivedere.
+export function serializePending(editor) {
+  if (!editor?.view || editor.isDestroyed) return null
+  const changes = getPending(editor.state)
+  if (!changes.length) return null
+  const { doc } = editor.state
+  const starts = blockStarts(doc)
+  // Indice del primo blocco che inizia a `position` o dopo (starts.length = fine del documento).
+  const indexAt = (position) => { const index = starts.findIndex((start) => start >= position); return index === -1 ? starts.length : index }
+  return {
+    version: 1,
+    blocks: starts.length,
+    length: doc.textContent.length,
+    changes: changes.map((change) => ({ fromBlock: indexAt(change.from), toBlock: indexAt(change.to), old: change.old.toJSON() })),
+  }
+}
+
+// Rimette in sosta le modifiche salvate. Solo se il documento riletto è quello di prima (stesso numero di blocchi e stessa quantità di testo):
+// altrimenti i punti non coinciderebbero e si mostrerebbe una revisione sbagliata. Restituisce true se le ha ripristinate.
+export function restorePending(editor, data) {
+  if (!data || data.version !== 1 || !editor?.view || editor.isDestroyed) return false
+  const { doc, schema } = editor.state
+  const starts = blockStarts(doc)
+  if (data.blocks !== starts.length || data.length !== doc.textContent.length) return false
+  try {
+    const position = (block) => (block < starts.length ? starts[block] : doc.content.size)
+    const changes = data.changes.map((change) => ({ id: newId(), from: position(change.fromBlock), to: position(change.toBlock), old: Fragment.fromJSON(schema, change.old) }))
+    editor.view.dispatch(editor.state.tr.setMeta(pendingKey, { set: changes }).setMeta('addToHistory', false))
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function acceptAll(editor) {
   if (!getPending(editor.state).length) return
   editor.view.dispatch(editor.state.tr.setMeta(pendingKey, { clear: true }).setMeta('addToHistory', false))

@@ -13,7 +13,7 @@ import ProjectsPanel from './components/ProjectsPanel.jsx'
 import MemoryPanel from './components/MemoryPanel.jsx'
 import AboutDialog from './components/AboutDialog.jsx'
 import { useDialogs } from './components/Dialogs.jsx'
-import { acceptAll, getPending } from './lib/pendingChangesExtension.js'
+import { acceptAll, getPending, serializePending } from './lib/pendingChangesExtension.js'
 import OutlinePanel from './components/OutlinePanel.jsx'
 import PanelResizer from './components/PanelResizer.jsx'
 import SettingsScreen from './components/SettingsScreen.jsx'
@@ -76,7 +76,7 @@ async function restoreTabs(session) {
   // Con almeno una scheda fissata, alla riapertura restano solo le fissate e le bozze (testo non salvato): le altre si riaprono dal file quando servono.
   const anyPinned = (session?.tabs || []).some((saved) => saved.pinned)
   for (const saved of session?.tabs || []) {
-    if (anyPinned && !saved.pinned && saved.markdown === undefined) continue
+    if (anyPinned && !saved.pinned && saved.markdown === undefined && !saved.pending) continue
     if (saved.closed && saved.pinned && saved.sourcePath) {
       tabs.push({ id: saved.id, filePath: saved.filePath, sourcePath: saved.sourcePath, title: saved.title, content: '', contentType: 'markdown', dirty: false, pinned: true, closed: true })
       continue
@@ -85,9 +85,9 @@ async function restoreTabs(session) {
       // Il numero dei documenti senza titolo è un dato salvato, non si ricava dal titolo (che può cambiare con la lingua).
       if (Number.isInteger(saved.untitled)) untitledCounter = Math.max(untitledCounter, saved.untitled)
       if (saved.markdown !== undefined) {
-        tabs.push({ id: saved.id, filePath: saved.filePath, sourcePath: saved.sourcePath, untitled: saved.untitled, title: saved.title, content: saved.markdown, contentType: 'markdown', dirty: Boolean(saved.dirty), pinned: Boolean(saved.pinned), ...(saved.aiScore ? { aiScore: saved.aiScore } : {}) })
+        tabs.push({ id: saved.id, filePath: saved.filePath, sourcePath: saved.sourcePath, untitled: saved.untitled, title: saved.title, content: saved.markdown, contentType: 'markdown', dirty: Boolean(saved.dirty), pinned: Boolean(saved.pinned), ...(saved.aiScore ? { aiScore: saved.aiScore } : {}), ...(saved.pending ? { pending: saved.pending } : {}) })
       } else if (saved.sourcePath) {
-        tabs.push({ ...createTab({ ...(await electronAPI.reopenDocument(saved.sourcePath)), ...(saved.readOnly ? { readOnly: true } : {}) }, saved.id), pinned: Boolean(saved.pinned), ...(saved.aiScore ? { aiScore: saved.aiScore } : {}) })
+        tabs.push({ ...createTab({ ...(await electronAPI.reopenDocument(saved.sourcePath)), ...(saved.readOnly ? { readOnly: true } : {}) }, saved.id), pinned: Boolean(saved.pinned), ...(saved.aiScore ? { aiScore: saved.aiScore } : {}), ...(saved.pending ? { pending: saved.pending } : {}) })
       }
     } catch (error) {
       console.warn('Scheda non ripristinata', saved?.title, error)
@@ -171,6 +171,8 @@ export default function App() {
         const editor = currentEditors[tab.id]
         // Bozze e documenti mai salvati conservano il testo; gli altri si rileggono dal file.
         const keepText = (tab.dirty || !tab.sourcePath) && editor
+        // Modifiche dell'assistente ancora da rivedere (o non ancora rimesse in sosta dopo la riapertura): restano nella sessione.
+        const pending = (editor && serializePending(editor)) || tab.pending
         return {
           id: tab.id,
           filePath: tab.filePath,
@@ -180,6 +182,7 @@ export default function App() {
           dirty: tab.dirty,
           pinned: Boolean(tab.pinned),
           ...(tab.aiScore ? { aiScore: tab.aiScore } : {}),
+          ...(pending ? { pending } : {}),
           closed: Boolean(tab.closed),
           ...(tab.readOnly ? { readOnly: true } : {}),
           ...(keepText ? { markdown: editor.getMarkdown() } : {}),
@@ -564,6 +567,12 @@ export default function App() {
       })
       setActiveId(tab.id)
     },
+    // I dati delle modifiche in sosta salvati nella sessione sono stati rimessi nell'editor: da qui in poi vale lo stato dell'editor.
+    clearPendingData(id) {
+      setTabs((current) => (current.some((tab) => tab.id === id && tab.pending) ? current.map((tab) => { if (tab.id !== id) return tab; const { pending, ...rest } = tab; return rest }) : current))
+    },
+    // Una modifica è stata accettata o rifiutata: si aggiorna la sessione.
+    pendingChanged() { scheduleSave() },
     promoteTab(id) {
       setTabs((current) => (current.some((tab) => tab.id === id && tab.preview) ? current.map((tab) => (tab.id === id ? { ...tab, preview: false } : tab)) : current))
     },
@@ -933,7 +942,7 @@ export default function App() {
               ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab.id} onStatus={setStatus} onInteract={workspace.promoteTab} />
               : tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
-              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} />))}
+              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} />))}
           </section>
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>

@@ -11,13 +11,14 @@ import { Annotations } from '../lib/annotationExtension.js'
 import { Search } from '../lib/searchExtension.js'
 import { KeepSelection } from '../lib/keepSelectionExtension.js'
 import { DocumentImage } from '../lib/imageExtension.js'
-import { PendingChanges, acceptAll, getPending, rejectAll } from '../lib/pendingChangesExtension.js'
+import { PendingChanges, acceptAll, getPending, pendingKey, rejectAll, restorePending } from '../lib/pendingChangesExtension.js'
 import { useEditorState } from '@tiptap/react'
 import Link from '@tiptap/extension-link'
 import { TaskItem, TaskList } from '@tiptap/extension-list'
 import { FrontMatter, HtmlBlock, HtmlInline } from '../lib/rawMarkdownExtensions.js'
 import { mergeAttributes } from '@tiptap/core'
 import SelectionToolbar from './SelectionToolbar.jsx'
+import ChangeMarkers from './ChangeMarkers.jsx'
 import { displaySource, isInside, dirname, resolveDocumentLink, sourceForImage } from '../lib/imagePaths.js'
 import { t } from '../i18n/index.js'
 
@@ -39,7 +40,7 @@ const DocumentLink = Link.configure({ openOnClick: false }).extend({
   },
 })
 
-function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onNoteSelect, onStatus, onOpenLink, onSave }) {
+function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onPendingRestored, onPendingChange, onNoteSelect, onStatus, onOpenLink, onSave }) {
   // Vista sorgente: il Markdown grezzo del documento in un campo di testo. È solo un modo di lavorare o copiare il testo:
   // note, assistente e ricerca restano sull'editor visuale, che si aggiorna man mano che si scrive.
   const [sourceOpen, setSourceOpen] = useState(false)
@@ -215,6 +216,23 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
     if (imagePath) insertImage(editor, { imagePath })
   }
 
+  // Modifiche dell'assistente rimaste in sosta in una sessione precedente: si rimettono da rivedere appena l'editor è pronto.
+  useEffect(() => {
+    if (!editor || !tab.pending) return
+    restorePending(editor, tab.pending)
+    onPendingRestored?.(tab.id)
+    // Solo alla prima apertura del documento.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor])
+
+  // Accettare o rifiutare una modifica cambia ciò che va salvato nella sessione: la si salva anche se il testo non è cambiato.
+  useEffect(() => {
+    if (!editor) return undefined
+    const onTransaction = ({ transaction }) => { if (transaction.getMeta(pendingKey)) onPendingChange?.() }
+    editor.on('transaction', onTransaction)
+    return () => editor.off('transaction', onTransaction)
+  }, [editor, onPendingChange])
+
   useEffect(() => {
     if (!editor) return undefined
     onReady(tab.id, editor)
@@ -270,6 +288,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
         <div className={`h-full overflow-y-auto ${sourceOpen ? 'hidden' : ''}`} data-document-scroll={tab.id} onScroll={interact} onWheel={interact} onMouseDown={interact} onKeyDown={interact}>
           <EditorContent editor={editor} className="document-editor mx-auto" />
         </div>
+        {!sourceOpen && <ChangeMarkers editor={editor} containerRef={editorArea} onSelectNote={onNoteSelect} />}
         {!sourceOpen && <SelectionToolbar editor={editor} containerRef={editorArea} request={linkRequest} documentPath={tab.filePath || null} onOpenLink={onOpenLink} onReplaceImage={pickImage} />}
       </div>
     </div>
