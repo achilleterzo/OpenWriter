@@ -962,9 +962,12 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         const documentBlocks = documents.map(({ title, text }) => (documents.length === 1 && !pinnedIds.length
           ? `Open document (Markdown):\n"""\n${text.slice(0, perDocument)}\n"""`
           : `Document "${title}" (Markdown):\n"""\n${text.slice(0, perDocument)}\n"""`))
+        // Se la scheda attiva è un'immagine, l'assistente lo sa e può guardarla con view_image.
+        const imageTab = toolsOn.vision ? toolBridge.activeImagePath?.() : null
         const context = [
           ...documentBlocks,
           selection && `Text selected by the user:\n"""\n${selection}\n"""`,
+          imageTab && `The user has the image "${imageTab}" open in a tab: you can look at it with view_image (path "${imageTab}").`,
         ].filter(Boolean).join('\n\n')
         // La memoria si rilegge a ogni passaggio: l'assistente può averla aggiornata nel frattempo.
         // Il contesto si rilegge all'invio: le istruzioni possono essere cambiate dopo l'apertura del documento.
