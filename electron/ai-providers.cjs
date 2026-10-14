@@ -459,7 +459,8 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
 
   // Invia il prompt alla CLI in modalità streaming e traduce i suoi eventi in { type: 'text' | 'thinking' | 'status', ... }.
   // `images`: [{ mime, data(base64) }] allegate al prompt, nello stesso ordine dei segnaposto [Immagine N] nel testo.
-  async function streamCliPrompt(provider, prompt, onEvent, signal, images = []) {
+  // `documents`: [{ mime: 'application/pdf', name, data(base64) }], segnaposto [Document N: nome]; li legge solo Claude.
+  async function streamCliPrompt(provider, prompt, onEvent, signal, images = [], documents = []) {
     const rawModel = String(providerConfig(provider).model || '').trim()
     const model = /^[A-Za-z0-9._:/-]+$/.test(rawModel) ? rawModel : ''
     const reasoning = providerConfig(provider).reasoning
@@ -509,6 +510,10 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
             try { message = JSON.parse(message)?.error?.message || message } catch {}
             if (message) state.error = String(message)
           }
+          if (event.type === 'turn.completed' && event.usage) {
+            // `input_tokens` comprende già quelli letti dalla cache.
+            onEvent({ type: 'usage', input: Number(event.usage.input_tokens) || 0, output: Number(event.usage.output_tokens) || 0 })
+          }
           if (event.type === 'item.completed' && item) {
             if (item.type === 'reasoning' && item.text) onEvent({ type: 'thinking', delta: `${item.text}\n` })
             else if (item.type === 'agent_message' && typeof item.text === 'string' && item.text.trim() && !state.text.includes('</tool_call>')) {
@@ -534,10 +539,15 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
       }
     }
 
-    const args = ['-p', ...(images.length ? ['--input-format', 'stream-json'] : []), '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', '', ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : [])]
-    // Con immagini il prompt viaggia come messaggio "stream-json" con blocchi di testo e immagine.
-    const claudeInput = images.length
-      ? `${JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `${prompt}\n\n${suffix}` }, ...images.map((image) => ({ type: 'image', source: { type: 'base64', media_type: image.mime, data: image.data } }))] } })}\n`
+    const structured = images.length > 0 || documents.length > 0
+    const args = ['-p', ...(structured ? ['--input-format', 'stream-json'] : []), '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', '', ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : [])]
+    // Con immagini o PDF il prompt viaggia come messaggio "stream-json" con blocchi di testo, immagine e documento.
+    const claudeInput = structured
+      ? `${JSON.stringify({ type: 'user', message: { role: 'user', content: [
+        { type: 'text', text: `${prompt}\n\n${suffix}` },
+        ...images.map((image) => ({ type: 'image', source: { type: 'base64', media_type: image.mime, data: image.data } })),
+        ...documents.map((document) => ({ type: 'document', title: document.name, source: { type: 'base64', media_type: document.mime, data: document.data } })),
+      ] } })}\n`
       : `${prompt}\n\n${suffix}`
     await runCliStream(provider, args, {
       cwd,
@@ -552,8 +562,13 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
           else if (delta?.type === 'thinking_delta' && delta.thinking) onEvent({ type: 'thinking', delta: delta.thinking })
         } else if (event.type === 'system' && event.subtype === 'thinking_tokens') {
           onEvent({ type: 'status', text: t('Thinking… (~{estimated_tokens} tokens)', { estimated_tokens: event.estimated_tokens }) })
-        } else if (event.type === 'result' && typeof event.result === 'string') {
-          state.result = event.result
+        } else if (event.type === 'result') {
+          if (typeof event.result === 'string') state.result = event.result
+          const usage = event.usage
+          if (usage) {
+            const input = (Number(usage.input_tokens) || 0) + (Number(usage.cache_creation_input_tokens) || 0) + (Number(usage.cache_read_input_tokens) || 0)
+            onEvent({ type: 'usage', input, output: Number(usage.output_tokens) || 0 })
+          }
         }
       },
     })
@@ -582,6 +597,8 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
       let nativeCall = null
       await streamJson(`${endpoint}/api/chat`, options, { ...body, ...generationParams(provider), ...extra, stream: true }, (line) => {
         if (line.error) throw Object.assign(new Error(String(line.error)), { fatal: true })
+        // L'ultima riga (done) riporta i token letti e generati.
+        if (line.done && (line.prompt_eval_count != null || line.eval_count != null)) onEvent({ type: 'usage', input: Number(line.prompt_eval_count) || 0, output: Number(line.eval_count) || 0 })
         if (line.message?.thinking) onEvent({ type: 'thinking', delta: line.message.thinking })
         if (line.message?.content) { text += line.message.content; onEvent({ type: 'text', delta: line.message.content }) }
         const call = line.message?.tool_calls?.[0]?.function
@@ -636,12 +653,13 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
         pendingCall = calls[0].id
         return { role: 'assistant', content: message.content || null, tool_calls: calls }
       }
-      if (message.images?.length) {
+      if (message.images?.length || message.files?.length) {
         return {
           role: message.role,
           content: [
             ...(message.content ? [{ type: 'text', text: message.content }] : []),
-            ...message.images.map((image) => ({ type: 'image_url', image_url: { url: `data:${image.mime || 'image/png'};base64,${image.data}` } })),
+            ...(message.images || []).map((image) => ({ type: 'image_url', image_url: { url: `data:${image.mime || 'image/png'};base64,${image.data}` } })),
+            ...(message.files || []).map((file) => ({ type: 'file', file: { filename: file.name, file_data: `data:${file.mime};base64,${file.data}` } })),
           ],
         }
       }
@@ -658,16 +676,21 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
       ...(config.numPredict !== '' && config.numPredict != null ? { max_tokens: config.numPredict } : {}),
     }
     const reasoning = config.reasoning && config.reasoning !== 'default' ? { reasoning: { effort: config.reasoning } } : {}
+    // I PDF allegati devono essere letti dal modello in modo nativo, senza l'estrazione del testo di OpenRouter.
+    const hasFiles = messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === 'file'))
+    const files = hasFiles ? { plugins: [{ id: 'file-parser', pdf: { engine: 'native' } }] } : {}
     const once = async (extra, state) => {
       let text = ''
       let call = null
-      await streamJson(`${OPENROUTER_URL}/chat/completions`, { ...openRouterOptions(), sse: true }, { model, messages, ...params, ...extra, stream: true }, (chunk) => {
+      await streamJson(`${OPENROUTER_URL}/chat/completions`, { ...openRouterOptions(), sse: true }, { model, messages, ...params, ...files, usage: { include: true }, ...extra, stream: true }, (chunk) => {
         // Errore arrivato dentro lo stream (la risposta HTTP era già 200): di solito il provider a monte ha fallito.
         if (chunk.error) {
           log(`[AI] OpenRouter errore nello stream: ${JSON.stringify(chunk.error).slice(0, 800)}`)
           const upstream = chunk.provider ? ` (${chunk.provider})` : ''
           throw Object.assign(new Error(`${String(chunk.error.message || chunk.error)}${upstream}`), { fatal: true, streamError: true })
         }
+        // L'ultimo blocco (spesso senza `choices`) riporta i token consumati.
+        if (chunk.usage) onEvent({ type: 'usage', input: Number(chunk.usage.prompt_tokens) || 0, output: Number(chunk.usage.completion_tokens) || 0 })
         const choice = chunk.choices?.[0]
         const delta = choice?.delta
         if (!delta) return
@@ -753,9 +776,12 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
       ...(message?.tool_name ? { tool_name: String(message.tool_name) } : {}),
       // Immagini come { mime, data }; chi le riceve come stringhe base64 le tratta come PNG.
       ...(Array.isArray(message?.images) && message.images.length ? { images: message.images.map((image) => (typeof image === 'string' ? { mime: 'image/png', data: image } : image)) } : {}),
+      // Documenti allegati dall'utente (PDF) come { mime, name, data }: arrivano solo ai modelli che li leggono in modo nativo.
+      ...(Array.isArray(message?.files) && message.files.length ? { files: message.files.filter((file) => file?.mime === 'application/pdf' && file.data).map((file) => ({ mime: file.mime, name: String(file.name || 'document.pdf'), data: String(file.data) })) } : {}),
     }))
     log(`[AI] ${LABELS[provider]} richiesta (${list.length} messaggi)`)
-    const ollamaMessages = list.map((message) => (message.images ? { ...message, images: message.images.map((image) => image.data) } : message))
+    if (list.some((message) => message.files?.length) && !['openrouter', 'claude'].includes(provider)) throw new Error(t('The selected model cannot read PDF files'))
+    const ollamaMessages = list.map(({ files, ...message }) => (message.images ? { ...message, images: message.images.map((image) => image.data) } : message))
     if (provider === 'ollama') {
       return (await streamOllama(config.endpoint, { model: config.model, messages: ollamaMessages }, provider, {}, onEvent, signal, tools)).trim()
     }
@@ -766,53 +792,80 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
       return (await streamOpenRouter(config.model, openRouterMessages(list), onEvent, signal, tools)).trim()
     }
     // Le CLI ricevono un unico prompt: ogni immagine lascia un segnaposto [Immagine N] e viene allegata nello stesso ordine.
+    // Allo stesso modo ogni PDF lascia un segnaposto [Document N: nome] (solo Claude li riceve).
     const attached = []
+    const documents = []
     const prompt = list.map((message) => {
-      const placeholders = (message.images || []).map((image) => { attached.push(image); return `[Image ${attached.length}]` })
+      const placeholders = [
+        ...(message.images || []).map((image) => { attached.push(image); return `[Image ${attached.length}]` }),
+        ...(message.files || []).map((file) => { documents.push(file); return `[Document ${documents.length}: ${file.name}]` }),
+      ]
       return `${message.role.toUpperCase()}:\n${message.content}${placeholders.length ? `\n${placeholders.join(' ')}` : ''}`
     }).join('\n\n')
     // Ultimo prompt inviato alla CLI, per capire cosa vede il modello quando si comporta in modo inatteso (viene sovrascritto a ogni richiesta, resta in locale).
     try { fs.writeFileSync(path.join(app.getPath('userData'), 'ai-last-prompt.txt'), prompt) } catch { /* solo diagnostica */ }
-    return streamCliPrompt(provider, prompt, onEvent, signal, attached)
+    return streamCliPrompt(provider, prompt, onEvent, signal, attached, documents)
   }
 
   const chat = (messages) => chatStream(messages)
 
-  // Cosa sa fare il modello selezionato. Per Ollama si legge `capabilities` da /api/show (es. "vision", "tools");
-  // per Claude e Codex si dà per scontato che supportino le immagini.
+  // Cosa sa fare un modello. Per Ollama si legge `capabilities` da /api/show (es. "vision", "tools");
+  // per OpenRouter le modalità di input del catalogo; per Claude e Codex si dà per scontato che supportino le immagini.
+  const UNKNOWN_CAPABILITIES = { known: false, vision: false, tools: false, pdf: false }
   const capabilityCache = new Map()
-  async function getCapabilities(modelOverride) {
-    const provider = activeProvider()
-    if (provider === 'claude' || provider === 'codex') return { known: true, vision: true, tools: true }
-    const config = providerConfig(provider)
-    const model = String(modelOverride || config.model || '')
-    if (!model) return { known: false, vision: false, tools: false }
-    const key = `${provider}:${model}:${config.endpoint || ''}`
+  async function modelCapabilities(provider, model, endpoint) {
+    // Claude legge i PDF in modo nativo; Codex solo le immagini.
+    if (provider === 'claude' || provider === 'codex') return { known: true, vision: true, tools: true, pdf: provider === 'claude' }
+    if (!model) return UNKNOWN_CAPABILITIES
+    const key = `${provider}:${model}:${endpoint || ''}`
     if (capabilityCache.has(key)) return capabilityCache.get(key)
-    if (provider === 'openrouter') {
-      try {
+    try {
+      let result
+      if (provider === 'openrouter') {
         const entry = (await openRouterModels()).find((item) => item.id === model)
-        if (!entry) return { known: false, vision: false, tools: false }
+        if (!entry) return UNKNOWN_CAPABILITIES
         const inputs = Array.isArray(entry.architecture?.input_modalities) ? entry.architecture.input_modalities : []
         const supported = Array.isArray(entry.supported_parameters) ? entry.supported_parameters : []
-        const result = { known: true, vision: inputs.includes('image'), tools: supported.includes('tools') }
-        capabilityCache.set(key, result)
-        return result
-      } catch {
-        return { known: false, vision: false, tools: false }
+        result = { known: true, vision: inputs.includes('image'), tools: supported.includes('tools'), pdf: inputs.includes('file') }
+      } else {
+        const options = provider === 'ollama-cloud' ? cloudOptions() : {}
+        const target = provider === 'ollama-cloud' ? OLLAMA_CLOUD_URL : String(endpoint || '').replace(/\/$/, '')
+        const data = await requestJson(`${target}/api/show`, { ...options, method: 'POST' }, { model })
+        const list = Array.isArray(data?.capabilities) ? data.capabilities : []
+        result = { known: true, vision: list.includes('vision'), tools: list.includes('tools'), pdf: false }
       }
-    }
-    try {
-      const options = provider === 'ollama-cloud' ? cloudOptions() : {}
-      const endpoint = provider === 'ollama-cloud' ? OLLAMA_CLOUD_URL : config.endpoint
-      const data = await requestJson(`${endpoint}/api/show`, { ...options, method: 'POST' }, { model })
-      const list = Array.isArray(data?.capabilities) ? data.capabilities : []
-      const result = { known: true, vision: list.includes('vision'), tools: list.includes('tools') }
       capabilityCache.set(key, result)
       return result
     } catch {
-      return { known: false, vision: false, tools: false }
+      return UNKNOWN_CAPABILITIES
     }
+  }
+
+  function getCapabilities(modelOverride) {
+    const provider = activeProvider()
+    const config = providerConfig(provider)
+    return modelCapabilities(provider, String(modelOverride || config.model || ''), config.endpoint)
+  }
+
+  // Cosa accettano in input i modelli di un provider, per filtrarli nel selettore: { [id]: { vision, pdf } }.
+  // I modelli di cui non si sa nulla (es. Ollama irraggiungibile) restano fuori dalla mappa.
+  const MODEL_INPUTS_CONCURRENCY = 6
+  async function listModelInputs({ provider = activeProvider(), endpoint } = {}) {
+    const target = endpoint ?? providerConfig(provider).endpoint
+    const ids = provider === 'claude' ? CLAUDE_MODEL_ALIASES
+      : provider === 'openrouter' ? (await openRouterModels()).map((model) => model.id)
+        : await listModels({ provider, endpoint: target })
+    const result = {}
+    let next = 0
+    const worker = async () => {
+      while (next < ids.length) {
+        const id = ids[next++]
+        const capabilities = await modelCapabilities(provider, id, target)
+        if (capabilities.known) result[id] = { vision: capabilities.vision, pdf: capabilities.pdf }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(MODEL_INPUTS_CONCURRENCY, ids.length) }, worker))
+    return result
   }
 
   async function getStatus(provider = activeProvider()) {
@@ -946,7 +999,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     return names(await requestJson(`${target}/api/tags`))
   }
 
-  return { getSettings, saveSettings, hasApiKey: (provider = 'ollama-cloud') => Boolean(loadApiKey(provider)), saveApiKey, getStatus, login, submitLoginCode, stopLogin, listModels, chat, chatStream, getCapabilities }
+  return { getSettings, saveSettings, hasApiKey: (provider = 'ollama-cloud') => Boolean(loadApiKey(provider)), saveApiKey, getStatus, login, submitLoginCode, stopLogin, listModels, listModelInputs, chat, chatStream, getCapabilities }
 }
 
 module.exports = { createAiProviders }

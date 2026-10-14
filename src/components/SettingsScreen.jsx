@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Bot, FolderCog, Info, Palette, Settings2, SlidersHorizontal } from 'lucide-react'
+import { ArrowLeft, Bot, FolderCog, Info, Palette, Settings2, SlidersHorizontal, Wand2 } from 'lucide-react'
 import AboutSettings from './AboutSettings.jsx'
 import AiProviderSettings from './AiProviderSettings.jsx'
 import AppearanceSettings from './AppearanceSettings.jsx'
 import GeneralSettings from './GeneralSettings.jsx'
 import ProjectSettings from './ProjectSettings.jsx'
+import SkillsManager from './SkillsManager.jsx'
 import { t } from '../i18n/index.js'
 
 // Per aggiungere una sezione basta una nuova voce qui.
@@ -13,6 +14,7 @@ const sections = [
   { id: 'project', label: t('Project'), icon: FolderCog },
   { id: 'appearance', label: t('Appearance'), icon: Palette },
   { id: 'ai', label: 'AI', icon: Bot },
+  { id: 'skills', label: t('Skills'), icon: Wand2 },
   { id: 'about', label: t('About'), icon: Info },
 ]
 
@@ -73,6 +75,12 @@ export default function SettingsScreen({ initialSection = 'general', project, on
             {section === 'project' && <ProjectSettings project={project} onEditContext={onOpenFile} />}
             {section === 'appearance' && <AppearanceSettings />}
             {section === 'ai' && <AiProviderSettings />}
+            {section === 'skills' && (
+              <section className="grid gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+                <p className="max-w-xl text-sm leading-6 text-slate-400">{t('Writing skills collect style, tone of voice and rules that you want to reuse. The ones here are available in every project: activate them by default in the project settings, or add them to a single conversation from the chat.')}</p>
+                <SkillsManager scope="global" />
+              </section>
+            )}
             {section === 'about' && <AboutSettings version={version} release={release} onCheck={onCheckUpdate} />}
           </div>
         </div>

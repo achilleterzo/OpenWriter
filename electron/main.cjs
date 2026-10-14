@@ -14,6 +14,9 @@ const { createMemoryStore } = require('./memory-store.cjs')
 const { fetchLatestRelease } = require('./updates.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
 const { createNotesStore } = require('./notes-store.cjs')
+const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
+// Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
+const MAX_SKILL_FILE_BYTES = MAX_SKILL_CHARS * 4
 const images = require('./images.cjs')
 const { t, setLocale, getLocale } = require('./i18n.cjs')
 
@@ -29,6 +32,7 @@ const projectFile = createProjectFile({ getProjectPath: () => projectPath })
 const chatStore = createChatStore({ getProjectPath: () => projectPath })
 const memoryStore = createMemoryStore({ getProjectPath: () => projectPath })
 const notesStore = createNotesStore({ getProjectPath: () => projectPath })
+const skillsStore = createSkillsStore({ getGlobalDirectory: () => path.join(app.getPath('userData'), 'skills') })
 const projectTools = createProjectTools({ getProjectPath: () => projectPath, readDocument: (filePath) => readDocument(filePath) })
 const aiRequests = new Map()
 const BROWSER_PARTITION = 'persist:openwriter-browser'
@@ -508,7 +512,7 @@ ipcMain.handle('projects:save-settings', (_event, { directory, settings } = {}) 
   if (projectPath && path.resolve(projectPath).toLowerCase() === target.toLowerCase()) applySpellcheck()
   return saved
 })
-// Copia il contesto per l'assistente (context.md e gli altri .md di istruzioni in .ow) da un progetto a un altro.
+// Copia il contesto per l'assistente (context.md, gli altri .md di istruzioni e le skill in .ow) da un progetto a un altro.
 ipcMain.handle('projects:copy-context', (_event, { from, to, mode } = {}) => {
   const source = projectFileFor(from)
   const destination = projectFileFor(to)
@@ -517,7 +521,9 @@ ipcMain.handle('projects:copy-context', (_event, { from, to, mode } = {}) => {
   const sourceSettings = source.file.getSettings()
   const incoming = String(sourceSettings.ai?.context || '')
   const extras = sourceSettings.ai?.extraContext || []
-  if (!incoming.trim() && !extras.length) throw new Error(t('The source project has no context'))
+  const skillsSource = path.join(source.target, '.ow', 'skills')
+  const skillFiles = fsSync.existsSync(skillsSource) ? fsSync.readdirSync(skillsSource).filter((name) => /\.md$/i.test(name)) : []
+  if (!incoming.trim() && !extras.length && !skillFiles.length) throw new Error(t('The source project has no context'))
   const current = destination.file.getSettings()
   const existing = String(current.ai?.context || '')
   const merged = mode === 'append' && existing.trim() ? `${existing.trimEnd()}\n\n${incoming}` : incoming
@@ -530,7 +536,46 @@ ipcMain.handle('projects:copy-context', (_event, { from, to, mode } = {}) => {
     fsSync.writeFileSync(target, extra.text)
     copied += 1
   }
+  for (const name of skillFiles) {
+    const target = path.join(destination.target, '.ow', 'skills', name)
+    if (fsSync.existsSync(target)) continue
+    fsSync.mkdirSync(path.dirname(target), { recursive: true })
+    fsSync.copyFileSync(path.join(skillsSource, name), target)
+    copied += 1
+  }
   return { characters: destination.file.getSettings().ai.context.length, extraFiles: copied }
+})
+// Skill di scrittura. La catena dei progetti viene dal documento attivo o, con `directory`, da un progetto dell'elenco
+// (es. un sotto-progetto nelle sue impostazioni); senza progetto restano solo le skill globali.
+const skillChain = ({ document, directory } = {}) => {
+  if (directory) return projectFileFor(directory).file.getContextChain()
+  return projectPath ? projectFile.getContextChain(document || null) : []
+}
+ipcMain.handle('skills:list', (_event, request) => {
+  const chain = skillChain(request)
+  return { ...skillsStore.list(chain), defaults: [...new Set(chain.flatMap((owner) => owner.activeSkills || []))], chain: chain.map(({ base, name, path: relative, activeSkills }) => ({ base, name, path: relative, activeSkills })) }
+})
+ipcMain.handle('skills:get', (_event, request) => skillsStore.get(request || {}))
+ipcMain.handle('skills:save', (_event, request) => skillsStore.save(request || {}))
+ipcMain.handle('skills:delete', (_event, request) => skillsStore.remove(request || {}))
+ipcMain.handle('skills:parse', (_event, markdown) => skillsStore.parse(markdown))
+// Skill da un file Markdown con le direttive: si legge e si interpreta, il salvataggio avviene dopo la revisione nell'editor.
+ipcMain.handle('skills:import-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }] })
+  if (result.canceled || !result.filePaths[0]) return null
+  const file = result.filePaths[0]
+  const stat = await fs.stat(file)
+  if (stat.size > MAX_SKILL_FILE_BYTES) throw new Error(t('The file is too large to be a skill (max {count} characters)', { count: MAX_SKILL_CHARS }))
+  return skillFromMarkdown(await fs.readFile(file, 'utf8'), path.basename(file))
+})
+ipcMain.handle('skills:open-folder', (_event, { scope, base } = {}) => shell.openPath(skillsStore.openFolder(scope, base)))
+ipcMain.handle('skills:set-active', (_event, { directory, active } = {}) => {
+  if (directory) {
+    const { file } = projectFileFor(directory)
+    file.initialize()
+    return file.setActiveSkills(active)
+  }
+  return projectFile.setActiveSkills(active)
 })
 ipcMain.handle('project:get-settings', () => projectFile.getSettings())
 // Contesto dell'assistente per il documento attivo: le istruzioni di tutti i progetti coinvolti, dal più esterno al più vicino.
@@ -576,6 +621,47 @@ ipcMain.handle('images:capture-webview', async (_event, contentsId) => {
 })
 ipcMain.handle('chat:save-attachment', (_event, attachment) => chatStore.saveAttachment(attachment || {}))
 ipcMain.handle('chat:get-attachment', (_event, id) => chatStore.getAttachment(id))
+// File allegati dall'utente in chat (scelti col dialogo o trascinati, anche fuori dal progetto): solo immagini e PDF,
+// che il modello legge in modo nativo. Le immagini vengono normalizzate (ridimensionate, PNG o JPEG).
+const CHAT_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp']
+const MAX_CHAT_IMAGE_BYTES = 8 * 1024 * 1024
+const MAX_CHAT_PDF_BYTES = 20 * 1024 * 1024
+async function readChatAttachment(filePath) {
+  const absolute = path.resolve(String(filePath || ''))
+  const name = path.basename(absolute)
+  const extension = path.extname(absolute).slice(1).toLowerCase()
+  const isPdf = extension === 'pdf'
+  if (!isPdf && !CHAT_IMAGE_EXTENSIONS.includes(extension)) throw new Error(t('{name}: only images and PDF files can be attached', { name }))
+  const stat = await fs.stat(absolute)
+  if (!stat.isFile()) throw new Error(t('{name}: only images and PDF files can be attached', { name }))
+  const limit = isPdf ? MAX_CHAT_PDF_BYTES : MAX_CHAT_IMAGE_BYTES
+  if (stat.size > limit) throw new Error(t('{name} is too large (max {size} MB)', { name, size: Math.round(limit / 1024 / 1024) }))
+  const buffer = await fs.readFile(absolute)
+  if (isPdf) {
+    if (buffer.subarray(0, 5).toString('latin1') !== '%PDF-') throw new Error(t('{name} is not a valid PDF file', { name }))
+    return { kind: 'pdf', mime: 'application/pdf', data: buffer.toString('base64'), label: name, size: buffer.length }
+  }
+  // Formati che Electron non decodifica (es. WebP, GIF): il renderer li converte in PNG e li ripassa da `chat:prepare-image`.
+  try {
+    return { kind: 'image', ...images.prepareBuffer(buffer), label: name, size: buffer.length }
+  } catch {
+    return { kind: 'raw-image', mime: `image/${extension === 'jpg' ? 'jpeg' : extension}`, data: buffer.toString('base64'), label: name, size: buffer.length }
+  }
+}
+ipcMain.handle('chat:pick-attachments', async (_event, { images: allowImages = false, pdf = false } = {}) => {
+  const extensions = [...(allowImages ? CHAT_IMAGE_EXTENSIONS : []), ...(pdf ? ['pdf'] : [])]
+  if (!extensions.length) return []
+  const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile', 'multiSelections'], filters: [{ name: t('Attachments'), extensions }] })
+  return result.canceled ? [] : result.filePaths
+})
+ipcMain.handle('chat:read-attachment', (_event, filePath) => readChatAttachment(filePath))
+// Immagine incollata o convertita dal renderer (base64): stessa normalizzazione delle altre.
+ipcMain.handle('chat:prepare-image', (_event, { data } = {}) => {
+  const buffer = Buffer.from(String(data || ''), 'base64')
+  if (!buffer.length) throw new Error(t('Empty image or unsupported format'))
+  if (buffer.length > MAX_CHAT_IMAGE_BYTES) throw new Error(t('Image too large'))
+  return images.prepareBuffer(buffer)
+})
 ipcMain.handle('notes:list', (_event, filePath) => notesStore.list(filePath))
 ipcMain.handle('notes:list-all', () => (projectPath ? notesStore.listAll() : []))
 ipcMain.handle('notes:add', (_event, { filePath, note }) => notesStore.add(filePath, note))
@@ -753,6 +839,7 @@ ipcMain.handle('ai:login', (_event, provider) => aiProviders.login(provider, {
 }))
 ipcMain.handle('ai:login-code', (_event, code) => aiProviders.submitLoginCode(code))
 ipcMain.handle('ai:models', (_event, request) => aiProviders.listModels(request || {}))
+ipcMain.handle('ai:model-inputs', (_event, request) => aiProviders.listModelInputs(request || {}))
 ipcMain.handle('ai:has-api-key', (_event, provider) => aiProviders.hasApiKey(provider))
 ipcMain.handle('ai:save-api-key', (_event, value, provider) => aiProviders.saveApiKey(value, provider))
 ipcMain.handle('ai:chat', (_event, messages) => aiProviders.chat(messages))

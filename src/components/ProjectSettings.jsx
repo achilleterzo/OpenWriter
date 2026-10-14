@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Check, FolderCog } from 'lucide-react'
+import SkillsManager from './SkillsManager.jsx'
 import SpellcheckLanguages from './SpellcheckLanguages.jsx'
 import { formatNumber } from '../i18n/index.js'
 import { t } from '../i18n/index.js'
@@ -122,6 +123,11 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
         </span>
       </label>
 
+      <div className="grid gap-2 text-sm text-slate-300">
+        <span>{t('Writing skills')}<span className="mt-1 block text-xs text-slate-500">{t('Tick the skills that the assistant applies by default in every conversation of this project; in the chat you can add or remove them for a single conversation. Project skills are saved in .ow/skills.')}</span></span>
+        <SkillsManager scope="project" projectPath={projectPath} onChanged={onChanged} />
+      </div>
+
       <CopyContext target={projectPath || null} onCopied={() => { onChanged?.(); setReloadToken((value) => value + 1) }} />
 
       <div className="flex items-center gap-3">
@@ -178,7 +184,7 @@ function CopyContext({ target, onCopied }) {
         {message && <span className="text-xs text-emerald-400">{message}</span>}
         {error && <span className="text-xs text-rose-400">{error}</span>}
       </div>
-      <span className="text-xs text-slate-500">{t('Copies context.md and the other instruction files of .ow that do not exist yet in this project.')}</span>
+      <span className="text-xs text-slate-500">{t('Copies context.md, the other instruction files and the skills of .ow that do not exist yet in this project.')}</span>
     </div>
   )
 }

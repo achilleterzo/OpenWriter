@@ -8,13 +8,15 @@ Owns the `.ow` project directory (format version 1). Its layout:
 .ow/
   project.json
   context.md
+  skills/<id>.md
   history/<document-path>/index.json
   history/<document-path>/<version-id>.md
 ```
 
-- Settings in `project.json`: name (max 200 chars), `ai` (assistant and document language), `options.autoVersions`, and `spellcheck.languages`; unknown keys are preserved. `context.md` holds the assistant context capped at 20,000 characters. Writes are atomic (temp file + rename); corrupt JSON raises instead of overwriting user data; on Windows the directory gets the hidden attribute.
+- Settings in `project.json`: name (max 200 chars), `ai` (assistant and document language), `options.autoVersions`, `spellcheck.languages`, and `skills.active` (writing skills active by default, see [skills-store.cjs](skills-store.cjs.md)); unknown keys are preserved. `saveSettings` changes `skills.active` only when `skills` is passed; `setActiveSkills(ids)` saves it alone. `context.md` holds the assistant context capped at 20,000 characters. Writes are atomic (temp file + rename); corrupt JSON raises instead of overwriting user data; on Windows the directory gets the hidden attribute.
 - initialize: creates the base files when missing and leaves everything else untouched.
 - History versions (`addVersion`): skipped when identical to the latest text (unless labelled); each entry stores id (UUID), timestamp, label (max 120), `auto` flag, and size. Up to 100 versions per document (`MAX_VERSIONS_PER_DOCUMENT`): beyond that, oldest automatic versions are discarded first, then the oldest overall. Keys are project-relative paths, so history mirrors the folder structure; reads verify the id against the index, so lookups cannot escape the history directory.
 - `moveHistory(from, to)`: carries a document's history directory along on rename/move.
-- Exposed: `directoryName`, `initialize`, `moveHistory`, `getSettings` (with `context` text), `saveSettings`, `autoVersionsEnabled`, `addVersion`, `listVersions` (newest first), `getVersion`, `deleteVersion` (removing the directory when the last version goes, deleting the index too).
+- `getContextChain(document)`: the `.ow` chain from the outermost to the one nearest to the document; each entry carries `path`, `base` (absolute folder), `name`, `context`, `extraContext`, languages and `activeSkills`.
+- Exposed: `directoryName`, `initialize`, `moveHistory`, `getSettings` (with `context` text and `skills.active`), `getContextChain`, `saveSettings`, `setActiveSkills`, `autoVersionsEnabled`, `addVersion`, `listVersions` (newest first), `getVersion`, `deleteVersion` (removing the directory when the last version goes, deleting the index too).
 
