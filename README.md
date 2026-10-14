@@ -133,6 +133,8 @@ npm start
 
 The technical documentation is available in [`docs/INDEX.md`](docs/INDEX.md). It covers the application architecture, project storage, assistant tools, development workflow, and release process.
 
+All the project documentation in `docs/` was produced with OpenWriter itself, using its editor and AI assistant.
+
 ## Building installers
 
 ```bash
