@@ -17,6 +17,7 @@ import Link from '@tiptap/extension-link'
 import { TaskItem, TaskList } from '@tiptap/extension-list'
 import { FrontMatter, HtmlBlock, HtmlInline } from '../lib/rawMarkdownExtensions.js'
 import { mergeAttributes } from '@tiptap/core'
+import SelectionToolbar from './SelectionToolbar.jsx'
 import { displaySource, isInside, dirname, resolveDocumentLink, sourceForImage } from '../lib/imagePaths.js'
 import { t } from '../i18n/index.js'
 
@@ -38,7 +39,7 @@ const DocumentLink = Link.configure({ openOnClick: false }).extend({
   },
 })
 
-function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onInteract, onNoteSelect, onStatus, onOpenLink, onSave }) {
+function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onNoteSelect, onStatus, onOpenLink, onSave }) {
   // Vista sorgente: il Markdown grezzo del documento in un campo di testo. È solo un modo di lavorare o copiare il testo:
   // note, assistente e ricerca restano sull'editor visuale, che si aggiorna man mano che si scrive.
   const [sourceOpen, setSourceOpen] = useState(false)
@@ -73,8 +74,20 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
     }
   }
 
+  // Barra fluttuante dei collegamenti: `linkRequest` cambia a ogni richiesta di inserire o modificare un collegamento (Ctrl+K o pulsante).
+  const [linkRequest, setLinkRequest] = useState(0)
+  const editorArea = useRef(null)
+
   const editor = useEditor({
     editorProps: {
+      handleKeyDown(view, event) {
+        if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
+          event.preventDefault()
+          setLinkRequest((value) => value + 1)
+          return true
+        }
+        return false
+      },
       handleClick(view, pos, event) {
         if (!(event.ctrlKey || event.metaKey)) return false
         const anchor = event.target?.closest?.('a[href]')
@@ -232,7 +245,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
 
   return (
     <div className={active ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
-      <DocumentToolbar editor={editor} onSave={onSave} dirty={tab.dirty} sourceOpen={sourceOpen} onToggleSource={toggleSource} onCopySource={() => navigator.clipboard.writeText(sourceLatest.current)} onImage={pickImage} onFind={() => { if (findOpen) closeFind(); else { setFindOpen(true); setFocusToken((value) => value + 1) } }} findOpen={findOpen} />
+      <DocumentToolbar editor={editor} onSave={onSave} dirty={tab.dirty} sourceOpen={sourceOpen} onToggleSource={toggleSource} aiScore={tab.aiScore} onCheckAi={onCheckAi} onCopySource={() => navigator.clipboard.writeText(sourceLatest.current)} onImage={pickImage} onLink={() => { editor.commands.focus(); setLinkRequest((value) => value + 1) }} onFind={() => { if (findOpen) closeFind(); else { setFindOpen(true); setFocusToken((value) => value + 1) } }} findOpen={findOpen} />
       {pendingCount > 0 && !sourceOpen && (
         <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 bg-emerald-400/10 px-4 py-2 text-xs text-slate-200">
           <span>{t('{count} edits to review', { count: pendingCount })}</span>
@@ -240,7 +253,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
           <button type="button" className="rounded bg-rose-400/20 px-2 py-1 font-medium text-rose-300 transition hover:bg-rose-400/35" onClick={() => rejectAll(editor)}>{t('Reject all')}</button>
         </div>
       )}
-      <div className="relative min-h-0 flex-1">
+      <div ref={editorArea} className="relative min-h-0 flex-1">
         {findOpen && !sourceOpen && <FindBar editor={editor} replaceMode={replaceMode} onReplaceMode={setReplaceMode} focusToken={focusToken} onClose={closeFind} />}
         {sourceOpen && (
           <textarea
@@ -255,6 +268,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
         <div className={`h-full overflow-y-auto ${sourceOpen ? 'hidden' : ''}`} data-document-scroll={tab.id} onScroll={interact} onWheel={interact} onMouseDown={interact} onKeyDown={interact}>
           <EditorContent editor={editor} className="document-editor mx-auto" />
         </div>
+        {!sourceOpen && <SelectionToolbar editor={editor} containerRef={editorArea} request={linkRequest} documentPath={tab.filePath || null} onOpenLink={onOpenLink} />}
       </div>
     </div>
   )
