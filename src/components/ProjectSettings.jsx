@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Check, FolderCog } from 'lucide-react'
+import { Camera, Check, FolderCog, X } from 'lucide-react'
+import { ProjectAvatar } from './ProjectIcon.jsx'
 import SkillsManager from './SkillsManager.jsx'
+import { chooseProjectIcon, invalidateProjectIcon, useProjectIcon } from '../lib/projectIcons.js'
 import SpellcheckLanguages from './SpellcheckLanguages.jsx'
 import { formatNumber } from '../i18n/index.js'
 import { t } from '../i18n/index.js'
@@ -9,7 +11,68 @@ const electronAPI = window.electronAPI
 const languages = ['Italiano', 'English', 'Español', 'Français', 'Deutsch', 'Português']
 const fieldClass = 'mt-2 w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2.5 text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400'
 
-export default function ProjectSettings({ project, projectPath = null, onChanged, onEditContext }) {
+// Dove sta il progetto sul disco: il percorso, e lo spostamento in un'altra cartella (la `.ow` si porta dietro tutto).
+function ProjectLocation({ directory, onMove, onError }) {
+  const [busy, setBusy] = useState(false)
+  if (!directory) return null
+
+  async function move() {
+    setBusy(true)
+    try { await onMove(directory) } catch (reason) { onError(reason.message) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="text-sm text-slate-300">
+      {t('Location')}
+      <div className="mt-2 flex items-center gap-2">
+        <code className="min-w-0 flex-1 truncate rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-300" title={directory}>{directory}</code>
+        <button type="button" disabled={busy} className="shrink-0 rounded-md bg-slate-700 px-3 py-2 text-xs font-medium text-slate-100 transition hover:bg-slate-600 disabled:opacity-50" onClick={move}>{t('Move…')}</button>
+      </div>
+    </div>
+  )
+}
+
+// Icona del progetto: l'anteprima stessa è il pulsante per scegliere un'immagine (png, jpg, svg…), ridimensionata e tenuta nella `.ow`.
+// Senza immagine si vede l'avatar generato dal nome. Compare nell'elenco dei progetti e nell'albero dei file.
+function ProjectIconField({ directory, name, onChanged, onError }) {
+  const icon = useProjectIcon(directory)
+  const [busy, setBusy] = useState(false)
+  if (!directory) return null
+
+  async function choose() {
+    setBusy(true)
+    try {
+      if (await chooseProjectIcon(directory, { unreadable: t('The image could not be read') })) onChanged?.()
+    } catch (reason) {
+      onError(reason.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove() {
+    try {
+      await electronAPI.removeProjectIcon(directory)
+      invalidateProjectIcon(directory)
+      onChanged?.()
+    } catch (reason) {
+      onError(reason.message)
+    }
+  }
+
+  const label = name || directory.split(/[\\/]/).filter(Boolean).at(-1) || directory
+  return (
+    <div className="group relative shrink-0">
+      <button type="button" disabled={busy} aria-label={t('Choose the project icon')} title={t('Choose the project icon')} className="relative block rounded-full outline-none ring-accent-400 transition focus-visible:ring-2 disabled:opacity-60" onClick={choose}>
+        <ProjectAvatar directory={directory} name={label} active size={72} />
+        <span className="absolute inset-0 flex items-center justify-center rounded-full bg-slate-950/60 text-slate-50 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100"><Camera size={20} /></span>
+      </button>
+      {icon && <button type="button" aria-label={t('Remove the image')} title={t('Remove the image')} className="absolute -right-1 -top-1 rounded-full border border-slate-700 bg-slate-900 p-1 text-slate-400 opacity-0 transition hover:text-slate-50 group-hover:opacity-100 focus:opacity-100" onClick={remove}><X size={11} /></button>}
+    </div>
+  )
+}
+
+export default function ProjectSettings({ project, projectPath = null, onChanged, onEditContext, onMove }) {
   const [form, setForm] = useState(null)
   const [spellcheck, setSpellcheck] = useState({ available: [], global: [] })
   const [info, setInfo] = useState({ available: false })
@@ -65,8 +128,13 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
         <p className="mt-2 max-w-xl text-sm leading-6 text-slate-400">{t('Saved in the project\'s .ow folder, together with the version history: you can version it or copy it along with the project.')}</p>
       </div>
 
-      <label className="text-sm text-slate-300">{t('Project name')}<input value={form.name} maxLength={200} className={fieldClass} placeholder={t('Optional')} onChange={(event) => update({ name: event.target.value })} />
-      </label>
+      <div className="flex items-center gap-4">
+        <ProjectIconField directory={projectPath || (typeof project === 'string' ? project : '')} name={form.name} onChanged={onChanged} onError={setError} />
+        <label className="min-w-0 flex-1 text-sm text-slate-300">{t('Project name')}<input value={form.name} maxLength={200} className={fieldClass} placeholder={t('Optional')} onChange={(event) => update({ name: event.target.value })} />
+        </label>
+      </div>
+
+      {onMove && <ProjectLocation directory={projectPath || (typeof project === 'string' ? project : '')} onMove={onMove} onError={setError} />}
 
       {info.parent && (
         <label className="flex items-start gap-3 text-sm text-slate-300">
