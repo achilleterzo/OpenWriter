@@ -77,7 +77,7 @@ Responses are streamed and may include the model's reasoning or progress state. 
 
 CLI providers run without API keys from the environment; authentication is handled through OAuth. OpenWriter instructs them not to run shell commands or modify files outside the app's controlled project operations.
 
-Ollama, Ollama Cloud, Codex, and Claude are supported.
+Ollama, Ollama Cloud, OpenRouter, Codex, and Claude are supported.
 
 ## Spell Checking
 
@@ -154,7 +154,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
 
 ## Privacy and Data
 
-Settings, sessions, window state, and the encrypted Ollama Cloud key are stored in Electron's user data directory.
+Settings, sessions, window state, and the encrypted Ollama Cloud and OpenRouter keys are stored in Electron's user data directory.
 
 Document text is sent only to the enabled AI provider when a message is submitted. With local Ollama, data does not leave the computer.
 

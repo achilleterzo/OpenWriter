@@ -6,17 +6,24 @@ const os = require('node:os')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
 
-const PROVIDERS = ['ollama', 'ollama-cloud', 'codex', 'claude']
+const PROVIDERS = ['ollama', 'ollama-cloud', 'openrouter', 'codex', 'claude']
 const CODEX_SANDBOXES = ['read-only', 'workspace-write', 'danger-full-access']
-const LABELS = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', codex: 'Codex', claude: 'Claude' }
+const LABELS = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', openrouter: 'OpenRouter', codex: 'Codex', claude: 'Claude' }
+// Provider con chiave API salvata (cifrata) dall'app.
+const KEY_PROVIDERS = ['ollama-cloud', 'openrouter']
 // Livelli di ragionamento supportati da ciascun provider; il primo è il predefinito.
 const REASONING_LEVELS = {
   ollama: ['instant', 'low', 'medium', 'high'],
   'ollama-cloud': ['instant', 'low', 'medium', 'high'],
+  openrouter: ['default', 'low', 'medium', 'high'],
   codex: ['default', 'low', 'medium', 'high', 'xhigh'],
   claude: ['default', 'low', 'medium', 'high', 'xhigh', 'max'],
 }
 const OLLAMA_CLOUD_URL = 'https://ollama.com'
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1'
+// Errori temporanei di OpenRouter (limiti di frequenza, provider a monte non disponibile): si ritenta con attese crescenti.
+const OPENROUTER_TRANSIENT_STATUSES = [408, 429, 500, 502, 503, 504]
+const OPENROUTER_RETRY_DELAYS_MS = [1500, 4000]
 const CLAUDE_MODEL_ALIASES = ['default', 'best', 'sonnet', 'opus', 'haiku', 'sonnet[1m]', 'opus[1m]', 'opusplan']
 const CLI_TIMEOUT_MS = 180000
 const HTTP_TIMEOUT_MS = 120000
@@ -96,6 +103,16 @@ function killTree(child) {
 }
 
 const abortError = () => Object.assign(new Error(t('Request interrupted')), { name: 'AbortError' })
+
+// Attesa interrompibile: con `signal` annullato termina subito con AbortError.
+function wait(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(abortError())
+    const onAbort = () => { clearTimeout(timer); reject(abortError()) }
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve() }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
 
 // Come runCli, ma passa ogni riga di stdout a `onLine` appena arriva e si può interrompere con `signal`.
 function runCliStream(provider, args, { cwd, input = '', timeout = CLI_TIMEOUT_MS, onLine = () => {}, onStderr = () => {}, signal } = {}) {
@@ -211,7 +228,15 @@ function extractCliText(raw) {
   return String(candidates.at(-1) || text).trim()
 }
 
-function requestJson(urlString, { method = 'GET', headers = {} } = {}, body = null) {
+// Dettaglio leggibile da un corpo di errore: Ollama usa { error: "..." }, le API OpenAI-compatibili { error: { message } }.
+function errorDetail(raw) {
+  try {
+    const error = JSON.parse(raw)?.error
+    return typeof error === 'string' ? error : error?.message || raw
+  } catch { return raw }
+}
+
+function requestJson(urlString, { method = 'GET', headers = {}, service = 'Ollama' } = {}, body = null) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlString)
     const client = url.protocol === 'https:' ? https : http
@@ -221,22 +246,22 @@ function requestJson(urlString, { method = 'GET', headers = {} } = {}, body = nu
       response.on('data', (chunk) => { data += chunk })
       response.on('end', () => {
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          let detail = data
-          try { detail = JSON.parse(data)?.error || detail } catch {}
+          const detail = errorDetail(data)
           return reject(new Error(`HTTP ${response.statusCode}${detail ? `: ${String(detail).slice(0, 200)}` : ''}`))
         }
         try { resolve(JSON.parse(data)) } catch { reject(new Error(t('Invalid JSON response'))) }
       })
     })
     request.on('error', reject)
-    request.on('timeout', () => request.destroy(new Error(t('Ollama request timed out after {value} seconds', { value: HTTP_TIMEOUT_MS / 1000 }))))
+    request.on('timeout', () => request.destroy(new Error(t('{name} request timed out after {value} seconds', { name: service, value: HTTP_TIMEOUT_MS / 1000 }))))
     if (body) request.write(JSON.stringify(body))
     request.end()
   })
 }
 
-// POST con risposta NDJSON (Ollama con stream:true): chiama `onLine` per ogni riga JSON appena arriva.
-function streamJson(urlString, { headers = {} } = {}, body, onObject, signal) {
+// POST in streaming: chiama `onObject` per ogni oggetto JSON appena arriva. Di base le righe sono NDJSON (Ollama con
+// stream:true); con `sse` sono Server-Sent Events (API OpenAI-compatibili): righe "data: {...}", commenti e "[DONE]" si saltano.
+function streamJson(urlString, { headers = {}, sse = false, service = 'Ollama' } = {}, body, onObject, signal) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(abortError())
     const url = new URL(urlString)
@@ -259,17 +284,18 @@ function streamJson(urlString, { headers = {} } = {}, body, onObject, signal) {
         const lines = buffer.split('\n')
         buffer = lines.pop() ?? ''
         for (const line of lines) {
-          if (!line.trim()) continue
-          try { onObject(JSON.parse(line)) } catch (error) { if (error?.fatal) { request.destroy(error); return } }
+          const payload = sse ? ssePayload(line) : line.trim()
+          if (!payload) continue
+          try { onObject(JSON.parse(payload)) } catch (error) { if (error?.fatal) { finish(error); request.destroy(); return } }
         }
       })
       response.on('end', () => {
         if (failed) {
-          let detail = errorBody
-          try { detail = JSON.parse(errorBody)?.error || detail } catch {}
+          const detail = errorDetail(errorBody)
           return finish(Object.assign(new Error(`HTTP ${response.statusCode}${detail ? `: ${String(detail).slice(0, 200)}` : ''}`), { httpStatus: response.statusCode }))
         }
-        if (buffer.trim()) { try { onObject(JSON.parse(buffer)) } catch {} }
+        const rest = sse ? ssePayload(buffer) : buffer.trim()
+        if (rest) { try { onObject(JSON.parse(rest)) } catch (error) { if (error?.fatal) return finish(error) } }
         finish(null)
       })
       response.on('error', finish)
@@ -277,10 +303,18 @@ function streamJson(urlString, { headers = {} } = {}, body, onObject, signal) {
     const onAbort = () => { request.destroy(); finish(abortError()) }
     signal?.addEventListener('abort', onAbort)
     request.on('error', finish)
-    request.on('timeout', () => request.destroy(new Error(t('No response from Ollama for {value} seconds', { value: HTTP_TIMEOUT_MS / 1000 }))))
+    request.on('timeout', () => request.destroy(new Error(t('No response from {name} for {value} seconds', { name: service, value: HTTP_TIMEOUT_MS / 1000 }))))
     request.write(JSON.stringify(body))
     request.end()
   })
+}
+
+// Contenuto JSON di una riga SSE ("data: {...}"), oppure '' per righe vuote, commenti (": ...") e la fine "[DONE]".
+function ssePayload(line) {
+  const text = line.trim()
+  if (!text.startsWith('data:')) return ''
+  const payload = text.slice(5).trim()
+  return payload === '[DONE]' ? '' : payload
 }
 
 function normalizeProviderConfig(provider, value = {}) {
@@ -288,13 +322,13 @@ function normalizeProviderConfig(provider, value = {}) {
   const normalized = { model: String(config.model || ''), reasoning: REASONING_LEVELS[provider].includes(config.reasoning) ? config.reasoning : REASONING_LEVELS[provider][0] }
   // Sandbox di Codex (solo per Codex): impostazione avanzata, predefinito workspace-write.
   if (provider === 'codex') normalized.sandbox = CODEX_SANDBOXES.includes(config.sandbox) ? config.sandbox : 'workspace-write'
-  // Parametri di generazione (impostazioni avanzate di Ollama): vuoto = predefinito del modello.
-  if (provider === 'ollama' || provider === 'ollama-cloud') {
+  // Parametri di generazione (impostazioni avanzate di Ollama e OpenRouter): vuoto = predefinito del modello.
+  if (provider === 'ollama' || provider === 'ollama-cloud' || provider === 'openrouter') {
     const whole = (value, min, max) => { const number = Math.round(Number(value)); return value !== '' && value != null && Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : '' }
     const temperature = Number(config.temperature)
-    normalized.numCtx = whole(config.numCtx, 512, 1048576)
-    normalized.numPredict = whole(config.numPredict, 1, 131072)
     normalized.temperature = config.temperature !== '' && config.temperature != null && Number.isFinite(temperature) ? Math.min(2, Math.max(0, temperature)) : ''
+    normalized.numPredict = whole(config.numPredict, 1, 131072)
+    if (provider !== 'openrouter') normalized.numCtx = whole(config.numCtx, 512, 1048576)
     if (provider === 'ollama') normalized.keepAlive = /^-?\d+(?:[smh])?$/.test(String(config.keepAlive || '').trim()) ? String(config.keepAlive).trim() : ''
   }
   if (provider === 'ollama') normalized.endpoint = String(config.endpoint || 'http://localhost:11434').replace(/\/$/, '')
@@ -329,7 +363,7 @@ function normalizeSettings(settings = {}) {
 }
 
 /**
- * Livello di connessione ai provider AI (Ollama, Ollama Cloud, Codex CLI, Claude CLI).
+ * Livello di connessione ai provider AI (Ollama, Ollama Cloud, OpenRouter, Codex CLI, Claude CLI).
  * `app` e `safeStorage` arrivano da electron; `getWorkingDirectory` è opzionale.
  */
 function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undefined, log: externalLog = () => {} }) {
@@ -343,10 +377,12 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     } catch { /* il log non deve mai bloccare la richiesta */ }
   }
   let settings
-  let sessionApiKey = ''
+  // Chiavi API appena inserite, valide anche dove la cifratura non è disponibile; per provider.
+  const sessionApiKeys = {}
 
   const settingsPath = () => path.join(app.getPath('userData'), 'ai-settings.json')
-  const credentialPath = () => path.join(app.getPath('userData'), 'ollama-cloud-key.bin')
+  const keyProvider = (provider) => (KEY_PROVIDERS.includes(provider) ? provider : 'ollama-cloud')
+  const credentialPath = (provider) => path.join(app.getPath('userData'), `${keyProvider(provider)}-key.bin`)
 
   function getSettings() {
     if (settings) return settings
@@ -364,32 +400,40 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
   const activeProvider = () => getSettings().provider
   const providerConfig = (provider = activeProvider()) => getSettings().providers[provider] || normalizeProviderConfig(provider)
 
-  function loadApiKey() {
+  function loadApiKey(provider) {
     try {
       if (!safeStorage.isEncryptionAvailable()) return ''
-      return safeStorage.decryptString(Buffer.from(fs.readFileSync(credentialPath(), 'utf8'), 'base64'))
+      return safeStorage.decryptString(Buffer.from(fs.readFileSync(credentialPath(provider), 'utf8'), 'base64'))
     } catch { return '' }
   }
 
-  function saveApiKey(value) {
+  function saveApiKey(value, provider = 'ollama-cloud') {
     if (!safeStorage.isEncryptionAvailable()) throw new Error(t('Secure credential storage is not available on this system'))
     const apiKey = String(value || '').trim()
-    sessionApiKey = apiKey
+    const file = credentialPath(provider)
+    sessionApiKeys[keyProvider(provider)] = apiKey
     if (!apiKey) {
-      try { fs.unlinkSync(credentialPath()) } catch {}
+      try { fs.unlinkSync(file) } catch {}
       return true
     }
-    fs.mkdirSync(path.dirname(credentialPath()), { recursive: true })
-    fs.writeFileSync(credentialPath(), safeStorage.encryptString(apiKey).toString('base64'), { encoding: 'utf8', mode: 0o600 })
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, safeStorage.encryptString(apiKey).toString('base64'), { encoding: 'utf8', mode: 0o600 })
     return true
   }
 
-  const apiKey = (supplied = '') => String(supplied || sessionApiKey || loadApiKey()).trim()
+  const apiKey = (provider = 'ollama-cloud', supplied = '') => String(supplied || sessionApiKeys[keyProvider(provider)] || loadApiKey(provider)).trim()
 
   function cloudOptions(supplied = '') {
-    const key = apiKey(supplied)
+    const key = apiKey('ollama-cloud', supplied)
     if (!key) throw new Error(t('Ollama Cloud API key required'))
     return { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' } }
+  }
+
+  // Intestazioni per OpenRouter: la chiave e il nome dell'app (attribuzione facoltativa, mostrata nelle statistiche di OpenRouter).
+  function openRouterOptions(supplied = '') {
+    const key = apiKey('openrouter', supplied)
+    if (!key) throw new Error(t('OpenRouter API key required'))
+    return { service: 'OpenRouter', headers: { Authorization: `Bearer ${key}`, Accept: 'application/json', 'X-Title': 'OpenWriter' } }
   }
 
   function thinkingPayload(provider) {
@@ -409,7 +453,8 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     const config = providerConfig()
     if (!getSettings().aiEnabled) throw new Error(t('AI generation is turned off in the settings'))
     if (activeProvider() === 'ollama' && !(config.endpoint && config.model)) throw new Error(t('Configure the Ollama endpoint and model in the settings'))
-    if (activeProvider() === 'ollama-cloud' && !(apiKey() && config.model)) throw new Error(t('Configure the Ollama Cloud API key and model in the settings'))
+    if (activeProvider() === 'ollama-cloud' && !(apiKey('ollama-cloud') && config.model)) throw new Error(t('Configure the Ollama Cloud API key and model in the settings'))
+    if (activeProvider() === 'openrouter' && !(apiKey('openrouter') && config.model)) throw new Error(t('Configure the OpenRouter API key and model in the settings'))
   }
 
   // Invia il prompt alla CLI in modalità streaming e traduce i suoi eventi in { type: 'text' | 'thinking' | 'status', ... }.
@@ -570,6 +615,128 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     }
   }
 
+  // Messaggi nel formato OpenAI usato da OpenRouter. In ingresso hanno il formato di Ollama: le chiamate agli strumenti
+  // non hanno id e i risultati sono legati per nome (tool_name), quindi si assegna un id a ogni chiamata e lo si
+  // riporta nel risultato che la segue. Le immagini diventano parti "image_url" con un data URI.
+  function openRouterMessages(list) {
+    let pendingCall = null
+    let counter = 0
+    return list.map((message) => {
+      if (message.role === 'tool') {
+        const call = pendingCall
+        pendingCall = null
+        if (call) return { role: 'tool', tool_call_id: call, content: message.content }
+        return { role: 'user', content: `[Result of ${message.tool_name || 'tool'}]\n${message.content}` }
+      }
+      if (message.role === 'assistant' && message.tool_calls?.length) {
+        const calls = message.tool_calls.map((call) => {
+          const args = call?.function?.arguments
+          return { id: `call_${++counter}`, type: 'function', function: { name: String(call?.function?.name || ''), arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}) } }
+        })
+        pendingCall = calls[0].id
+        return { role: 'assistant', content: message.content || null, tool_calls: calls }
+      }
+      if (message.images?.length) {
+        return {
+          role: message.role,
+          content: [
+            ...(message.content ? [{ type: 'text', text: message.content }] : []),
+            ...message.images.map((image) => ({ type: 'image_url', image_url: { url: `data:${image.mime || 'image/png'};base64,${image.data}` } })),
+          ],
+        }
+      }
+      return { role: message.role, content: message.content }
+    })
+  }
+
+  // OpenRouter in streaming (SSE): testo in delta.content, ragionamento in delta.reasoning, chiamate agli strumenti in
+  // delta.tool_calls a pezzi (nome e argomenti JSON da ricomporre). Come per Ollama, la chiamata diventa un blocco <tool_call>.
+  async function streamOpenRouter(model, messages, onEvent, signal, tools = []) {
+    const config = providerConfig('openrouter')
+    const params = {
+      ...(config.temperature !== '' && config.temperature != null ? { temperature: config.temperature } : {}),
+      ...(config.numPredict !== '' && config.numPredict != null ? { max_tokens: config.numPredict } : {}),
+    }
+    const reasoning = config.reasoning && config.reasoning !== 'default' ? { reasoning: { effort: config.reasoning } } : {}
+    const once = async (extra, state) => {
+      let text = ''
+      let call = null
+      await streamJson(`${OPENROUTER_URL}/chat/completions`, { ...openRouterOptions(), sse: true }, { model, messages, ...params, ...extra, stream: true }, (chunk) => {
+        // Errore arrivato dentro lo stream (la risposta HTTP era già 200): di solito il provider a monte ha fallito.
+        if (chunk.error) {
+          log(`[AI] OpenRouter errore nello stream: ${JSON.stringify(chunk.error).slice(0, 800)}`)
+          const upstream = chunk.provider ? ` (${chunk.provider})` : ''
+          throw Object.assign(new Error(`${String(chunk.error.message || chunk.error)}${upstream}`), { fatal: true, streamError: true })
+        }
+        const choice = chunk.choices?.[0]
+        const delta = choice?.delta
+        if (!delta) return
+        if (delta.reasoning) { state.emitted = true; onEvent({ type: 'thinking', delta: delta.reasoning }) }
+        if (delta.content) { state.emitted = true; text += delta.content; onEvent({ type: 'text', delta: delta.content }) }
+        for (const part of delta.tool_calls || []) {
+          if ((part.index ?? 0) !== 0) continue
+          call ??= { name: '', arguments: '' }
+          if (part.function?.name) call.name += part.function.name
+          if (part.function?.arguments) call.arguments += part.function.arguments
+        }
+      }, signal)
+      if (call?.name) {
+        let args = {}
+        try { args = call.arguments.trim() ? JSON.parse(call.arguments) : {} } catch { args = {} }
+        const block = `${text && !text.endsWith('\n') ? '\n' : ''}<tool_call>${JSON.stringify({ name: call.name, arguments: args })}</tool_call>`
+        text += block
+        onEvent({ type: 'text', delta: block })
+      }
+      return text
+    }
+
+    // Su un errore temporaneo si ritenta, ma solo se non è ancora arrivato nulla: il testo già mostrato non si può ritirare.
+    const attempt = async (extra) => {
+      for (let retry = 0; ; retry += 1) {
+        const state = { emitted: false }
+        try {
+          return await once(extra, state)
+        } catch (error) {
+          const transient = error.streamError || OPENROUTER_TRANSIENT_STATUSES.includes(error.httpStatus)
+          if (error.name === 'AbortError' || !transient || state.emitted || retry >= OPENROUTER_RETRY_DELAYS_MS.length) {
+            if (transient) log(`[AI] OpenRouter errore definitivo dopo ${retry + 1} tentativi: ${error.message}`)
+            throw error
+          }
+          log(`[AI] OpenRouter errore temporaneo, nuovo tentativo ${retry + 1}: ${error.message}`)
+          onEvent({ type: 'status', text: t('{name} is not responding, trying again…', { name: 'OpenRouter' }) })
+          await wait(OPENROUTER_RETRY_DELAYS_MS[retry], signal)
+        }
+      }
+    }
+
+    const withTools = tools.length ? { tools } : {}
+    const tryReasoning = async (extra) => {
+      try {
+        return await attempt({ ...reasoning, ...extra })
+      } catch (error) {
+        // Se il modello non accetta il parametro di ragionamento si riprova senza.
+        if (error.name === 'AbortError' || !reasoning.reasoning || error.httpStatus !== 400) throw error
+        return attempt(extra)
+      }
+    }
+    try {
+      return await tryReasoning(withTools)
+    } catch (error) {
+      // Nessun endpoint del modello supporta gli strumenti (OpenRouter risponde 404 o 400): il chiamante passa al formato testuale.
+      if (error.name === 'AbortError' || !tools.length || ![400, 404].includes(error.httpStatus)) throw error
+      throw new Error(`TOOLS_UNSUPPORTED: ${error.message}`)
+    }
+  }
+
+  // Catalogo dei modelli di OpenRouter (pubblico), tenuto in memoria per l'elenco e per le capacità di ciascun modello.
+  let openRouterCatalog = null
+  async function openRouterModels(refresh = false) {
+    if (openRouterCatalog && !refresh) return openRouterCatalog
+    const data = await requestJson(`${OPENROUTER_URL}/models`, { service: 'OpenRouter', headers: { Accept: 'application/json' } })
+    openRouterCatalog = (Array.isArray(data?.data) ? data.data : []).filter((model) => typeof model?.id === 'string' && model.id)
+    return openRouterCatalog
+  }
+
   /**
    * Invia una conversazione `[{ role, content }]` al provider attivo in streaming.
    * `onEvent` riceve { type: 'text' | 'thinking' | 'status', delta | text }; `signal` interrompe la richiesta.
@@ -595,6 +762,9 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     if (provider === 'ollama-cloud') {
       return (await streamOllama(OLLAMA_CLOUD_URL, { model: config.model, messages: ollamaMessages }, provider, cloudOptions(), onEvent, signal, tools)).trim()
     }
+    if (provider === 'openrouter') {
+      return (await streamOpenRouter(config.model, openRouterMessages(list), onEvent, signal, tools)).trim()
+    }
     // Le CLI ricevono un unico prompt: ogni immagine lascia un segnaposto [Immagine N] e viene allegata nello stesso ordine.
     const attached = []
     const prompt = list.map((message) => {
@@ -619,6 +789,19 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     if (!model) return { known: false, vision: false, tools: false }
     const key = `${provider}:${model}:${config.endpoint || ''}`
     if (capabilityCache.has(key)) return capabilityCache.get(key)
+    if (provider === 'openrouter') {
+      try {
+        const entry = (await openRouterModels()).find((item) => item.id === model)
+        if (!entry) return { known: false, vision: false, tools: false }
+        const inputs = Array.isArray(entry.architecture?.input_modalities) ? entry.architecture.input_modalities : []
+        const supported = Array.isArray(entry.supported_parameters) ? entry.supported_parameters : []
+        const result = { known: true, vision: inputs.includes('image'), tools: supported.includes('tools') }
+        capabilityCache.set(key, result)
+        return result
+      } catch {
+        return { known: false, vision: false, tools: false }
+      }
+    }
     try {
       const options = provider === 'ollama-cloud' ? cloudOptions() : {}
       const endpoint = provider === 'ollama-cloud' ? OLLAMA_CLOUD_URL : config.endpoint
@@ -637,7 +820,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     const config = providerConfig(selected)
     const base = { provider: selected, label: LABELS[selected] }
     if (selected === 'ollama') return { ...base, installed: true, authenticated: false, configured: Boolean(config.endpoint && config.model) }
-    if (selected === 'ollama-cloud') return { ...base, installed: true, authenticated: Boolean(apiKey()), configured: Boolean(apiKey() && config.model) }
+    if (selected === 'ollama-cloud' || selected === 'openrouter') return { ...base, installed: true, authenticated: Boolean(apiKey(selected)), configured: Boolean(apiKey(selected) && config.model) }
     const command = cliCommand(selected)
     const status = await runCliStatus(selected, selected === 'codex' ? ['login', 'status'] : ['auth', 'status'])
     // `claude auth status` esce con 0 anche da non autenticato: va letto il campo loggedIn.
@@ -746,11 +929,16 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
   async function listModels({ provider = activeProvider(), endpoint, apiKey: suppliedKey } = {}) {
     if (provider === 'claude') return CLAUDE_MODEL_ALIASES
     if (provider === 'codex') return listCodexModels()
+    if (provider === 'openrouter') {
+      const supplied = String(suppliedKey || '').trim()
+      if (supplied) sessionApiKeys.openrouter = supplied
+      return (await openRouterModels(true)).map((model) => model.id).sort((left, right) => left.localeCompare(right))
+    }
     const names = (data) => (Array.isArray(data?.models) ? data.models : []).map((model) => model.name || model.model).filter(Boolean)
     if (provider === 'ollama-cloud') {
       const supplied = String(suppliedKey || '').trim()
       const data = await requestJson(`${OLLAMA_CLOUD_URL}/api/tags`, cloudOptions(supplied))
-      if (supplied) sessionApiKey = supplied
+      if (supplied) sessionApiKeys['ollama-cloud'] = supplied
       return names(data)
     }
     const target = String(endpoint || providerConfig('ollama').endpoint || '').replace(/\/$/, '')
@@ -758,7 +946,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     return names(await requestJson(`${target}/api/tags`))
   }
 
-  return { getSettings, saveSettings, hasApiKey: () => Boolean(loadApiKey()), saveApiKey, getStatus, login, submitLoginCode, stopLogin, listModels, chat, chatStream, getCapabilities }
+  return { getSettings, saveSettings, hasApiKey: (provider = 'ollama-cloud') => Boolean(loadApiKey(provider)), saveApiKey, getStatus, login, submitLoginCode, stopLogin, listModels, chat, chatStream, getCapabilities }
 }
 
 module.exports = { createAiProviders }

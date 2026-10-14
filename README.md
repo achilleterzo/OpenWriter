@@ -20,6 +20,7 @@ OpenWriter currently supports:
 
 - Ollama through a configurable local endpoint
 - Ollama Cloud through an API key stored in the operating system's encrypted credential storage
+- OpenRouter (hundreds of hosted models) through an API key stored the same way
 - OpenAI Codex CLI through its OAuth flow
 - Claude Code through its OAuth flow
 
@@ -54,7 +55,7 @@ Document history supports automatic and manually labelled versions, comparison w
 
 ## Privacy
 
-Document text is sent to the selected AI provider only when you submit a request. With a local Ollama model, the text stays on your machine. Ollama Cloud credentials are stored using Electron's encrypted credential storage.
+Document text is sent to the selected AI provider only when you submit a request. With a local Ollama model, the text stays on your machine. Ollama Cloud and OpenRouter credentials are stored using Electron's encrypted credential storage.
 
 ## Getting started
 

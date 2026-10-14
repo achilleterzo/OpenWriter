@@ -339,7 +339,6 @@
   "No project is open. The project folder is the working directory.": "Aucun projet n'est ouvert. Le dossier du projet est le répertoire de travail.",
   "No project open": "Aucun projet ouvert",
   "No projects yet. Create one or open an existing folder.": "Aucun projet pour l'instant. Créez-en un ou ouvrez un dossier existant.",
-  "No response from Ollama for {value} seconds": "Aucune réponse d'Ollama depuis {value} secondes",
   "No results": "Aucun résultat",
   "No sandbox": "Sans sandbox",
   "No sign-in in progress. Press Sign in again.": "Aucune connexion en cours. Appuyez de nouveau sur Se connecter.",
@@ -360,7 +359,6 @@
   "Ollama Cloud API key": "Clé d'API Ollama Cloud",
   "Ollama Cloud API key required": "Clé d'API Ollama Cloud requise",
   "Ollama endpoint": "Point d'accès Ollama",
-  "Ollama request timed out after {value} seconds": "La requête à Ollama a expiré après {value} secondes",
   "Only .md and .txt documents can be created": "Seuls les documents .md et .txt peuvent être créés",
   "Only http and https addresses are allowed": "Seules les adresses http et https sont autorisées",
   "Open": "Ouvrir",
@@ -631,5 +629,14 @@
   "· error": "· erreur",
   "· revised": "· révisée",
   "… ({count} characters)": "… ({count} caractères)",
-  "− saved version": "− version enregistrée"
+  "− saved version": "− version enregistrée",
+  "{name} request timed out after {value} seconds": "La requête à {name} a expiré après {value} secondes",
+  "No response from {name} for {value} seconds": "Aucune réponse de {name} depuis {value} secondes",
+  "OpenRouter API key required": "Clé API OpenRouter requise",
+  "Configure the OpenRouter API key and model in the settings": "Configurez la clé API et le modèle OpenRouter dans les paramètres",
+  "Hundreds of models with one API key": "Des centaines de modèles avec une seule clé API",
+  "OpenRouter API key": "Clé API OpenRouter",
+  "You can create a key on": "Vous pouvez créer une clé sur",
+  "Maximum reply tokens (max_tokens)": "Jetons maximum par réponse (max_tokens)",
+  "{name} is not responding, trying again…": "{name} ne répond pas, nouvelle tentative…"
 }

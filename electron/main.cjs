@@ -753,8 +753,8 @@ ipcMain.handle('ai:login', (_event, provider) => aiProviders.login(provider, {
 }))
 ipcMain.handle('ai:login-code', (_event, code) => aiProviders.submitLoginCode(code))
 ipcMain.handle('ai:models', (_event, request) => aiProviders.listModels(request || {}))
-ipcMain.handle('ai:has-api-key', () => aiProviders.hasApiKey())
-ipcMain.handle('ai:save-api-key', (_event, value) => aiProviders.saveApiKey(value))
+ipcMain.handle('ai:has-api-key', (_event, provider) => aiProviders.hasApiKey(provider))
+ipcMain.handle('ai:save-api-key', (_event, value, provider) => aiProviders.saveApiKey(value, provider))
 ipcMain.handle('ai:chat', (_event, messages) => aiProviders.chat(messages))
 
 app.on('web-contents-created', (_event, contents) => {
