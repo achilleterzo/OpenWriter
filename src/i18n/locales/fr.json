@@ -864,5 +864,10 @@
   "Remove link": "Supprimer le lien",
   "Add link (Ctrl+K)": "Ajouter un lien (Ctrl+K)",
   "Link (Ctrl+K)": "Lien (Ctrl+K)",
-  "Selection": "Sélection"
+  "Selection": "Sélection",
+  "The document uses the image \"{name}\", but the destination already has a different image with that name in its images folder": "Le document utilise l'image « {name} », mais la destination contient déjà une image différente du même nom dans son dossier images",
+  "Choose another image…": "Choisir une autre image…",
+  "Remove image": "Supprimer l'image",
+  "Actual size": "Taille réelle",
+  "Fit to window": "Ajuster à la fenêtre"
 }
