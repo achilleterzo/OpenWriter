@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openProjectFolder: () => ipcRenderer.invoke('workspace:open-project-folder'),
   createSubproject: (directory) => ipcRenderer.invoke('workspace:create-subproject', directory),
   revealPath: (target) => ipcRenderer.invoke('workspace:reveal-path', target),
+  getFileInfo: (target) => ipcRenderer.invoke('workspace:file-info', target),
   getSpellcheck: () => ipcRenderer.invoke('spellcheck:get'),
   setSpellcheckLanguages: (languages) => ipcRenderer.invoke('spellcheck:set-global', languages),
   listConversations: () => ipcRenderer.invoke('chat:list'),

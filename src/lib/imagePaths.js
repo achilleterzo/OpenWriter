@@ -34,6 +34,10 @@ function joinPath(directory, relative) {
 const safeDecode = (value) => { try { return decodeURI(value) } catch { return value } }
 
 /** Testo da scrivere nel Markdown per l'immagine `imagePath` (assoluto) inserita nel documento `documentPath`. */
+// File immagine che l'app sa mostrare (quelli del protocollo ow-file) e indirizzo per mostrarlo.
+export const isImageFile = (filePath) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(String(filePath || ''))
+export const imageFileUrl = (absolutePath) => `ow-file://local/${encodeURIComponent(absolutePath)}`
+
 export function sourceForImage(imagePath, documentPath, project) {
   const image = normalize(imagePath)
   const directory = dirname(documentPath)

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ActivityBar, { sideTabs } from './components/ActivityBar.jsx'
 import AiChatPanel from './components/AiChatPanel.jsx'
 import BrowserPane from './components/BrowserPane.jsx'
+import ImagePane from './components/ImagePane.jsx'
+import { isImageFile } from './lib/imagePaths.js'
 import ContextMenu, { ContextMenuContext, modKey } from './components/ContextMenu.jsx'
 import DocumentPane from './components/DocumentPane.jsx'
 import FileExplorer from './components/FileExplorer.jsx'
@@ -58,7 +60,9 @@ function createTab(document = null, id = crypto.randomUUID()) {
 
 // La scheda del browser non è un documento: non ha editor, file né bozze, e non viene salvata nella sessione.
 const createBrowserTab = () => ({ id: crypto.randomUUID(), kind: 'browser', title: t('Browser'), filePath: null, sourcePath: null, dirty: false })
-const isDocument = (tab) => tab && tab.kind !== 'browser'
+// Le schede del browser e delle immagini non hanno editor né file da salvare: non sono documenti.
+const createImageTab = (imagePath) => ({ id: crypto.randomUUID(), kind: 'image', title: baseName(imagePath), imagePath, filePath: null, sourcePath: null, dirty: false })
+const isDocument = (tab) => tab && tab.kind !== 'browser' && tab.kind !== 'image'
 // Una scheda fissata chiusa resta al suo posto senza documento caricato (con il pulsante "Apri"): non ha editor.
 const isLive = (tab) => isDocument(tab) && !tab.closed
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms) })
@@ -410,7 +414,7 @@ export default function App() {
       setTabs((current) => {
         if (tab.preview) {
           // L'anteprima precedente (mai toccata, non fissata) si chiude: la nuova prende il suo posto.
-          const index = current.findIndex((item) => isDocument(item) && item.preview && !item.dirty && !item.pinned && !item.closed)
+          const index = current.findIndex((item) => item.kind !== 'browser' && item.preview && !item.dirty && !item.pinned && !item.closed)
           if (index !== -1) return current.map((item, position) => (position === index ? tab : item))
         }
         return [...current, tab]
@@ -478,6 +482,10 @@ export default function App() {
     },
     pathRenamed(from, to) {
       setTabs((current) => current.map((tab) => {
+        if (tab.kind === 'image') {
+          const imagePath = remapPath(tab.imagePath, from, to)
+          return imagePath === tab.imagePath ? tab : { ...tab, imagePath, title: baseName(imagePath) }
+        }
         const sourcePath = remapPath(tab.sourcePath, from, to)
         const filePath = remapPath(tab.filePath, from, to)
         if (sourcePath === tab.sourcePath && filePath === tab.filePath) return tab
@@ -490,7 +498,8 @@ export default function App() {
     },
     // Le schede di un file eliminato restano aperte come documenti non salvati, così il testo non va perso.
     pathDeleted(target) {
-      setTabs((current) => current.map((tab) => (isInside(tab.sourcePath, target) || isInside(tab.filePath, target) ? { ...tab, sourcePath: null, filePath: null, dirty: true } : tab)))
+      // Le schede di un'immagine eliminata si chiudono: non c'è nulla da salvare.
+      setTabs((current) => current.filter((tab) => !(tab.kind === 'image' && isInside(tab.imagePath, target))).map((tab) => (isInside(tab.sourcePath, target) || isInside(tab.filePath, target) ? { ...tab, sourcePath: null, filePath: null, dirty: true } : tab)))
       setExpandedPaths((current) => new Set([...current].filter((item) => !isInside(item, target))))
       setHistoryVersion((value) => value + 1)
       setStatus(t('Moved to the trash'))
@@ -536,6 +545,24 @@ export default function App() {
       setActiveId(id)
       setAssistantOpen(true)
       setChatRequest({ id: Date.now(), text: t('Check how likely this document is to have been written by an AI rather than by a person, and record the result with the set_ai_score tool. Read the whole text first. Judge only from its style and structure, and be cautious: it is only an indication.') })
+    },
+    // Apre un'immagine del progetto in una scheda di visualizzazione (sola lettura); `preview` e `permanent` come per i documenti.
+    openImage(imagePath, { preview = false, permanent = false } = {}) {
+      const existing = latest.current.tabs.find((tab) => tab.kind === 'image' && samePath(tab.imagePath, imagePath))
+      if (existing) {
+        if (permanent && existing.preview) setTabs((current) => current.map((tab) => (tab.id === existing.id ? { ...tab, preview: false } : tab)))
+        setActiveId(existing.id)
+        return
+      }
+      const tab = { ...createImageTab(imagePath), ...(preview && !permanent ? { preview: true } : {}) }
+      setTabs((current) => {
+        if (tab.preview) {
+          const index = current.findIndex((item) => item.kind !== 'browser' && item.preview && !item.dirty && !item.pinned && !item.closed)
+          if (index !== -1) return current.map((item, position) => (position === index ? tab : item))
+        }
+        return [...current, tab]
+      })
+      setActiveId(tab.id)
     },
     promoteTab(id) {
       setTabs((current) => (current.some((tab) => tab.id === id && tab.preview) ? current.map((tab) => (tab.id === id ? { ...tab, preview: false } : tab)) : current))
@@ -595,6 +622,12 @@ export default function App() {
       const tab = currentTabs.filter(isLive).find((item) => samePath(item.filePath, wanted) || samePath(item.sourcePath, wanted))
       const editor = tab && currentEditors[tab.id]
       return editor ? { text: editor.getMarkdown(), dirty: tab.dirty } : null
+    },
+    // Imagine che l'utente ha aperta nella scheda attiva (percorso relativo al progetto), se la scheda attiva è un'immagine.
+    activeImagePath() {
+      const { tabs: currentTabs, project: currentProject, activeId: currentActive } = latest.current
+      const tab = currentTabs.find((item) => item.id === currentActive && item.kind === 'image')
+      return tab ? relativeToProject(currentProject, tab.imagePath) : null
     },
     activeDocumentPath() {
       const { tabs: currentTabs, project: currentProject, contextTabId } = latest.current
@@ -828,6 +861,8 @@ export default function App() {
   // `options`: { preview, permanent } valgono per le schede (vedi openDocument); il resto (es. { original }) va al processo principale.
   async function openFromExplorer(filePath, options) {
     const { preview, permanent, ...ipcOptions } = options || {}
+    // Un'immagine si apre nella scheda di visualizzazione, senza passare dal lettore dei documenti.
+    if (isImageFile(filePath)) { workspace.openImage(filePath, { preview, permanent }); return }
     try {
       workspace.openDocument(await electronAPI.openDocumentPath(filePath, ipcOptions), { preview, permanent })
     } catch (error) {
@@ -879,7 +914,7 @@ export default function App() {
             <h2 className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{sideTabs.find((item) => item.id === sideTab)?.label}</h2>
             {sideTab === 'projects' && <ProjectsPanel project={project} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onOpen={openProject} onChoose={chooseProject} onCreate={createProject} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
             {sideTab === 'files' && (
-              <FileExplorer project={project} activePath={contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />
+              <FileExplorer project={project} activePath={activeTab.kind === 'image' ? activeTab.imagePath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />
             )}
             {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} />}
             {sideTab === 'notes' && (editors[contextTab?.id]
@@ -894,7 +929,9 @@ export default function App() {
         <main className="flex min-w-0 flex-1 flex-col">
           <TabBar tabs={tabs} onPromote={workspace.promoteTab} unsavedCount={unsavedTabs(tabs).length} onSaveAll={saveAllTabs} activeId={activeTab.id} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
-            {tabs.map((tab) => (tab.kind === 'browser'
+            {tabs.map((tab) => (tab.kind === 'image'
+              ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab.id} onStatus={setStatus} onInteract={workspace.promoteTab} />
+              : tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
               : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} />))}
           </section>
