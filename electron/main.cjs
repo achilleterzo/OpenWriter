@@ -14,6 +14,7 @@ const { createMemoryStore } = require('./memory-store.cjs')
 const { fetchLatestRelease } = require('./updates.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
 const { createNotesStore } = require('./notes-store.cjs')
+const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-links.cjs')
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
 const MAX_SKILL_FILE_BYTES = MAX_SKILL_CHARS * 4
@@ -28,10 +29,16 @@ const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
 
 let projectPath = null
 const projectsStore = createProjectsStore({ filePath: () => path.join(app.getPath('userData'), 'projects.json') })
-const projectFile = createProjectFile({ getProjectPath: () => projectPath })
-const chatStore = createChatStore({ getProjectPath: () => projectPath })
-const memoryStore = createMemoryStore({ getProjectPath: () => projectPath })
-const notesStore = createNotesStore({ getProjectPath: () => projectPath })
+// Progetto "main": una cartella con la sua `.ow` nei dati dell'app. Quando nessun progetto è aperto fa da progetto (chat, note, memoria,
+// contesto, skill) e tiene sempre cronologia e note dei documenti sparsi, cioè fuori dal progetto aperto.
+const mainDirectory = () => path.join(app.getPath('userData'), 'main')
+const storePath = () => projectPath || mainDirectory()
+const projectFile = createProjectFile({ getProjectPath: storePath, getMainPath: mainDirectory })
+const chatStore = createChatStore({ getProjectPath: storePath })
+const memoryStore = createMemoryStore({ getProjectPath: storePath })
+const notesStore = createNotesStore({ getProjectPath: storePath, getMainPath: mainDirectory })
+// Documenti esterni collegati al progetto aperto (senza copiarli).
+const linksStore = createLinksStore({ getProjectPath: () => projectPath })
 const skillsStore = createSkillsStore({ getGlobalDirectory: () => path.join(app.getPath('userData'), 'skills') })
 const projectTools = createProjectTools({ getProjectPath: () => projectPath, readDocument: (filePath) => readDocument(filePath) })
 const aiRequests = new Map()
@@ -154,6 +161,10 @@ async function loadProject() {
 // Prepara la cartella .ow all'apertura del progetto; un errore (es. cartella in sola lettura) non deve impedire di lavorare.
 function initializeProject() {
   try { projectFile.initialize() } catch (error) { console.error('Inizializzazione .ow non riuscita:', error.message) }
+  // Il progetto main esiste sempre, anche con un progetto aperto: ci vivono i documenti sparsi.
+  if (projectPath) {
+    try { createProjectFile({ getProjectPath: mainDirectory }).initialize() } catch (error) { console.error('Inizializzazione .ow del progetto main non riuscita:', error.message) }
+  }
 }
 
 async function setProject(directory) {
@@ -494,7 +505,8 @@ function createWindow() {
 
 ipcMain.handle('document:open', openDocument)
 ipcMain.handle('document:open-path', async (_event, filePath, { original = false } = {}) => {
-  const target = resolveInProject(filePath)
+  // Un documento collegato al progetto sta fuori dalla sua cartella ma si apre (e si modifica) lì dov'è.
+  const target = linksStore.has(filePath) ? path.resolve(filePath) : resolveInProject(filePath)
   const stats = await fs.stat(target).catch(() => null)
   if (!stats) throw new Error(t('Could not open the file'))
   if (stats.isDirectory()) throw new Error(t('Not a file'))
@@ -568,7 +580,7 @@ ipcMain.handle('projects:copy-context', (_event, { from, to, mode } = {}) => {
 // (es. un sotto-progetto nelle sue impostazioni); senza progetto restano solo le skill globali.
 const skillChain = ({ document, directory } = {}) => {
   if (directory) return projectFileFor(directory).file.getContextChain()
-  return projectPath ? projectFile.getContextChain(document || null) : []
+  return projectFile.getContextChain(document || null)
 }
 ipcMain.handle('skills:list', (_event, request) => {
   const chain = skillChain(request)
@@ -598,7 +610,7 @@ ipcMain.handle('skills:set-active', (_event, { directory, active } = {}) => {
 })
 ipcMain.handle('project:get-settings', () => projectFile.getSettings())
 // Contesto dell'assistente per il documento attivo: le istruzioni di tutti i progetti coinvolti, dal più esterno al più vicino.
-ipcMain.handle('project:context-chain', (_event, filePath) => (projectPath ? projectFile.getContextChain(filePath) : []))
+ipcMain.handle('project:context-chain', (_event, filePath) => projectFile.getContextChain(filePath))
 ipcMain.handle('project:save-settings', (_event, settings) => {
   const saved = projectFile.saveSettings(settings)
   applySpellcheck()
@@ -623,8 +635,12 @@ ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools }) =
   }
 })
 ipcMain.handle('ai:cancel', (_event, requestId) => { aiRequests.get(requestId)?.abort(); return true })
-ipcMain.handle('tools:list-directory', (_event, relativePath) => projectTools.listDirectory(relativePath))
-ipcMain.handle('tools:read-file', (_event, { path: relativePath, offset, limit } = {}) => projectTools.readFile(relativePath, { offset, limit }))
+ipcMain.handle('tools:list-directory', async (_event, relativePath) => {
+  const result = await projectTools.listDirectory(relativePath)
+  if (result.path === '.') result.linked = linksStore.list()
+  return result
+})
+ipcMain.handle('tools:read-file', (_event, { path: relativePath, offset, limit } = {}) => projectTools.readFile(relativePath, { offset, limit, absolute: linksStore.has(relativePath) }))
 ipcMain.handle('ai:capabilities', (_event, model) => aiProviders.getCapabilities(model))
 ipcMain.handle('images:fetch', (_event, url) => images.fetchImage(String(url)))
 ipcMain.handle('images:read-file', async (_event, relativePath) => images.prepareBuffer(await projectTools.readImage(relativePath)))
@@ -682,11 +698,11 @@ ipcMain.handle('chat:prepare-image', (_event, { data } = {}) => {
   return images.prepareBuffer(buffer)
 })
 ipcMain.handle('notes:list', (_event, filePath) => notesStore.list(filePath))
-ipcMain.handle('notes:list-all', () => (projectPath ? notesStore.listAll() : []))
+ipcMain.handle('notes:list-all', () => notesStore.listAll())
 ipcMain.handle('notes:add', (_event, { filePath, note }) => notesStore.add(filePath, note))
 ipcMain.handle('notes:update', (_event, { filePath, id, changes }) => notesStore.update(filePath, id, changes))
 ipcMain.handle('notes:delete', (_event, { filePath, id }) => notesStore.remove(filePath, id))
-ipcMain.handle('chat:list', () => (projectPath ? chatStore.list() : []))
+ipcMain.handle('chat:list', () => chatStore.list())
 ipcMain.handle('chat:get', (_event, id) => chatStore.get(id))
 ipcMain.handle('chat:create', (_event, conversation) => chatStore.create(conversation || {}))
 ipcMain.handle('chat:save', (_event, conversation) => chatStore.save(conversation))
@@ -705,6 +721,7 @@ ipcMain.handle('history:get', (_event, { filePath, id }) => projectFile.getVersi
 ipcMain.handle('history:add', (_event, { filePath, markdown, label }) => projectFile.addVersion(filePath, String(markdown ?? ''), { label: label || '' }))
 ipcMain.handle('history:delete', (_event, { filePath, id }) => projectFile.deleteVersion(filePath, id))
 ipcMain.handle('workspace:get-project', () => projectPath)
+ipcMain.handle('workspace:get-main', () => mainDirectory())
 ipcMain.handle('workspace:choose-project', async () => {
   const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openDirectory', 'createDirectory'] })
   return result.canceled ? projectPath : setProject(result.filePaths[0])
@@ -726,9 +743,38 @@ ipcMain.handle('workspace:create-project', async (_event, name) => {
   await fs.mkdir(target)
   return setProject(target)
 })
+// Per l'assistente: crea un progetto nuovo (con l'OK dell'utente e la scelta della cartella) e vi collega i documenti indicati, senza copiarli.
+// Non cambia progetto: lo fa il renderer, che prima salva la sessione corrente.
+ipcMain.handle('tools:create-project', async (_event, { name, documents } = {}) => {
+  const folderName = String(name || '').trim()
+  if (!folderName || /[\\/:*?"<>|]/.test(folderName) || folderName === '.' || folderName === '..') throw new Error(t('Invalid name'))
+  const linked = checkedPaths(null, documents)
+  const listed = linked.map((file) => `• ${file}`).join('\n')
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    buttons: [t('Choose the folder…'), t('Cancel')],
+    defaultId: 0,
+    cancelId: 1,
+    message: t('The assistant wants to create the project "{name}"', { name: folderName }),
+    detail: [
+      linked.length ? `${t('These documents will be linked to it, not copied: any change goes to the original files, where they are now.')}\n${listed}` : t('No documents will be linked.'),
+      t('The app will open the new project and the conversation will continue there.'),
+    ].join('\n\n'),
+  })
+  if (response !== 0) return null
+  const picked = await dialog.showOpenDialog(mainWindow, { title: t('Choose where to create the project'), defaultPath: app.getPath('documents'), properties: ['openDirectory', 'createDirectory'] })
+  if (picked.canceled || !picked.filePaths[0]) return null
+  const target = path.join(picked.filePaths[0], folderName)
+  if (fsSync.existsSync(target)) throw new Error(t('An item with this name already exists'))
+  await fs.mkdir(target)
+  return { path: target, links: writeLinksTo(target, linked) }
+})
+ipcMain.handle('links:list', () => (projectPath ? linksStore.list() : []))
+ipcMain.handle('links:remove', (_event, target) => linksStore.remove(target))
+ipcMain.handle('chat:copy-to-project', (_event, { id, target } = {}) => chatStore.copyTo(String(id || ''), String(target || '')))
 ipcMain.handle('workspace:remove-project', (_event, directory) => { projectsStore.remove(String(directory || '')); return projectsStore.list() })
 // Per l'assistente: sposta nel cestino (con la conferma dell'utente) o sposta/rinomina dentro il progetto.
-ipcMain.handle('memory:list', () => (projectPath ? memoryStore.list() : []))
+ipcMain.handle('memory:list', () => memoryStore.list())
 ipcMain.handle('memory:add', (_event, entry) => memoryStore.add(entry))
 ipcMain.handle('memory:update', (_event, { id, changes } = {}) => memoryStore.update(id, changes))
 ipcMain.handle('memory:delete', (_event, id) => memoryStore.remove(id))
@@ -821,7 +867,7 @@ ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, sa
   await fs.writeFile(markdownPath, markdown, 'utf8')
   // La cronologia non deve mai far fallire il salvataggio.
   try {
-    if (projectPath && projectFile.autoVersionsEnabled(markdownPath)) projectFile.addVersion(markdownPath, markdown, { auto: true })
+    if (projectFile.autoVersionsEnabled(markdownPath)) projectFile.addVersion(markdownPath, markdown, { auto: true })
   } catch (error) {
     console.error('Versione non salvata:', error)
   }
@@ -902,6 +948,47 @@ ipcMain.handle('i18n:set-locale', (_event, code) => {
   return after
 })
 
+// Documenti Markdown aperti dal sistema (doppio clic, "Apri con", riga di comando): arrivano al renderer appena è pronto.
+// L'app resta una sola: un secondo avvio passa i file a quella già aperta (solo nella versione installata, per non intralciare le prove in sviluppo).
+const MARKDOWN_PATTERN = /\.(md|markdown|mdown)$/i
+const pendingExternalDocuments = []
+let externalDocumentsReady = false
+
+const markdownArguments = (argv) => argv.slice(app.isPackaged ? 1 : 2).filter((argument) => !argument.startsWith('-') && MARKDOWN_PATTERN.test(argument) && fsSync.existsSync(argument))
+
+async function openExternalDocument(filePath) {
+  try {
+    const document = await readDocument(path.resolve(filePath))
+    if (externalDocumentsReady && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('document:external', document)
+    else pendingExternalDocuments.push(document)
+  } catch (error) {
+    console.error('Documento non aperto:', error.message)
+  }
+}
+
+ipcMain.handle('document:take-external', () => {
+  externalDocumentsReady = true
+  return pendingExternalDocuments.splice(0)
+})
+
+if (app.isPackaged && !app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', (_event, argv) => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+    for (const filePath of markdownArguments(argv)) openExternalDocument(filePath)
+  })
+}
+
+// macOS consegna i file con questo evento (anche prima che l'app sia pronta).
+app.on('open-file', (event, filePath) => {
+  event.preventDefault()
+  if (MARKDOWN_PATTERN.test(filePath)) openExternalDocument(filePath)
+})
+
 app.whenReady().then(async () => {
   protocol.handle('ow-file', (request) => {
     const file = path.normalize(decodeURIComponent(new URL(request.url).pathname.slice(1)))
@@ -915,6 +1002,7 @@ app.whenReady().then(async () => {
   await loadProject()
   createWindow()
   buildMenu()
+  for (const filePath of markdownArguments(process.argv)) openExternalDocument(filePath)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

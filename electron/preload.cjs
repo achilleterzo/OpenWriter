@@ -61,6 +61,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   movePathForAi: (request) => ipcRenderer.invoke('tools:move-path', request),
   createDirectoryForAi: (path) => ipcRenderer.invoke('tools:create-directory', path),
   createFileForAi: (request) => ipcRenderer.invoke('tools:create-file', request),
+  createProjectForAi: (request) => ipcRenderer.invoke('tools:create-project', request),
+  listLinks: () => ipcRenderer.invoke('links:list'),
+  removeLink: (target) => ipcRenderer.invoke('links:remove', target),
+  copyConversationToProject: (request) => ipcRenderer.invoke('chat:copy-to-project', request),
   createEntry: (request) => ipcRenderer.invoke('workspace:create-entry', request),
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
   getLatestRelease: (silent = false) => ipcRenderer.invoke('app:latest-release', silent),
@@ -71,6 +75,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getProjectSettingsFor: (directory) => ipcRenderer.invoke('projects:get-settings', directory),
   saveProjectSettingsFor: (directory, settings) => ipcRenderer.invoke('projects:save-settings', { directory, settings }),
   copyProjectContext: (request) => ipcRenderer.invoke('projects:copy-context', request),
+  getMainProject: () => ipcRenderer.invoke('workspace:get-main'),
   listProjects: () => ipcRenderer.invoke('workspace:list-projects'),
   openProject: (directory) => ipcRenderer.invoke('workspace:open-project', directory),
   createProject: (name) => ipcRenderer.invoke('workspace:create-project', name),
@@ -119,6 +124,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       }).finally(() => ipcRenderer.removeListener('ai:stream', listener))
       return { promise, cancel: () => ipcRenderer.invoke('ai:cancel', requestId) }
     },
+  },
+  // Documenti aperti dal sistema: quelli arrivati prima che il renderer fosse pronto, poi quelli successivi.
+  takeExternalDocuments: () => ipcRenderer.invoke('document:take-external'),
+  onExternalDocument: (callback) => {
+    const listener = (_event, document) => callback(document)
+    ipcRenderer.on('document:external', listener)
+    return () => ipcRenderer.removeListener('document:external', listener)
   },
   onAppCommand: (callback) => {
     const listener = (_event, command) => callback(command)
