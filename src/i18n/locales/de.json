@@ -879,5 +879,7 @@
   "Title (tooltip)": "Titel (Tooltip)",
   "Alternative text: describe the image for those who cannot see it": "Alternativtext: Beschreibe das Bild für alle, die es nicht sehen können",
   "Folder name": "Ordnername",
-  "Document name": "Dokumentname"
+  "Document name": "Dokumentname",
+  "Edit to review": "Zu prüfende Änderung",
+  "Edits and notes to review": "Zu prüfende Änderungen und Notizen"
 }
