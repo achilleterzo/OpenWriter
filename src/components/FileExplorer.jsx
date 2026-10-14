@@ -1,8 +1,9 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderInput, FolderOpen, FolderPlus, FolderRoot, Link2, Lock, RefreshCw, Settings, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderInput, FolderOpen, FolderPlus, FolderRoot, Image as ImageIcon, Link2, Lock, RefreshCw, Settings, X } from 'lucide-react'
 
 import { ContextMenuContext } from './ContextMenu.jsx'
 import ProjectIcon, { ProjectAvatar } from './ProjectIcon.jsx'
+import { isImageFile } from '../lib/imagePaths.js'
 import ProjectSettings from './ProjectSettings.jsx'
 import { t } from '../i18n/index.js'
 
@@ -87,7 +88,7 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
           onDragOver={(event) => drop.over(event, parentOf(entry.path))}
           onDrop={(event) => drop.drop(event, parentOf(entry.path))}
           className={`${rowClass} ${active ? 'bg-slate-800 text-slate-50' : 'text-slate-400'}`}
-          onClick={() => onOpenFile(entry.path, { preview: true })}
+          onClick={() => { menu.select(parentOf(entry.path)); onOpenFile(entry.path, { preview: true }) }}
           onDoubleClick={() => onOpenFile(entry.path, { permanent: true })}
           onContextMenu={(event) => menu.open(event, entry)}
           onKeyDown={(event) => menu.key(event, entry)}
@@ -109,7 +110,7 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
             : <span className="w-3.5 shrink-0" />}
           {/\.(md|markdown|mdown)$/i.test(entry.name)
             ? <FileText size={14} className="shrink-0 text-accent-400" />
-            : <File size={14} className="shrink-0 text-slate-500" />}
+            : isImageFile(entry.name) ? <ImageIcon size={14} className="shrink-0 text-slate-500" /> : <File size={14} className="shrink-0 text-slate-500" />}
           {menu.renaming === entry.path ? <RenameInput entry={entry} onCommit={menu.commitRename} onCancel={menu.cancelRename} /> : <span className="truncate">{entry.name}</span>}
         </button>
         {hasOriginals && expanded && entry.originals.map((original) => (
@@ -144,8 +145,8 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
         draggable={menu.renaming !== entry.path}
         onDragStart={(event) => drop.start(event, entry)}
         onDragEnd={drop.end}
-        className={`${rowClass} text-slate-300 ${drop.target === entry.path ? 'bg-accent-500/20 ring-1 ring-inset ring-accent-400' : ''}`}
-        onClick={() => onToggle(entry.path)}
+        className={`${rowClass} text-slate-300 ${drop.target === entry.path ? 'bg-accent-500/20 ring-1 ring-inset ring-accent-400' : menu.selected === entry.path ? 'bg-slate-800/60' : ''}`}
+        onClick={() => { menu.select(entry.path); onToggle(entry.path) }}
         onContextMenu={(event) => menu.open(event, entry)}
         onKeyDown={(event) => menu.key(event, entry)}
         onDragOver={(event) => drop.over(event, entry.path)}
@@ -178,6 +179,8 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   const [renaming, setRenaming] = useState(null)
   // Nuova cartella o nuovo documento: { parent, type: 'directory' | 'file' } con il nome in corso di digitazione.
   const [creating, setCreating] = useState(null)
+  // Cartella "corrente": l'ultima cliccata (o quella del file cliccato). I pulsanti Nuova cartella / Nuovo documento della barra creano lì; senza selezione, nella radice.
+  const [selectedFolder, setSelectedFolder] = useState(null)
   const [newName, setNewName] = useState('')
   const openMenu = useContext(ContextMenuContext)
 
@@ -185,6 +188,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     try {
       if (await electronAPI.deletePath(entry.path)) {
         onDeleted(entry.path)
+        setSelectedFolder(null)
         setLocalRefresh((value) => value + 1)
       }
     } catch (reason) {
@@ -230,6 +234,10 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     }
   }
 
+  const creationTarget = () => selectedFolder || project
+  // Cambiando progetto la cartella corrente non vale più.
+  useEffect(() => { setSelectedFolder(null) }, [project])
+
   function startCreate(parent, type) {
     setCreating({ parent, type })
     setNewName('')
@@ -253,6 +261,8 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   // Menu contestuale (Apri, Rinomina, Elimina, Mostra nel file manager) e scorciatoie F2 / Canc.
   const menu = {
     renaming,
+    selected: selectedFolder,
+    select: setSelectedFolder,
     open(event, entry) {
       event.preventDefault()
       event.stopPropagation()
@@ -290,6 +300,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       try {
         const destination = await electronAPI.renamePath({ path: entry.path, newName: name })
         onRenamed(entry.path, destination)
+        setSelectedFolder(null)
         setLocalRefresh((value) => value + 1)
       } catch (reason) {
         onStatus(t('Rename failed: {message}', { message: reason.message }))
@@ -337,6 +348,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
           }
         }
         if (moved) {
+          setSelectedFolder(null)
           if (directory !== project && !expandedPaths.has(directory)) onToggle(directory)
           setLocalRefresh((value) => value + 1)
           onStatus(t('Moved to {folder}', { folder: folderName }))
@@ -417,8 +429,8 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-1 border-b border-slate-800 px-3 py-2">
         <button type="button" title={t('{project}\nClick to open the folder in the file manager', { project })} className="min-w-0 flex-1 truncate text-left text-xs font-semibold uppercase tracking-wider text-slate-300 hover:text-slate-50" onClick={() => electronAPI.openProjectFolder().catch((reason) => onStatus(reason.message))}><span className="flex items-center gap-2"><ProjectAvatar directory={project} name={name} active size={28} /><span className="truncate">{name}</span></span></button>
-        <button type="button" aria-label={t('New folder…')} title={t('New folder…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => startCreate(project, 'directory')}><FolderPlus size={14} /></button>
-        <button type="button" aria-label={t('New document…')} title={t('New document…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => startCreate(project, 'file')}><FilePlus size={14} /></button>
+        <button type="button" aria-label={t('New folder…')} title={selectedFolder && selectedFolder !== project ? t('New folder in {folder}', { folder: selectedFolder.split(/[\\/]/).filter(Boolean).at(-1) }) : t('New folder…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => startCreate(creationTarget(), 'directory')}><FolderPlus size={14} /></button>
+        <button type="button" aria-label={t('New document…')} title={selectedFolder && selectedFolder !== project ? t('New document in {folder}', { folder: selectedFolder.split(/[\\/]/).filter(Boolean).at(-1) }) : t('New document…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => startCreate(creationTarget(), 'file')}><FilePlus size={14} /></button>
         <button type="button" aria-label={t('Move a project here…')} title={t('Move a project here…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => moveProjectIn(project)}><FolderInput size={14} /></button>
         <button type="button" aria-label={t('Refresh')} title={t('Refresh')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => setLocalRefresh((value) => value + 1)}><RefreshCw size={14} /></button>
         <button type="button" aria-label={t('Project settings')} title={t('Project settings')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => setSubSettings({ path: project, name })}><Settings size={14} /></button>
