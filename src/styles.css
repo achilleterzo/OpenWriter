@@ -127,6 +127,19 @@ body {
 .document-editor .tiptap h6,
 .document-editor .tiptap h7 { font-size: 1rem; }
 
+/* Immagini: blocco a sé con un margine sopra e sotto, così non restano attaccate al testo; non escono mai dalla pagina. */
+.document-editor .tiptap img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.25rem 0;
+}
+
+.document-editor .tiptap img.ProseMirror-selectednode {
+  outline: 2px solid rgb(var(--accent-400));
+  outline-offset: 2px;
+}
+
 .document-editor .tiptap p {
   margin: 0 0 1rem;
 }

@@ -79,7 +79,7 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
       : { link: false, image: false, href: '', empty: true, bold: false, italic: false, strike: false, code: false }),
   })
   const settled = useSettledSelection(editor)
-  // In modifica: { mode: 'link' | 'selection' | 'create', range, originalText, text, url }.
+  // In modifica: { mode: 'link' | 'selection' | 'create', range, originalText, text, url } oppure, per un'immagine, { mode: 'image', range, alt, title }.
   const [editing, setEditing] = useState(null)
   const urlRef = useRef(null)
 
@@ -90,7 +90,10 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
 
   function startEdit() {
     const { doc, selection } = editor.state
-    if (editor.isActive('link')) {
+    if (editor.isActive('image')) {
+      const attributes = editor.getAttributes('image')
+      setEditing({ mode: 'image', range: { from: selection.from, to: selection.to }, alt: attributes.alt || '', title: attributes.title || '' })
+    } else if (editor.isActive('link')) {
       const range = linkRange()
       const text = doc.textBetween(range.from, range.to)
       setEditing({ mode: 'link', range, originalText: text, text, url: editor.getAttributes('link').href || '' })
@@ -133,7 +136,13 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
   function apply() {
     const url = normalizeUrl(editing.url)
     const chain = editor.chain().focus()
-    if (editing.mode === 'link') {
+    if (editing.mode === 'image') {
+      // Testo alternativo (per chi non vede l'immagine) e titolo (suggerimento al passaggio del mouse): finiscono nel Markdown come ![alt](src "titolo").
+      // Nel Markdown il testo alternativo sta tra [ ] e il titolo tra virgolette, su una riga: si ripuliscono i caratteri che romperebbero la sintassi.
+      const alt = editing.alt.replace(/\s+/g, ' ').replace(/\[/g, '(').replace(/\]/g, ')').trim()
+      const title = editing.title.replace(/\s+/g, ' ').replace(/"/g, "'").trim()
+      chain.setNodeSelection(editing.range.from).updateAttributes('image', { alt, title: title || null }).run()
+    } else if (editing.mode === 'link') {
       const text = editing.text.trim()
       if (!url) chain.setTextSelection(editing.range).unsetLink().run()
       else if (text && editing.text !== editing.originalText) chain.insertContentAt(editing.range, { type: 'text', text: editing.text, marks: [{ type: 'link', attrs: { href: url } }] }).run()
@@ -156,7 +165,38 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
   }
 
   let content
-  if (editing) {
+  if (editing?.mode === 'image') {
+    // Titolo su una riga, poi il testo alternativo in un'area di testo (di solito è una frase intera). Invio applica; la barra si allarga in altezza.
+    const onAltKeyDown = (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); apply() } else onKeyDown(event)
+    }
+    content = (
+      <div className="grid w-80 gap-1.5 p-0.5">
+        <div className="flex items-center gap-1">
+          <input
+            ref={urlRef}
+            value={editing.title}
+            aria-label={t('Title (tooltip)')}
+            placeholder={t('Title (tooltip)')}
+            className={`${fieldClass} flex-1`}
+            onChange={(event) => setEditing({ ...editing, title: event.target.value })}
+            onKeyDown={onKeyDown}
+          />
+          <FloatingButton label={t('Apply')} onClick={apply}><Check size={15} /></FloatingButton>
+          <FloatingButton label={t('Cancel')} onClick={finish}><X size={15} /></FloatingButton>
+        </div>
+        <textarea
+          value={editing.alt}
+          rows={4}
+          aria-label={t('Alternative text')}
+          placeholder={t('Alternative text: describe the image for those who cannot see it')}
+          className="w-full resize-none rounded border border-slate-700 bg-slate-800 px-2 py-1.5 text-xs leading-5 text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400"
+          onChange={(event) => setEditing({ ...editing, alt: event.target.value })}
+          onKeyDown={onAltKeyDown}
+        />
+      </div>
+    )
+  } else if (editing) {
     content = (
       <>
         {editing.mode !== 'selection' && (
@@ -186,6 +226,7 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
     // Un'immagine selezionata: gli strumenti del testo non servono; si può sceglierne un'altra o toglierla.
     content = (
       <>
+        <FloatingButton label={t('Edit description')} onClick={startEdit}><Pencil size={14} /></FloatingButton>
         <FloatingButton label={t('Choose another image…')} onClick={onReplaceImage}><ImageIcon size={14} /></FloatingButton>
         <FloatingButton label={t('Remove image')} danger onClick={() => editor.chain().focus().deleteSelection().run()}><Trash2 size={14} /></FloatingButton>
       </>

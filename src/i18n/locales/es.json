@@ -869,5 +869,13 @@
   "Choose another image…": "Elegir otra imagen…",
   "Remove image": "Quitar la imagen",
   "Actual size": "Tamaño real",
-  "Fit to window": "Ajustar a la ventana"
+  "Fit to window": "Ajustar a la ventana",
+  "Specific font (optional)": "Fuente concreta (opcional)",
+  "Type or pick an installed font, e.g. Palatino Linotype": "Escribe o elige una fuente instalada, p. ej. Palatino Linotype",
+  "If the font is not installed, the type above is used. It only changes how the text looks in the editor: it is not saved in the document and it is not exported.": "Si la fuente no está instalada, se usa el tipo elegido arriba. Solo cambia el aspecto del texto en el editor: no se guarda en el documento ni se exporta.",
+  "The quick brown fox jumps over the lazy dog. 0123456789": "El veloz murciélago hindú comía feliz cardillo y kiwi. 0123456789",
+  "Edit description": "Editar la descripción",
+  "Alternative text": "Texto alternativo",
+  "Title (tooltip)": "Título (sugerencia)",
+  "Alternative text: describe the image for those who cannot see it": "Texto alternativo: describe la imagen para quien no pueda verla"
 }

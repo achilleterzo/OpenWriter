@@ -869,5 +869,13 @@
   "Choose another image…": "Scegli un'altra immagine…",
   "Remove image": "Rimuovi l'immagine",
   "Actual size": "Dimensione reale",
-  "Fit to window": "Adatta alla finestra"
+  "Fit to window": "Adatta alla finestra",
+  "Specific font (optional)": "Carattere specifico (facoltativo)",
+  "Type or pick an installed font, e.g. Palatino Linotype": "Scrivi o scegli un carattere installato, es. Palatino Linotype",
+  "If the font is not installed, the type above is used. It only changes how the text looks in the editor: it is not saved in the document and it is not exported.": "Se il carattere non è installato si usa il tipo scelto sopra. Cambia solo l'aspetto del testo nell'editor: non viene salvato nel documento né esportato.",
+  "The quick brown fox jumps over the lazy dog. 0123456789": "Pranzo d'estate: quel vecchio fabbro gioca con la mia zebra. 0123456789",
+  "Edit description": "Modifica la descrizione",
+  "Alternative text": "Testo alternativo",
+  "Title (tooltip)": "Titolo (suggerimento)",
+  "Alternative text: describe the image for those who cannot see it": "Testo alternativo: descrivi l'immagine per chi non può vederla"
 }

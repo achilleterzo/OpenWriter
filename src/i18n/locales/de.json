@@ -869,5 +869,13 @@
   "Choose another image…": "Anderes Bild wählen…",
   "Remove image": "Bild entfernen",
   "Actual size": "Originalgröße",
-  "Fit to window": "An Fenster anpassen"
+  "Fit to window": "An Fenster anpassen",
+  "Specific font (optional)": "Bestimmte Schrift (optional)",
+  "Type or pick an installed font, e.g. Palatino Linotype": "Installierte Schrift eingeben oder wählen, z. B. Palatino Linotype",
+  "If the font is not installed, the type above is used. It only changes how the text looks in the editor: it is not saved in the document and it is not exported.": "Ist die Schrift nicht installiert, wird die oben gewählte Art verwendet. Sie ändert nur das Aussehen des Textes im Editor: Sie wird weder im Dokument gespeichert noch exportiert.",
+  "The quick brown fox jumps over the lazy dog. 0123456789": "Zwölf Boxkämpfer jagen Viktor quer über den großen Sylter Deich. 0123456789",
+  "Edit description": "Beschreibung bearbeiten",
+  "Alternative text": "Alternativtext",
+  "Title (tooltip)": "Titel (Tooltip)",
+  "Alternative text: describe the image for those who cannot see it": "Alternativtext: Beschreibe das Bild für alle, die es nicht sehen können"
 }
