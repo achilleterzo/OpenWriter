@@ -122,6 +122,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
     ],
     content: tab.content,
     contentType: tab.contentType,
+    editable: !tab.readOnly,
     onUpdate: () => {
       onDirty(tab.id)
       // Dopo una pausa si confronta con il testo salvato: se coincide (es. dopo "Annulla") la scheda torna "non modificata".

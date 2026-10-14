@@ -52,7 +52,7 @@ function createTab(document = null, id = crypto.randomUUID()) {
   }
   // Solo i Markdown si possono risalvare nello stesso file: DOCX e PDF diventano nuovi documenti.
   const savable = document.format === 'markdown'
-  return { id, filePath: savable ? document.filePath : null, sourcePath: document.filePath, title: baseName(document.filePath), content: document.content, contentType: document.contentType, dirty: false, ...(document.convertTo ? { convertTo: document.convertTo } : {}) }
+  return { id, filePath: savable ? document.filePath : null, sourcePath: document.filePath, title: baseName(document.filePath), content: document.content, contentType: document.contentType, dirty: false, ...(document.convertTo ? { convertTo: document.convertTo } : {}), ...(document.readOnly ? { readOnly: true } : {}) }
 }
 
 // La scheda del browser non è un documento: non ha editor, file né bozze, e non viene salvata nella sessione.
@@ -80,7 +80,7 @@ async function restoreTabs(session) {
       if (saved.markdown !== undefined) {
         tabs.push({ id: saved.id, filePath: saved.filePath, sourcePath: saved.sourcePath, untitled: saved.untitled, title: saved.title, content: saved.markdown, contentType: 'markdown', dirty: Boolean(saved.dirty), pinned: Boolean(saved.pinned) })
       } else if (saved.sourcePath) {
-        tabs.push({ ...createTab(await electronAPI.reopenDocument(saved.sourcePath), saved.id), pinned: Boolean(saved.pinned) })
+        tabs.push({ ...createTab({ ...(await electronAPI.reopenDocument(saved.sourcePath)), ...(saved.readOnly ? { readOnly: true } : {}) }, saved.id), pinned: Boolean(saved.pinned) })
       }
     } catch (error) {
       console.warn('Scheda non ripristinata', saved?.title, error)
@@ -170,6 +170,7 @@ export default function App() {
           dirty: tab.dirty,
           pinned: Boolean(tab.pinned),
           closed: Boolean(tab.closed),
+          ...(tab.readOnly ? { readOnly: true } : {}),
           ...(keepText ? { markdown: editor.getMarkdown() } : {}),
         }
       }),
@@ -709,9 +710,9 @@ export default function App() {
   const workspaceRef = useRef(null)
   workspaceRef.current = workspace
 
-  async function openFromExplorer(filePath) {
+  async function openFromExplorer(filePath, options) {
     try {
-      workspace.openDocument(await electronAPI.openDocumentPath(filePath))
+      workspace.openDocument(await electronAPI.openDocumentPath(filePath, options))
     } catch (error) {
       console.error(error)
       setStatus(t('Could not open the file'))
@@ -769,7 +770,7 @@ export default function App() {
           <TabBar tabs={tabs} activeId={activeTab.id} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
             {tabs.map((tab) => (tab.kind === 'browser'
-              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} />
+              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
               : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onNoteSelect={selectNote} />))}
           </section>
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">

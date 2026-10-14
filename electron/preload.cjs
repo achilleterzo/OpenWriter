@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
   openDocument: () => ipcRenderer.invoke('document:open'),
-  openDocumentPath: (filePath) => ipcRenderer.invoke('document:open-path', filePath),
+  openDocumentPath: (filePath, options) => ipcRenderer.invoke('document:open-path', filePath, options),
   reopenDocument: (filePath) => ipcRenderer.invoke('document:reopen', filePath),
   loadSession: () => ipcRenderer.invoke('session:load'),
   saveSession: (session) => ipcRenderer.invoke('session:save', session),

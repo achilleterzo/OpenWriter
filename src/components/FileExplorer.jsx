@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderOpen, FolderPlus, FolderRoot, RefreshCw, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderOpen, FolderPlus, FolderRoot, Lock, RefreshCw, X } from 'lucide-react'
 
 import { ContextMenuContext } from './ContextMenu.jsx'
 import ProjectSettings from './ProjectSettings.jsx'
@@ -71,27 +71,61 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
 
   if (!entry.isDirectory) {
     const active = entry.path === activePath
+    const hasOriginals = Boolean(entry.originals?.length)
     return (
-      <button
-        type="button"
-        style={indent}
-        title={entry.path}
-        draggable={menu.renaming !== entry.path}
-        onDragStart={(event) => drop.start(event, entry)}
-        onDragEnd={drop.end}
-        onDragOver={(event) => drop.over(event, parentOf(entry.path))}
-        onDrop={(event) => drop.drop(event, parentOf(entry.path))}
-        className={`${rowClass} ${active ? 'bg-slate-800 text-slate-50' : 'text-slate-400'}`}
-        onClick={() => onOpenFile(entry.path)}
-        onContextMenu={(event) => menu.open(event, entry)}
-        onKeyDown={(event) => menu.key(event, entry)}
-      >
-        <span className="w-3.5 shrink-0" />
-        {/\.(md|markdown|mdown)$/i.test(entry.name)
-          ? <FileText size={14} className="shrink-0 text-accent-400" />
-          : <File size={14} className="shrink-0 text-slate-500" />}
-        {menu.renaming === entry.path ? <RenameInput entry={entry} onCommit={menu.commitRename} onCancel={menu.cancelRename} /> : <span className="truncate">{entry.name}</span>}
-      </button>
+      <div>
+        <button
+          type="button"
+          style={indent}
+          title={entry.path}
+          draggable={menu.renaming !== entry.path}
+          onDragStart={(event) => drop.start(event, entry)}
+          onDragEnd={drop.end}
+          onDragOver={(event) => drop.over(event, parentOf(entry.path))}
+          onDrop={(event) => drop.drop(event, parentOf(entry.path))}
+          className={`${rowClass} ${active ? 'bg-slate-800 text-slate-50' : 'text-slate-400'}`}
+          onClick={() => onOpenFile(entry.path)}
+          onContextMenu={(event) => menu.open(event, entry)}
+          onKeyDown={(event) => menu.key(event, entry)}
+        >
+          {hasOriginals
+            ? (
+              <span
+                role="button"
+                tabIndex={-1}
+                aria-label={expanded ? t('Hide the original') : t('Show the original')}
+                aria-expanded={expanded}
+                title={expanded ? t('Hide the original') : t('Show the original')}
+                className="shrink-0 rounded hover:bg-slate-700"
+                onClick={(event) => { event.stopPropagation(); onToggle(entry.path) }}
+              >
+                {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </span>
+            )
+            : <span className="w-3.5 shrink-0" />}
+          {/\.(md|markdown|mdown)$/i.test(entry.name)
+            ? <FileText size={14} className="shrink-0 text-accent-400" />
+            : <File size={14} className="shrink-0 text-slate-500" />}
+          {menu.renaming === entry.path ? <RenameInput entry={entry} onCommit={menu.commitRename} onCancel={menu.cancelRename} /> : <span className="truncate">{entry.name}</span>}
+        </button>
+        {hasOriginals && expanded && entry.originals.map((original) => (
+          <button
+            key={original.path}
+            type="button"
+            style={{ paddingLeft: 8 + (depth + 1) * 14 }}
+            title={`${original.path} · ${t('Original, read-only')}`}
+            className={`${rowClass} ${original.path === activePath ? 'bg-slate-800 text-slate-50' : 'text-slate-500'}`}
+            onClick={() => onOpenFile(original.path, { original: true })}
+            onContextMenu={(event) => menu.open(event, { ...original, isDirectory: false })}
+            onKeyDown={(event) => menu.key(event, { ...original, isDirectory: false })}
+          >
+            <span className="w-3.5 shrink-0" />
+            <File size={14} className="shrink-0 text-slate-500" />
+            <span className="truncate">{original.name}</span>
+            <Lock size={11} className="ml-auto shrink-0 text-slate-600" aria-label={t('Original, read-only')} />
+          </button>
+        ))}
+      </div>
     )
   }
 

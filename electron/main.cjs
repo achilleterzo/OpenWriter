@@ -312,16 +312,33 @@ function sendEditContextMenu(webContents, params) {
   })
 }
 
+const convertibleExtensions = ['.docx', '.pdf']
+
 async function listDirectory(directory) {
   const resolved = resolveInProject(directory)
   const entries = await fs.readdir(resolved, { withFileTypes: true })
-  return entries
+  const visible = entries
     .filter((entry) => !entry.name.startsWith('.'))
     .filter((entry) => entry.isDirectory()
       ? !hiddenDirectories.has(entry.name)
       : documentExtensions.includes(path.extname(entry.name).toLowerCase()))
+  // Un DOCX/PDF che ha già il suo Markdown (stesso nome) non sta più in lista: compare sotto il Markdown, come originale in sola lettura.
+  const stem = (entry) => path.basename(entry.name, path.extname(entry.name)).toLowerCase()
+  const isMarkdown = (entry) => !entry.isDirectory() && path.extname(entry.name).toLowerCase() === '.md'
+  const markdownNames = new Set(visible.filter(isMarkdown).map(stem))
+  const originalOf = (entry) => !entry.isDirectory() && convertibleExtensions.includes(path.extname(entry.name).toLowerCase()) && markdownNames.has(stem(entry))
+  const originals = new Map()
+  for (const entry of visible.filter(originalOf)) originals.set(stem(entry), [...(originals.get(stem(entry)) || []), { name: entry.name, path: path.join(directory, entry.name) }])
+  return visible
+    .filter((entry) => !originalOf(entry))
     // Una cartella con una `.ow` propria è un sotto-progetto: l'explorer la distingue dalle altre.
-    .map((entry) => ({ name: entry.name, path: path.join(directory, entry.name), isDirectory: entry.isDirectory(), isProject: entry.isDirectory() && fsSync.existsSync(path.join(resolved, entry.name, projectFile.directoryName)) }))
+    .map((entry) => ({
+      name: entry.name,
+      path: path.join(directory, entry.name),
+      isDirectory: entry.isDirectory(),
+      isProject: entry.isDirectory() && fsSync.existsSync(path.join(resolved, entry.name, projectFile.directoryName)),
+      ...(isMarkdown(entry) && originals.has(stem(entry)) ? { originals: originals.get(stem(entry)) } : {}),
+    }))
     .sort((left, right) => Number(right.isDirectory) - Number(left.isDirectory) || left.name.localeCompare(right.name, 'it', { sensitivity: 'base' }))
 }
 
@@ -476,12 +493,14 @@ function createWindow() {
 }
 
 ipcMain.handle('document:open', openDocument)
-ipcMain.handle('document:open-path', async (_event, filePath) => {
+ipcMain.handle('document:open-path', async (_event, filePath, { original = false } = {}) => {
   const target = resolveInProject(filePath)
   const stats = await fs.stat(target).catch(() => null)
   if (!stats) throw new Error(t('Could not open the file'))
   if (stats.isDirectory()) throw new Error(t('Not a file'))
   const document = await readDocument(target)
+  // L'originale (DOCX/PDF) sotto un Markdown si apre così com'è, in sola lettura, senza convertirlo.
+  if (original) return { ...document, readOnly: true }
   if (document.format === 'markdown') return document
   // DOCX e PDF del progetto diventano subito un Markdown con lo stesso nome, così l'assistente può lavorarci: se esiste già, si apre quello.
   const markdownPath = target.replace(/\.[^.\\/]+$/, '.md')
@@ -789,11 +808,12 @@ ipcMain.handle('workspace:create-subproject', async (_event, directory) => {
 ipcMain.handle('workspace:move-path', (_event, request) => moveIntoDirectory(request || {}))
 ipcMain.handle('workspace:reveal-path', (_event, target) => { shell.showItemInFolder(resolveInProject(target)) })
 ipcMain.handle('workspace:list-directory', (_event, directory) => listDirectory(directory))
-ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, saveAs }) => {
+ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, saveAs, defaultName }) => {
   const targetPath = await chooseSavePath({
     filePath,
     saveAs,
-    defaultPath: `${t('New document')}.md`,
+    // `defaultName` (es. il titolo di un articolo salvato dal browser): propone quel nome nella cartella del progetto.
+    defaultPath: defaultName ? path.join(projectPath || '', `${path.basename(String(defaultName))}.md`) : `${t('New document')}.md`,
     filters: [markdownFilter],
   })
   if (!targetPath) return null

@@ -8,6 +8,7 @@ import { trackEdit } from './pendingChangesExtension.js'
 // and returns the outcome in a message starting with "[Result of …]".
 // Everything the model reads (descriptions, hints, results, errors) is English; only what the user sees goes through t().
 
+const READ_ONLY_MESSAGE = 'This document is the read-only original of a converted file and cannot be edited. Edit the Markdown (.md) file with the same name instead.'
 const optionSchema = { anyOf: [{ type: 'string' }, { type: 'object', properties: { label: { type: 'string' }, description: { type: 'string' } }, required: ['label'] }] }
 
 export const TOOL_DEFINITIONS = [
@@ -646,13 +647,14 @@ export function createToolRunner(context) {
       await context.openFile?.(`${project}/${relative}`)
       // The editor of the new tab needs a moment to be ready.
       for (let attempt = 0; attempt < 40; attempt += 1) {
-        try { const { tab } = context.getDocument(relative); if (!wasOpen) context.onDocumentOpened?.(tab); return `Document ${relative} is open ("${tab.title}"). You can edit it now.` } catch { await new Promise((resolve) => setTimeout(resolve, 100)) }
+        try { const { tab } = context.getDocument(relative); if (!wasOpen) context.onDocumentOpened?.(tab); return `Document ${relative} is open ("${tab.title}"). ${tab.readOnly ? 'It is the read-only original of a converted file: it cannot be edited (edit the .md next to it instead).' : 'You can edit it now.'}` } catch { await new Promise((resolve) => setTimeout(resolve, 100)) }
       }
       throw new Error(`Could not open ${relative}: check the path with list_directory`)
     },
 
     async replace_document(args) {
       const { tab, editor } = context.getDocument(args.path)
+      if (tab.readOnly) throw new Error(READ_ONLY_MESSAGE)
       const value = text(args.content)
       if (!value.trim()) throw new Error('Missing parameter "content"')
       // Protection against accidental truncations/overwrites (a report written over the document, a stub instead of a page).
@@ -668,6 +670,7 @@ export function createToolRunner(context) {
 
     async replace_text(args) {
       const { tab, editor } = context.getDocument(args.path)
+      if (tab.readOnly) throw new Error(READ_ONLY_MESSAGE)
       if (!text(args.find).trim()) throw new Error('Missing parameter "find"')
       let located = null
       try { located = locateUnique(editor, text(args.find), 'The text to replace') } catch (error) { if (!isNotFound(error)) throw error }
@@ -689,6 +692,7 @@ export function createToolRunner(context) {
 
     async insert_text(args) {
       const { tab, editor } = context.getDocument(args.path)
+      if (tab.readOnly) throw new Error(READ_ONLY_MESSAGE)
       const position = text(args.position || 'end')
       if (!['after', 'before', 'start', 'end'].includes(position)) throw new Error('"position" must be after, before, start or end')
       if (!text(args.text)) throw new Error('Missing parameter "text"')
