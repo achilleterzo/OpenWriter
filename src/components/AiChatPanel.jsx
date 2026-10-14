@@ -1207,9 +1207,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400"><Sparkles size={13} className="text-accent-400" /> {t('AI assistant')}</h2>
-            {enabled && <p className="truncate text-xs text-slate-500">{providerLabel}{model ? ` · ${model}` : ''}{(contextChain.length ? contextChain.some((owner) => owner.context?.trim()) : projectSettings?.ai?.context?.trim()) ? t(' · project context') : ''}</p>}
-            {(usage.input > 0 || usage.output > 0) && <p className="truncate text-[11px] text-slate-500" title={`${t('Tokens in this conversation')} · ${t('Input tokens')}: ${usage.input.toLocaleString()} · ${t('Output tokens')}: ${usage.output.toLocaleString()}`}>{t('Tokens')}: ↑ {formatTokens(usage.input)} ↓ {formatTokens(usage.output)}</p>}
             {enabled && <p className="truncate text-xs text-slate-500">{providerLabel}{model ? ` · ${model}` : ''}{contextLabel}</p>}
+            {(usage.input > 0 || usage.output > 0) && <p className="truncate text-[11px] text-slate-500" title={`${t('Tokens in this conversation')} · ${t('Input tokens')}: ${usage.input.toLocaleString()} · ${t('Output tokens')}: ${usage.output.toLocaleString()}`}>{t('Tokens')}: ↑ {formatTokens(usage.input)} ↓ {formatTokens(usage.output)}</p>}
           </div>
           <div className="flex shrink-0 gap-0.5">
             <button type="button" aria-label={t('New conversation')} title={t('New conversation')} disabled={busy || !current.messages.length} className={iconButton} onClick={() => openConversation(null)}><Plus size={14} /></button>
