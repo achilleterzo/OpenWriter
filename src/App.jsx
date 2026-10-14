@@ -81,9 +81,9 @@ async function restoreTabs(session) {
       // Il numero dei documenti senza titolo è un dato salvato, non si ricava dal titolo (che può cambiare con la lingua).
       if (Number.isInteger(saved.untitled)) untitledCounter = Math.max(untitledCounter, saved.untitled)
       if (saved.markdown !== undefined) {
-        tabs.push({ id: saved.id, filePath: saved.filePath, sourcePath: saved.sourcePath, untitled: saved.untitled, title: saved.title, content: saved.markdown, contentType: 'markdown', dirty: Boolean(saved.dirty), pinned: Boolean(saved.pinned) })
+        tabs.push({ id: saved.id, filePath: saved.filePath, sourcePath: saved.sourcePath, untitled: saved.untitled, title: saved.title, content: saved.markdown, contentType: 'markdown', dirty: Boolean(saved.dirty), pinned: Boolean(saved.pinned), ...(saved.aiScore ? { aiScore: saved.aiScore } : {}) })
       } else if (saved.sourcePath) {
-        tabs.push({ ...createTab({ ...(await electronAPI.reopenDocument(saved.sourcePath)), ...(saved.readOnly ? { readOnly: true } : {}) }, saved.id), pinned: Boolean(saved.pinned) })
+        tabs.push({ ...createTab({ ...(await electronAPI.reopenDocument(saved.sourcePath)), ...(saved.readOnly ? { readOnly: true } : {}) }, saved.id), pinned: Boolean(saved.pinned), ...(saved.aiScore ? { aiScore: saved.aiScore } : {}) })
       }
     } catch (error) {
       console.warn('Scheda non ripristinata', saved?.title, error)
@@ -175,6 +175,7 @@ export default function App() {
           untitled: tab.untitled,
           dirty: tab.dirty,
           pinned: Boolean(tab.pinned),
+          ...(tab.aiScore ? { aiScore: tab.aiScore } : {}),
           closed: Boolean(tab.closed),
           ...(tab.readOnly ? { readOnly: true } : {}),
           ...(keepText ? { markdown: editor.getMarkdown() } : {}),
@@ -530,11 +531,17 @@ export default function App() {
       scheduleSave()
     },
     // L'utente (o l'assistente) ha lavorato sul documento: l'anteprima diventa una scheda a tutti gli effetti.
+    // Controllo "quanto sembra scritto da un'AI": si chiede all'assistente, che registra il punteggio con lo strumento set_ai_score.
+    requestAiCheck(id) {
+      setActiveId(id)
+      setAssistantOpen(true)
+      setChatRequest({ id: Date.now(), text: t('Check how likely this document is to have been written by an AI rather than by a person, and record the result with the set_ai_score tool. Read the whole text first. Judge only from its style and structure, and be cautious: it is only an indication.') })
+    },
     promoteTab(id) {
       setTabs((current) => (current.some((tab) => tab.id === id && tab.preview) ? current.map((tab) => (tab.id === id ? { ...tab, preview: false } : tab)) : current))
     },
     markDirty(id) {
-      setTabs((current) => (current.some((tab) => tab.id === id && !tab.dirty) ? current.map((tab) => (tab.id === id ? { ...tab, dirty: true, preview: false } : tab)) : current))
+      setTabs((current) => (current.some((tab) => tab.id === id && !tab.dirty) ? current.map((tab) => (tab.id === id ? { ...tab, dirty: true, preview: false, ...(tab.aiScore ? { aiScore: { ...tab.aiScore, stale: true } } : {}) } : tab)) : current))
       scheduleSave()
     },
     markSaved(id, filePath) {
@@ -672,6 +679,10 @@ export default function App() {
       return electronAPI.createProjectForAi({ name, documents: paths })
     },
     moveToCreatedProject: (info) => moveToCreatedProjectRef.current(info),
+    // Punteggio registrato dall'assistente per un documento: si mostra nella barra del documento; si segna "da rifare" se il testo cambia.
+    setAiScore(tab, data) {
+      setTabs((current) => current.map((item) => (item.id === tab.id ? { ...item, aiScore: { ...data, at: new Date().toISOString(), stale: false } } : item)))
+    },
     // Prima di una modifica dell'assistente si archivia il testo attuale, così è sempre recuperabile dalla cronologia.
     async snapshot(tab, editor) {
       if (!tab.filePath) return
@@ -885,7 +896,7 @@ export default function App() {
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
             {tabs.map((tab) => (tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
-              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onNoteSelect={selectNote} />))}
+              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} />))}
           </section>
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>

@@ -925,6 +925,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       captureBrowser: (tab) => toolBridge.captureBrowser(tab),
       askUser,
       createProject: (request) => toolBridge.createProject(request),
+      setAiScore: (tab, data) => toolBridge.setAiScore(tab, data),
       onProjectCreated: (created) => { handoff = created },
       onNotesChanged: () => toolBridge.onNotesChanged(),
       onFilesChanged: () => toolBridge.onFilesChanged(),

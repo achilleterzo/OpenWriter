@@ -21,8 +21,9 @@ export const TOOL_DEFINITIONS = [
   { group: 'create', name: 'create_project', required: ['name'], description: 'Only when no project folder is open: creates a new project (a folder) and moves the work there. The user is always asked to confirm and to choose where the folder goes. The documents you list (Markdown files saved on disk, open in tabs) are LINKED to the project, not copied: they stay where they are and are edited in place. Once the user confirms, the app opens the new project and this conversation continues in it, with all the file tools available: the result of this tool tells you what was created. Use it when the task needs a project (several files, folders, structure) and the user has none open: ask first if it is not clear that they want one.', parameters: { name: 'name of the project folder (no slashes)', documents: { type: 'array', items: { type: 'string' }, description: 'optional: full paths of the open documents (saved Markdown files) to link to the new project' } } },
   { group: 'create', name: 'create_file', required: ['path', 'content'], description: 'Creates a NEW text document (.md or .txt; ".md" is added if the path has no extension) with the given content, creating missing folders. It never overwrites an existing file: if the name is taken, choose another one. To change an existing document, open it with open_document and then use replace_text, insert_text or replace_document.', parameters: { path: 'path of the new file, relative to the project root', content: 'full text of the document (Markdown for .md)', allow_same_name: { type: 'boolean', description: 'optional: true only if you really need a second document with the same name as one that already exists in another folder' }, open: { type: 'boolean', description: 'optional: true to open the new document in a tab for the user' } } },
   { group: 'notes', name: 'add_note', required: [], description: 'Adds notes anchored to text in the document. For a proposed correction or rewrite, "quote" must be the WHOLE passage to replace (the full sentence or paragraph, copied exactly) and "replacement" the COMPLETE rewritten passage, ready to be applied as it is: the user accepts it with one click and should not have to edit it. Never put only advice or a fragment in "replacement". Without "replacement" the note is a plain remark. To add several notes pass them all in one call with "notes" (up to 20) instead of one call each.', parameters: { quote: 'EXACT plain text of the document to anchor the note to, without Markdown markers (the whole passage to replace when proposing a correction)', body: 'short explanation of the note', replacement: 'the complete corrected passage that would replace the quote exactly (required for every proposed correction)', path: 'optional: document (default: the active one)', notes: { type: 'array', description: 'alternative to quote/body/replacement: several notes in one call, each {quote, body, replacement?}', items: { type: 'object', properties: { quote: { type: 'string' }, body: { type: 'string' }, replacement: { type: 'string' } }, required: ['quote', 'body'] } } } },
-  { group: 'notes', name: 'update_note', required: ['id'], description: "Revises a note written by the assistant (not the user's notes) that is still open or resolved: changes its text or proposed correction, or reopens or resolves it. Use it when the user asks to reconsider, deepen or fix the notes. It cannot accept or reject: that is the user's choice. To answer a note written by the user, add a new note with add_note.", parameters: { id: 'note identifier (given by list_notes)', body: 'optional: new text of the note', replacement: 'optional: new proposed correction (a comment becomes a suggestion)', status: 'optional: open (reopens) | resolved (resolves, e.g. when the issue no longer applies; allowed on any note)', quote: 'optional: EXACT current text of the document to re-anchor the note to, when the passage it referred to was edited (allowed on any note; the document must be open)', path: 'optional: document of the note (default: the active one)' } },
-  { group: 'notes', name: 'list_notes', required: [], description: 'Lists the notes with their status (open, accepted, rejected, resolved). Use it to remember what was already proposed, accepted or rejected.', parameters: { path: 'optional: document (default: the active one)', status: 'optional: open | accepted | rejected | resolved | all (default: all)', all_documents: 'optional: true to include every document of the project' } },
+  { group: 'notes', name: 'set_ai_score', required: ['score', 'confidence'], description: 'Records the result of an AI-likelihood check of a document (the active one, or the one given): it is shown in the document toolbar. score = how likely the text is to have been written by an AI model rather than by a person. It is only an indication from the style and structure of the text, so be cautious: formal, technical, heavily edited or non-native-speaker writing is often wrongly taken for AI text, and a text shorter than about 150 words cannot be judged reliably (say so with low confidence). Avoid extreme scores (below 10 or above 90) unless the evidence is overwhelming. Read the text first and call this once.', parameters: { score: { type: 'integer', description: '0 = certainly written by a person, 100 = certainly written by an AI' }, confidence: 'low | medium | high', rationale: 'optional: the main signals behind the score, 2-4 short sentences, in the language of the user', path: 'optional: document (default: the active one)' } },
+  { group: 'notes', name: 'update_note', required: ['id'], description: "Revises a note written by the assistant (not the user's notes) that is still open or resolved: changes its text or proposed correction, or reopens or resolves it. Use it when the user asks to reconsider, deepen or fix the notes. It cannot accept or reject: that is the user's choice. To answer a note written by the user, add a new note with add_note.", parameters: { id: 'note identifier (given by list_notes)', body: 'optional: new text of the note', replacement: 'optional: new proposed correction (a comment becomes a suggestion)', status: 'optional: open (reopens) | resolved (resolves, e.g. when the issue no longer applies; allowed on any note)', resolution: 'optional, with status resolved: why the note is closed without being applied (e.g. already fixed, the passage is gone, a deliberate choice); other notes and the user read it later', quote: 'optional: EXACT current text of the document to re-anchor the note to, when the passage it referred to was edited (allowed on any note; the document must be open)', path: 'optional: document of the note (default: the active one)' } },
+  { group: 'notes', name: 'list_notes', required: [], description: 'Lists the notes with their status (open, accepted, rejected, resolved). Use it to remember what was already proposed, accepted or rejected. A closed note may carry a [reason: …] explaining why it was not applied: respect it and do not raise the same point again.', parameters: { path: 'optional: document (default: the active one)', status: 'optional: open | accepted | rejected | resolved | all (default: all)', all_documents: 'optional: true to include every document of the project' } },
   { group: 'memory', name: 'remember', required: ['text'], description: 'Saves in the project memory an important piece of information that will be needed in later conversations: a decision, a term or naming choice, a style rule, a fact about the project or the audience. Write it as a short, self-contained statement. Link the files it applies to. Do not store trivia or the content of documents.', parameters: { text: 'the information to remember, short and self-contained', title: 'optional: a short label', files: { type: 'array', description: 'optional: project paths of the files the information applies to', items: { type: 'string' } } } },
   { group: 'memory', name: 'update_memory', required: ['id'], description: 'Changes a memory entry that YOU wrote (not the user\'s entries): its text, label or linked files. Use it to correct or refine instead of adding a duplicate.', parameters: { id: 'entry id (from recall or the memory list)', text: 'optional: new text', title: 'optional: new label', files: { type: 'array', description: 'optional: the new complete list of linked file paths', items: { type: 'string' } } } },
   { group: 'memory', name: 'forget', required: ['id'], description: 'Deletes a memory entry that YOU wrote and that is no longer true or useful. Entries written by the user cannot be deleted by you.', parameters: { id: 'entry id' } },
@@ -239,6 +240,7 @@ export function describeCall(name, args = {}) {
     case 'delete_file': return t('Moving {path} to the trash', { path: short(args.path) })
     case 'move_file': return t('Moving {path}', { path: short(args.from) })
     case 'create_file': return t('Creating {path}', { path: short(args.path) })
+    case 'set_ai_score': return t('Recording the AI-likelihood score')
     case 'create_project': return t('Creating the project “{name}”', { name: short(args.name, 40) })
     case 'open_document': return t('Opening {url}', { url: short(args.path) })
     case 'replace_document': return t('Rewriting the document')
@@ -455,7 +457,9 @@ export function createToolRunner(context) {
   const formatNote = (note, path) => {
     const where = path ? `${path} · ` : ''
     const proposal = note.kind === 'suggestion' ? ` → proposal: “${note.replacement}”` : ''
-    return `- [${note.id}] ${where}${note.kind}, ${note.status}${note.updatedAt ? ', revised' : ''}, by ${note.author}: “${note.quote.slice(0, 120)}” — ${note.body}${proposal}`
+    // Why the note was closed without being applied (written by the user or by the assistant), so a later review does not propose it again.
+    const reason = note.resolution ? ` [reason: ${note.resolution}]` : ''
+    return `- [${note.id}] ${where}${note.kind}, ${note.status}${note.updatedAt ? ', revised' : ''}, by ${note.author}: “${note.quote.slice(0, 120)}” — ${note.body}${proposal}${reason}`
   }
 
   const tools = {
@@ -660,6 +664,17 @@ export function createToolRunner(context) {
       return lines.length ? lines.join('\n') : 'No matching notes.'
     },
 
+    async set_ai_score(args) {
+      needProject()
+      const { tab } = context.getDocument(args.path)
+      const score = Number(args.score)
+      if (!Number.isFinite(score) || score < 0 || score > 100) throw new Error('"score" must be a number from 0 to 100')
+      const confidence = text(args.confidence).toLowerCase()
+      if (!['low', 'medium', 'high'].includes(confidence)) throw new Error('"confidence" must be low, medium or high')
+      context.setAiScore(tab, { score: Math.round(score), confidence, rationale: text(args.rationale).trim().slice(0, 1200) })
+      return `Score ${Math.round(score)}/100 (confidence ${confidence}) recorded for "${tab.title}". Tell the user briefly, and remind them it is only an indication.`
+    },
+
     async update_note(args) {
       needProject()
       const id = text(args.id).trim()
@@ -700,6 +715,10 @@ export function createToolRunner(context) {
       if (args.status !== undefined && args.status !== null) {
         if (!['open', 'resolved'].includes(text(args.status))) throw new Error('"status" can only be open or resolved: accepting and rejecting is up to the user')
         changes.status = text(args.status)
+      }
+      if (args.resolution !== undefined && args.resolution !== null && text(args.resolution).trim()) {
+        if (changes.status !== 'resolved') throw new Error('"resolution" only goes with status resolved')
+        changes.resolution = text(args.resolution).trim()
       }
       if (!Object.keys(changes).length) throw new Error('Nothing to update: give body, replacement, quote or status')
 

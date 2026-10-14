@@ -4,6 +4,7 @@ import {
   Code2,
   Copy,
   FileCode,
+  Gauge,
   Image as ImageIcon,
   Italic,
   Link as LinkIcon,
@@ -21,12 +22,28 @@ import {
 import { useEditorState } from '@tiptap/react'
 import { ToolbarButton, ToolbarDivider, ToolbarGroup } from './ToolbarButton.jsx'
 import { t } from '../i18n/index.js'
-import { useDialogs } from './Dialogs.jsx'
 import { useState } from 'react'
 
 const headingLevels = [1, 2, 3, 4, 5, 6, 7]
 
-export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onSave, dirty, sourceOpen, onToggleSource, onCopySource }) {
+// Risultato del controllo "quanto sembra scritto da un'AI": una pillola colorata con il punteggio. È solo un'indicazione dell'assistente.
+function AiScoreBadge({ score }) {
+  const tone = score.score >= 60 ? 'border-rose-400/50 bg-rose-400/10 text-rose-300' : score.score >= 30 ? 'border-amber-400/50 bg-amber-400/10 text-amber-300' : 'border-emerald-400/50 bg-emerald-400/10 text-emerald-300'
+  const confidence = { low: t('low confidence'), medium: t('medium confidence'), high: t('high confidence') }[score.confidence] || ''
+  const details = [
+    `${t('AI likelihood')}: ${score.score}/100 (${confidence})`,
+    score.rationale,
+    score.stale ? t('The text has changed since this check: run it again.') : '',
+    t('It is only an indication by the AI assistant, not proof: formal, technical or non-native writing is often mistaken for AI text.'),
+  ].filter(Boolean).join('\n\n')
+  return (
+    <span title={details} className={`ml-1 flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${tone} ${score.stale ? 'opacity-60' : ''}`}>
+      AI {score.score}%{score.confidence === 'low' && <span aria-hidden="true">?</span>}{score.stale && <span className="font-normal italic">{t('(outdated)')}</span>}
+    </span>
+  )
+}
+
+export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onLink, onSave, dirty, sourceOpen, onToggleSource, onCopySource, aiScore, onCheckAi }) {
   const [copied, setCopied] = useState(false)
   const active = useEditorState({
     editor,
@@ -46,18 +63,6 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onS
   })
   const headingLevel = active.headingLevel
   const currentBlock = headingLevel ? `h${headingLevel}` : 'paragraph'
-
-  const dialogs = useDialogs()
-
-  async function setLink() {
-    if (active.link) {
-      editor.chain().focus().unsetLink().run()
-      return
-    }
-
-    const url = (await dialogs.prompt(t('Link URL')))?.trim()
-    if (url) editor.chain().focus().setLink({ href: url }).run()
-  }
 
   const saveButton = (
       <ToolbarButton label={t('Save (Ctrl+S)')} active={Boolean(dirty)} onClick={onSave}><Save size={17} /></ToolbarButton>
@@ -103,7 +108,7 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onS
         <ToolbarButton label={t('Italic')} active={active.italic} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={17} /></ToolbarButton>
         <ToolbarButton label={t('Strikethrough')} active={active.strike} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={17} /></ToolbarButton>
         <ToolbarButton label={t('Inline code')} active={active.code} onClick={() => editor.chain().focus().toggleCode().run()}><Code2 size={17} /></ToolbarButton>
-        <ToolbarButton label={t('Link')} active={active.link} onClick={setLink}><LinkIcon size={17} /></ToolbarButton>
+        <ToolbarButton label={t('Link (Ctrl+K)')} active={active.link} onClick={onLink}><LinkIcon size={17} /></ToolbarButton>
         <ToolbarButton label={t('Insert image…')} onClick={onImage}><ImageIcon size={17} /></ToolbarButton>
       </ToolbarGroup>
       <ToolbarGroup>
@@ -121,6 +126,10 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onS
       <ToolbarGroup>
         <ToolbarButton label={t('Find and replace (Ctrl+F)')} active={findOpen} onClick={onFind}><Search size={17} /></ToolbarButton>
         <ToolbarButton label={t('Markdown source')} onClick={onToggleSource}><FileCode size={17} /></ToolbarButton>
+      </ToolbarGroup>
+      <ToolbarGroup>
+        <ToolbarButton label={t('Check how AI-like the text is')} onClick={onCheckAi}><Gauge size={17} /></ToolbarButton>
+        {aiScore && <AiScoreBadge score={aiScore} />}
       </ToolbarGroup>
     </div>
   )
