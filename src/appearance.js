@@ -36,7 +36,12 @@ export const widths = [
 
 export const fontSizeRange = { min: 14, max: 24 }
 
-export const defaultAppearance = { theme: 'system', accent: 'ash', font: 'sans', fontSize: 17, lineHeight: 'normal', width: 'medium' }
+// `fontFamily`: un carattere installato scelto per nome (facoltativo): il tipo generico `font` fa da ripiego. Solo estetico: non entra nel documento.
+export const defaultAppearance = { theme: 'system', accent: 'ash', font: 'sans', fontFamily: '', fontSize: 17, lineHeight: 'normal', width: 'medium' }
+
+// Nome di un carattere: testo libero senza i caratteri che romperebbero il valore CSS.
+// Lo spazio finale non si toglie: mentre si digita "Palatino " serve; si toglie quando il nome viene usato.
+const cleanFamily = (value) => { const name = String(value ?? ''); return name.length <= 80 && !/["';:{}<>\\\n]/.test(name) ? name : '' }
 
 const pick = (options, value, fallback) => (options.some((option) => option.value === value) ? value : fallback)
 
@@ -46,6 +51,7 @@ function normalize(value = {}) {
     theme: pick(themes, value.theme, defaultAppearance.theme),
     accent: pick(accents, value.accent, defaultAppearance.accent),
     font: pick(fonts, value.font, defaultAppearance.font),
+    fontFamily: cleanFamily(value.fontFamily),
     fontSize: Number.isFinite(size) ? Math.min(fontSizeRange.max, Math.max(fontSizeRange.min, Math.round(size))) : defaultAppearance.fontSize,
     lineHeight: pick(lineHeights, value.lineHeight, defaultAppearance.lineHeight),
     width: pick(widths, value.width, defaultAppearance.width),
@@ -68,7 +74,9 @@ export function applyAppearance(appearance) {
   const theme = appearance.theme === 'system' ? (systemQuery.matches ? 'dark' : 'light') : appearance.theme
   root.dataset.theme = theme
   root.dataset.accent = appearance.accent
-  root.style.setProperty('--editor-font', fonts.find((font) => font.value === appearance.font).family)
+  const generic = fonts.find((font) => font.value === appearance.font).family
+  const family = appearance.fontFamily.trim()
+  root.style.setProperty('--editor-font', family ? `"${family}", ${generic}` : generic)
   root.style.setProperty('--editor-size', `${appearance.fontSize / 16}rem`)
   root.style.setProperty('--editor-line-height', String(lineHeights.find((item) => item.value === appearance.lineHeight).size))
   root.style.setProperty('--editor-width', widths.find((item) => item.value === appearance.width).size)
