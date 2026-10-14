@@ -23,11 +23,13 @@ A project corresponds to a working directory. The file explorer displays folders
 
 Tabs support multiple documents at the same time, with independent undo history, scroll position, and unsaved-change indicators.
 
-Side panels are resizable and their dimensions are remembered. Side tabs switch between the file explorer, heading outline, and history for the active document.
+Side panels are resizable and their dimensions are remembered. The rail on the left switches between the projects list, the file explorer, the heading outline, the notes, the history, and the project memory ([ActivityBar.jsx](reference/src/components/pages/ActivityBar.jsx.md)).
 
 The context menu can open, rename, move to the trash, and reveal files and folders in the file manager. Drag and drop copies documents into the project without overwriting existing files.
 
 The session is restored per project, including open tabs, unsaved drafts, the active document, expanded folders, and panel state.
+
+A folder with its own `.ow` directory is a sub-project: the nearest `.ow` owns the history and the notes of a document ([project-owner.cjs](reference/electron/project-owner.cjs.md)). A project can also link Markdown files that live elsewhere, without copying them ([project-links.cjs](reference/electron/project-links.cjs.md)), and choose an icon that travels with the project ([project-icon.cjs](reference/electron/project-icon.cjs.md)).
 
 ## Project Settings and History
 
@@ -37,6 +39,8 @@ When a folder is opened, an `.ow` directory is created or reused at the project 
 .ow/
   project.json
   context.md
+  links.json
+  icon.png
   skills/
   memory.json
   chat/
@@ -48,7 +52,7 @@ When a folder is opened, an `.ow` directory is created or reused at the project 
       <id>.md
 ```
 
-The directory contains settings, assistant context, project memory, conversations, attachments, notes, and document versions. Its contents are plain text or JSON and can be committed to Git or ignored.
+The directory contains settings, the assistant context, the linked documents, the project icon, project memory, conversations, attachments, notes, and document versions. Its contents are plain text or JSON and can be committed to Git or ignored.
 
 A version is saved when the text changes. Manually labeled versions can also be created. Up to 100 versions are retained per document, with older automatic versions removed first.
 
@@ -58,9 +62,9 @@ History can compare a version with the current text, restore it, or delete it. B
 
 The assistant is available in a side panel and can work on the current selection or the entire document.
 
-Quick actions include proofreading, rewriting, summarizing, and reviewing. Conversations are saved in the project and can be renamed, deleted, or branched.
+Quick actions (proofread, rewrite, summarize, lengthen, review) can be edited in Settings, and you can add your own; by default Review leaves its remarks as notes in the document. Conversations are saved in the project and can be renamed, deleted, or branched.
 
-Responses are streamed and may include the model's reasoning or progress state. The tool-chain limit is configurable in Settings.
+Responses are streamed and may include the model's reasoning or progress state. Token usage is shown per reply and per conversation. The tool-chain limit is configurable in Settings, together with the option to continue on its own when the limit is reached.
 
 ### Writing Skills
 
@@ -82,7 +86,7 @@ A writing skill is a reusable pack of style, tone of voice, rules, reference exa
 
 CLI providers run without API keys from the environment; authentication is handled through OAuth. OpenWriter instructs them not to run shell commands or modify files outside the app's controlled project operations.
 
-Ollama, Ollama Cloud, OpenRouter, Codex, and Claude are supported.
+Ollama, Ollama Cloud, OpenRouter, Codex, Claude, and Gemini are supported. Ollama Cloud, OpenRouter, and Gemini use an API key kept in the operating system's encrypted credential storage; the CLI providers authenticate through OAuth.
 
 ## Spell Checking
 
@@ -90,7 +94,7 @@ The editor and chat input underline spelling errors and offer suggestions in the
 
 ## Appearance
 
-System, light, and dark themes are available, together with five accent colors and settings for font, size, line spacing, and text width, with a live preview.
+System, light, and dark themes are available, together with six accent colors (ash, violet, cyan, emerald, rose, amber) and settings for font, size, line spacing, and text width, with a live preview.
 
 ## Local Development
 
@@ -119,6 +123,9 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [preload.cjs.md](reference/electron/preload.cjs.md) ([preload.cjs](../electron/preload.cjs)) — Secure bridge exposed as `window.electronAPI`
   - [ai-providers.cjs.md](reference/electron/ai-providers.cjs.md) ([ai-providers.cjs](../electron/ai-providers.cjs)) — AI provider connection layer
   - [project-file.cjs.md](reference/electron/project-file.cjs.md) ([project-file.cjs](../electron/project-file.cjs)) — `.ow` directory and document history
+  - [project-owner.cjs.md](reference/electron/project-owner.cjs.md) ([project-owner.cjs](../electron/project-owner.cjs)) — Nearest `.ow` rule, sub-projects, loose documents
+  - [project-links.cjs.md](reference/electron/project-links.cjs.md) ([project-links.cjs](../electron/project-links.cjs)) — Markdown files linked from outside the project
+  - [project-icon.cjs.md](reference/electron/project-icon.cjs.md) ([project-icon.cjs](../electron/project-icon.cjs)) — Project icon: reading, validating, saving
   - [chat-store.cjs.md](reference/electron/chat-store.cjs.md) ([chat-store.cjs](../electron/chat-store.cjs)) — Conversations and attachments
   - [notes-store.cjs.md](reference/electron/notes-store.cjs.md) ([notes-store.cjs](../electron/notes-store.cjs)) — Anchored notes and suggestions
   - [memory-store.cjs.md](reference/electron/memory-store.cjs.md) ([memory-store.cjs](../electron/memory-store.cjs)) — Project memory entries and file references
@@ -126,6 +133,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [project-tools.cjs.md](reference/electron/project-tools.cjs.md) ([project-tools.cjs](../electron/project-tools.cjs)) — File tools for the assistant
   - [images.cjs.md](reference/electron/images.cjs.md) ([images.cjs](../electron/images.cjs)) — Image downloads, screenshots, normalization
   - [menu.cjs.md](reference/electron/menu.cjs.md) ([menu.cjs](../electron/menu.cjs)) — Native application menu
+  - [updates.cjs.md](reference/electron/updates.cjs.md) ([updates.cjs](../electron/updates.cjs)) — Latest version from the GitHub releases
   - [projects.cjs.md](reference/electron/projects.cjs.md) ([projects.cjs](../electron/projects.cjs)) — Recently opened projects
   - [i18n.cjs.md](reference/electron/i18n.cjs.md) ([i18n.cjs](../electron/i18n.cjs)) — Main-process translations
 - [docs/reference/src/](reference/src/)
@@ -148,21 +156,27 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [aiTools.js.md](reference/src/lib/aiTools.js.md) ([aiTools.js](../src/lib/aiTools.js)) — Tool catalog and execution layer
     - [anchoring.js.md](reference/src/lib/anchoring.js.md) ([anchoring.js](../src/lib/anchoring.js)) — Text anchoring for notes
     - [annotationExtension.js.md](reference/src/lib/annotationExtension.js.md) ([annotationExtension.js](../src/lib/annotationExtension.js)) — Find highlights and note markers
+    - [chatAttachments.js.md](reference/src/lib/chatAttachments.js.md) ([chatAttachments.js](../src/lib/chatAttachments.js)) — Chat attachments and token usage
+    - [editorInsert.js.md](reference/src/lib/editorInsert.js.md) ([editorInsert.js](../src/lib/editorInsert.js)) — Markdown inserted into the editor in place of a range
     - [imageExtension.js.md](reference/src/lib/imageExtension.js.md) ([imageExtension.js](../src/lib/imageExtension.js)) — Tiptap image node
     - [imagePaths.js.md](reference/src/lib/imagePaths.js.md) ([imagePaths.js](../src/lib/imagePaths.js)) — Document-relative image paths
+    - [keepSelectionExtension.js.md](reference/src/lib/keepSelectionExtension.js.md) ([keepSelectionExtension.js](../src/lib/keepSelectionExtension.js)) — Selection kept visible without focus
     - [layout.js.md](reference/src/lib/layout.js.md) ([layout.js](../src/lib/layout.js)) — Panel widths and persistence
     - [lineDiff.js.md](reference/src/lib/lineDiff.js.md) ([lineDiff.js](../src/lib/lineDiff.js)) — Line-level diff
-    - [chatAttachments.js.md](reference/src/lib/chatAttachments.js.md) ([chatAttachments.js](../src/lib/chatAttachments.js)) — Chat attachments and token usage
-    - [skills.js.md](reference/src/lib/skills.js.md) ([skills.js](../src/lib/skills.js)) — Writing skills helpers
+    - [pendingChangesExtension.js.md](reference/src/lib/pendingChangesExtension.js.md) ([pendingChangesExtension.js](../src/lib/pendingChangesExtension.js)) — Assistant edits marked for review
+    - [projectIcons.js.md](reference/src/lib/projectIcons.js.md) ([projectIcons.js](../src/lib/projectIcons.js)) — Project icons: reading, caching, choosing
+    - [quickActions.js.md](reference/src/lib/quickActions.js.md) ([quickActions.js](../src/lib/quickActions.js)) — Chat quick actions and their defaults
+    - [rawMarkdownExtensions.js.md](reference/src/lib/rawMarkdownExtensions.js.md) ([rawMarkdownExtensions.js](../src/lib/rawMarkdownExtensions.js)) — Front matter and HTML kept as raw text
+    - [readerMode.js.md](reference/src/lib/readerMode.js.md) ([readerMode.js](../src/lib/readerMode.js)) — Article extraction, reading view, save as Markdown
     - [searchExtension.js.md](reference/src/lib/searchExtension.js.md) ([searchExtension.js](../src/lib/searchExtension.js)) — Find and replace engine
+    - [skills.js.md](reference/src/lib/skills.js.md) ([skills.js](../src/lib/skills.js)) — Writing skills helpers
   - [components/](reference/src/components/)
     - [components.md](reference/src/components/components.md) — Index of all components
-    - [pages/](reference/src/components/pages/)
-      - Each component page under `docs/reference/src/components/pages/` documents the corresponding React component.
+    - [pages/](reference/src/components/pages/) — One page per component, named after its file; each page links to the component it documents.
 
 ## Privacy and Data
 
-Settings, sessions, window state, and the encrypted Ollama Cloud and OpenRouter keys are stored in Electron's user data directory.
+Settings, sessions, window state, and the encrypted Ollama Cloud, OpenRouter, and Gemini API keys are stored in Electron's user data directory.
 
 Document text is sent only to the enabled AI provider when a message is submitted. With local Ollama, data does not leave the computer.
 
@@ -180,8 +194,12 @@ npm run dist:mac
 npm run dist:linux
 ```
 
-## Archive Verification
+## Documentation Coverage
 
-Reference pages were checked against their source files. The archive includes pages for the Electron stores, renderer modules, libraries, and React components listed above. `memory-store.cjs` is documented in [memory-store.cjs.md](reference/electron/memory-store.cjs.md).
+Every documented module of the source tree is listed above with a reference page under `docs/reference/`, in its real directory hierarchy:
 
-The source tree also contains `src/app.js` and provider-logo assets, which currently have no dedicated reference pages and are therefore not listed as documented modules.
+- The Electron main-process modules (`electron/`), each with its own page.
+- The renderer modules and helpers (`src/App.jsx`, `src/main.jsx`, `src/appearance.js`, `src/styles.css`, `src/hooks/`, `src/i18n/`, `src/lib/`).
+- The React components (`src/components/`), one page per component, indexed in [components.md](reference/src/components/components.md).
+
+Not documented, and therefore not listed: `src/app.js` (empty placeholder file) and the provider logo assets in `src/assets/provider-logos/`.
