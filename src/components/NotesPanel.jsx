@@ -178,7 +178,7 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
           const index = notes.indexOf(note)
           const orphan = note.status === 'open' && !found[index]
           return (
-            <div key={note.id} data-note-card={note.id} className={`border-b border-slate-800/60 px-3 py-2.5 ${note.id === activeNoteId ? 'bg-slate-800/60' : ''}`}>
+            <div key={note.id} data-note-card={note.id} className={`border-b border-slate-800/60 px-3 py-2.5 ${note.id === activeNoteId ? 'note-card-active' : ''}`}>
               <button type="button" className="block w-full text-left" onClick={() => focusNote(note)}>
                 <span className="flex items-center gap-1.5 text-xs text-slate-500">
                   {note.author === 'ai' ? <Bot size={12} /> : <User size={12} />}

@@ -295,6 +295,16 @@ body {
   }
 }
 
+/* Scheda della nota selezionata nell'elenco: tinta chiara del colore d'accento con una barra a sinistra; funziona in entrambi i temi
+   perché l'accento ha già le sue variabili per ciascuno. */
+.note-card-active {
+  background: rgb(var(--accent-500) / 0.13);
+  box-shadow: inset 3px 0 0 rgb(var(--accent-400));
+}
+:root[data-theme='light'] .note-card-active {
+  background: rgb(var(--accent-500) / 0.09);
+}
+
 /* Note ancorate al testo: commenti in tinta d'accento, suggerimenti con sottolineatura ondulata ambra. */
 .document-editor .tiptap .ow-note {
   cursor: pointer;
