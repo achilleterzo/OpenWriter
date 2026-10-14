@@ -69,12 +69,25 @@ function createLinksStore({ getProjectPath }) {
     return list()
   }
 
+  // Il collegamento punta a un altro file (es. quello originale è stato spostato o rinominato): resta nella stessa posizione dell'elenco.
+  function update(from, to) {
+    const [absolute] = checkedPaths(project(), [to])
+    if (!absolute) throw new Error(t('Only Markdown documents saved on disk can be linked: {path}', { path: String(to) }))
+    const current = readLinks(project())
+    const index = current.findIndex((item) => samePath(item.path, String(from)))
+    if (index === -1) throw new Error(t('Link not found'))
+    current[index] = { ...current[index], path: absolute }
+    // Se il nuovo file era già collegato, resta una voce sola (quella aggiornata).
+    writeLinks(project(), current.filter((item, position) => position === index || !samePath(item.path, absolute)))
+    return list()
+  }
+
   function remove(target) {
     writeLinks(project(), readLinks(project()).filter((item) => !samePath(item.path, String(target))))
     return list()
   }
 
-  return { list, has, add, remove }
+  return { list, has, add, update, remove }
 }
 
 // Collega documenti a un progetto che non è (ancora) quello aperto: serve a crearne uno già con i suoi collegamenti.

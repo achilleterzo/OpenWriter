@@ -14,6 +14,7 @@ const { createMemoryStore } = require('./memory-store.cjs')
 const { fetchLatestRelease } = require('./updates.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
 const { createNotesStore } = require('./notes-store.cjs')
+const projectIcon = require('./project-icon.cjs')
 const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-links.cjs')
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
@@ -125,6 +126,24 @@ function readSessions() {
 
 // Una sessione (schede aperte, bozze, vista laterale) per ogni progetto; senza progetto usa la chiave '__none__'.
 const sessionKey = () => projectPath || '__none__'
+
+// Un progetto è stato spostato: la sua sessione (e i percorsi delle schede aperte in qualunque sessione) seguono la nuova posizione.
+function moveSessions(from, to) {
+  const root = path.resolve(from)
+  const rebase = (value) => {
+    if (typeof value !== 'string' || value.length > 1000 || /[\r\n]/.test(value) || !path.isAbsolute(value)) return value
+    const relative = path.relative(root, value)
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative)) ? path.join(to, relative) : value
+  }
+  const walk = (value) => {
+    if (Array.isArray(value)) return value.map(walk)
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, inner]) => [rebase(key), walk(inner)]))
+    return rebase(value)
+  }
+  const sessions = readSessions()
+  if (!Object.keys(sessions).length) return
+  fsSync.writeFileSync(sessionsFilePath(), JSON.stringify(walk(sessions), null, 2))
+}
 
 function loadSession() {
   return readSessions()[sessionKey()] || null
@@ -543,6 +562,24 @@ ipcMain.handle('projects:save-settings', (_event, { directory, settings } = {}) 
   if (projectPath && path.resolve(projectPath).toLowerCase() === target.toLowerCase()) applySpellcheck()
   return saved
 })
+// Icona di un progetto (anche non aperto): un'immagine in `.ow`, ridimensionata; qui si legge, si sceglie e si toglie.
+ipcMain.handle('projects:get-icon', (_event, directory) => projectIcon.getIcon(directory))
+// Scelta in due tempi: qui si sceglie il file e se ne legge il contenuto (l'interfaccia lo decodifica e lo ridimensiona);
+// poi `projects:save-icon` salva il risultato.
+ipcMain.handle('projects:pick-icon', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, { title: t('Choose the project icon'), properties: ['openFile'], filters: [{ name: t('Image'), extensions: projectIcon.ICON_EXTENSIONS }] })
+  if (result.canceled || !result.filePaths[0]) return null
+  return projectIcon.readSource(result.filePaths[0])
+})
+ipcMain.handle('projects:save-icon', (_event, { directory, kind, data } = {}) => {
+  const { target, file } = projectFileFor(directory)
+  file.initialize()
+  return projectIcon.saveIcon(target, kind, data)
+})
+ipcMain.handle('projects:remove-icon', (_event, directory) => {
+  projectIcon.removeIcon(projectFileFor(directory).target)
+  return true
+})
 // Copia il contesto per l'assistente (context.md, gli altri .md di istruzioni e le skill in .ow) da un progetto a un altro.
 ipcMain.handle('projects:copy-context', (_event, { from, to, mode } = {}) => {
   const source = projectFileFor(from)
@@ -771,6 +808,22 @@ ipcMain.handle('tools:create-project', async (_event, { name, documents } = {}) 
 })
 ipcMain.handle('links:list', () => (projectPath ? linksStore.list() : []))
 ipcMain.handle('links:remove', (_event, target) => linksStore.remove(target))
+// Aggiorna un collegamento: si sceglie il file a cui deve puntare (di solito lo stesso documento, spostato o rinominato).
+ipcMain.handle('links:update', async (_event, target) => {
+  if (!linksStore.has(String(target))) throw new Error(t('Link not found'))
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: t('Choose the file this link should point to'),
+    defaultPath: fsSync.existsSync(path.dirname(String(target))) ? path.dirname(String(target)) : undefined,
+    properties: ['openFile'],
+    filters: [markdownFilter],
+  })
+  if (result.canceled || !result.filePaths[0]) return null
+  return linksStore.update(String(target), result.filePaths[0])
+})
+ipcMain.handle('links:reveal', (_event, target) => {
+  if (!linksStore.has(String(target)) || !fsSync.existsSync(String(target))) throw new Error(t('File not found'))
+  shell.showItemInFolder(path.resolve(String(target)))
+})
 ipcMain.handle('chat:copy-to-project', (_event, { id, target } = {}) => chatStore.copyTo(String(id || ''), String(target || '')))
 ipcMain.handle('workspace:remove-project', (_event, directory) => { projectsStore.remove(String(directory || '')); return projectsStore.list() })
 // Per l'assistente: sposta nel cestino (con la conferma dell'utente) o sposta/rinomina dentro il progetto.
@@ -850,6 +903,117 @@ ipcMain.handle('workspace:create-subproject', async (_event, directory) => {
   // Nasce che eredita il contesto del progetto padre; si può togliere dalle impostazioni del sotto-progetto.
   createProjectFile({ getProjectPath: () => target }).initialize({ inherit: true })
   return target
+})
+// Sposta una cartella (rename; tra dischi diversi la copia e poi toglie l'originale).
+async function moveDirectory(source, destination) {
+  try {
+    await fs.rename(source, destination)
+  } catch (error) {
+    if (error.code !== 'EXDEV') throw error
+    await fs.cp(source, destination, { recursive: true, errorOnExist: true, force: false })
+    await fs.rm(source, { recursive: true, force: true })
+  }
+}
+
+const isInsideOf = (root, target) => {
+  const relative = path.relative(path.resolve(root), path.resolve(target))
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+// Cambia solo l'eredità del contesto di un progetto (le altre impostazioni e il contesto restano come sono).
+function setInheritance(directory, inherit) {
+  const file = createProjectFile({ getProjectPath: () => directory })
+  const current = file.getSettings()
+  file.saveSettings({ name: current.name, ai: { context: current.ai.context, language: current.ai.language, documentLanguage: current.ai.documentLanguage }, options: current.options, spellcheck: current.spellcheck, inherit })
+}
+
+// Sotto-progetto → progetto autonomo: la cartella, con la sua `.ow` (cronologia, note, memoria dei suoi file), esce dal progetto aperto
+// e va nella cartella scelta. Diventa un progetto a sé, che non eredita più il contesto di nessun altro.
+ipcMain.handle('workspace:move-subproject-out', async (_event, subproject) => {
+  const source = resolveInProject(subproject)
+  if (source === projectPath) throw new Error(t('The project folder cannot be renamed from here'))
+  if (!fsSync.existsSync(path.join(source, projectFile.directoryName))) throw new Error(t('This folder is not a sub-project'))
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    buttons: [t('Choose the destination…'), t('Cancel')],
+    defaultId: 0,
+    cancelId: 1,
+    message: t('Make the sub-project "{name}" a standalone project?', { name: path.basename(source) }),
+    detail: t('The folder is moved out of this project to the place you choose, with its history, notes and memory. It will no longer inherit the instructions of this project.'),
+  })
+  if (response !== 0) return null
+  const picked = await dialog.showOpenDialog(mainWindow, { title: t('Choose where to move the project'), defaultPath: path.dirname(projectPath), properties: ['openDirectory', 'createDirectory'] })
+  if (picked.canceled || !picked.filePaths[0]) return null
+  const parent = path.resolve(picked.filePaths[0])
+  if (isInsideOf(projectPath, parent)) throw new Error(t('Choose a folder outside this project'))
+  const target = path.join(parent, path.basename(source))
+  if (fsSync.existsSync(target)) throw new Error(t('An item with this name already exists'))
+  await moveDirectory(source, target)
+  try { setInheritance(target, false) } catch (error) { console.error('Eredità non aggiornata:', error) }
+  projectsStore.touch(target)
+  return target
+})
+
+// Progetto autonomo → sotto-progetto: la cartella di un altro progetto (scelta dall'utente) viene spostata dentro `directory`, una cartella
+// del progetto aperto, portandosi dietro la sua `.ow`. Da lì in poi eredita il contesto di questo progetto (si toglie dalle sue impostazioni).
+ipcMain.handle('workspace:move-project-in', async (_event, directory) => {
+  const destination = resolveInProject(directory)
+  if (!(await fs.stat(destination).then((stat) => stat.isDirectory(), () => false))) throw new Error(t('Not a folder'))
+  const picked = await dialog.showOpenDialog(mainWindow, { title: t('Choose the project to move here'), defaultPath: path.dirname(projectPath), properties: ['openDirectory'] })
+  if (picked.canceled || !picked.filePaths[0]) return null
+  const source = path.resolve(picked.filePaths[0])
+  if (!fsSync.existsSync(path.join(source, projectFile.directoryName))) throw new Error(t('This folder is not a project: it has no .ow folder'))
+  if (isInsideOf(source, projectPath)) throw new Error(t('The open project cannot be moved into itself'))
+  if (isInsideOf(projectPath, source)) throw new Error(t('This folder is already inside the open project'))
+  const target = path.join(destination, path.basename(source))
+  if (fsSync.existsSync(target)) throw new Error(t('An item with this name already exists'))
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    buttons: [t('Move'), t('Cancel')],
+    defaultId: 0,
+    cancelId: 1,
+    message: t('Move the project "{name}" into this project?', { name: path.basename(source) }),
+    detail: t('The folder is moved (not copied) to {destination} and becomes a sub-project, with its history, notes and memory. It will inherit the instructions of this project, unless you change it in its settings.', { destination }),
+  })
+  if (response !== 0) return null
+  await moveDirectory(source, target)
+  try { setInheritance(target, true) } catch (error) { console.error('Eredità non aggiornata:', error) }
+  projectsStore.remove(source)
+  return target
+})
+// Sposta un progetto (anche non aperto) in un'altra cartella: l'elenco dei progetti e le sessioni seguono la nuova posizione.
+// Se è il progetto aperto, resta aperto nel nuovo posto (l'interfaccia ricarica la sessione, che ora ha i percorsi aggiornati).
+ipcMain.handle('workspace:move-project', async (_event, directory) => {
+  const source = path.resolve(String(directory || ''))
+  if (!(await fs.stat(source).then((stat) => stat.isDirectory(), () => false))) throw new Error(t('The project folder no longer exists'))
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    buttons: [t('Choose the destination…'), t('Cancel')],
+    defaultId: 0,
+    cancelId: 1,
+    message: t('Move the project "{name}"?', { name: path.basename(source) }),
+    detail: t('The whole folder is moved to the place you choose, with its history, notes and memory.'),
+  })
+  if (response !== 0) return null
+  const picked = await dialog.showOpenDialog(mainWindow, { title: t('Choose where to move the project'), defaultPath: path.dirname(source), properties: ['openDirectory', 'createDirectory'] })
+  if (picked.canceled || !picked.filePaths[0]) return null
+  const parent = path.resolve(picked.filePaths[0])
+  if (isInsideOf(source, parent)) throw new Error(t('Choose a folder outside the project'))
+  const target = path.join(parent, path.basename(source))
+  if (path.resolve(target).toLowerCase() === source.toLowerCase()) return null
+  if (fsSync.existsSync(target)) throw new Error(t('An item with this name already exists'))
+  const wasOpen = Boolean(projectPath) && path.resolve(projectPath).toLowerCase() === source.toLowerCase()
+  await moveDirectory(source, target)
+  projectsStore.replace(source, target)
+  try { moveSessions(source, target) } catch (error) { console.error('Sessioni non aggiornate:', error) }
+  if (wasOpen) await setProject(target)
+  return { path: target, wasOpen }
+})
+// Mostra nel file manager la cartella di un progetto dell'elenco.
+ipcMain.handle('projects:reveal', (_event, directory) => {
+  const target = path.resolve(String(directory || ''))
+  if (!projectsStore.list().some((item) => path.resolve(item.path).toLowerCase() === target.toLowerCase()) || !fsSync.existsSync(target)) throw new Error(t('The project folder no longer exists'))
+  shell.openPath(target)
 })
 ipcMain.handle('workspace:move-path', (_event, request) => moveIntoDirectory(request || {}))
 ipcMain.handle('workspace:reveal-path', (_event, target) => { shell.showItemInFolder(resolveInProject(target)) })
