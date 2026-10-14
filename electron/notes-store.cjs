@@ -62,6 +62,7 @@ function createNotesStore({ getProjectPath, getMainPath = () => null }) {
   function normalize(input, existing = {}) {
     const kind = KINDS.includes(input.kind) ? input.kind : existing.kind || 'comment'
     const replacement = input.replacement === undefined ? existing.replacement : input.replacement
+    const status = STATUSES.includes(input.status) ? input.status : existing.status || 'open'
     return {
       id: existing.id || input.id || crypto.randomUUID(),
       kind,
@@ -70,7 +71,9 @@ function createNotesStore({ getProjectPath, getMainPath = () => null }) {
       suffix: text(input.suffix ?? existing.suffix, 80),
       body: text(input.body ?? existing.body, 4000),
       replacement: kind === 'suggestion' && replacement !== null && replacement !== undefined ? text(replacement, 4000) : null,
-      status: STATUSES.includes(input.status) ? input.status : existing.status || 'open',
+      status,
+      // Perché la nota è stata chiusa senza applicarla (testo libero, facoltativo): chi rilegge le note capisce cosa è successo. Si azzera se la nota si riapre.
+      resolution: status === 'open' ? null : text(input.resolution ?? existing.resolution, 1000).trim() || null,
       author: AUTHORS.includes(input.author) ? input.author : existing.author || 'user',
       createdAt: existing.createdAt || new Date().toISOString(),
       updatedAt: existing.updatedAt ?? null,
@@ -96,8 +99,8 @@ function createNotesStore({ getProjectPath, getMainPath = () => null }) {
     const index = notes.findIndex((note) => note.id === id)
     if (index === -1) throw new Error(t('Note not found'))
     // L'autore non si modifica: cambiano contenuto, stato, (comment → suggestion) il tipo e, per riallinearla dopo una modifica del testo, l'ancora.
-    const { body, replacement, status, kind, quote, prefix, suffix } = changes || {}
-    notes[index] = { ...normalize({ ...notes[index], body, replacement, status, kind, quote, prefix, suffix }, notes[index]), updatedAt: new Date().toISOString() }
+    const { body, replacement, status, kind, quote, prefix, suffix, resolution } = changes || {}
+    notes[index] = { ...normalize({ ...notes[index], body, replacement, status, kind, quote, prefix, suffix, resolution }, notes[index]), updatedAt: new Date().toISOString() }
     writeAtomic(file, JSON.stringify(notes, null, 2))
     return notes[index]
   }
