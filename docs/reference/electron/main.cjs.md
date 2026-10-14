@@ -12,6 +12,8 @@ Other responsibilities:
 - Workspace operations limited to the project directory: rename, delete with a confirmation dialog and trash, reveal in the file manager, unique-destination import with drag and drop, and directory listing that hides dot folders, `node_modules`, `dist`, and `out`.
 - Export to PDF through a hidden print window and to DOCX through html-to-docx.
 - Spell-check configuration, with project settings overriding global languages, and edit context-menu events sent to the renderer.
+- Chat attachments chosen by the user (`chat:pick-attachments`, `chat:read-attachment`, `chat:prepare-image`): only images (up to 8 MB, normalized; formats Electron cannot decode come back as `raw-image` for the renderer to convert) and PDF files (up to 20 MB, `%PDF-` header checked), also from outside the project.
+- Writing skills through the `skills:*` channels; `skills:import-file` picks a Markdown file and returns its parsed fields through `skillFromMarkdown` without saving.
 - Window state persistence, restored only when still visible on a connected display.
 - The BrowserWindow hosting the renderer loads the Vite dev server in development and the built bundle in production.
 

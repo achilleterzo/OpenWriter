@@ -12,4 +12,6 @@ Non-React helpers used by the editor and the assistant.
 | [imagePaths.js](imagePaths.js.md) | Resolution of document-relative image paths to the ow-file protocol |
 | [layout.js](layout.js.md) | Panel layout: widths, clamping, persistence, and fitting on resize |
 | [lineDiff.js](lineDiff.js.md) | Line-level diff used by the version diff dialog |
+| [chatAttachments.js](chatAttachments.js.md) | Chat attachments (images, PDF) and token usage formatting |
+| [skills.js](skills.js.md) | Writing skills: serialization, active skills, system-prompt block, AI generation prompts |
 | [searchExtension.js](searchExtension.js.md) | Tiptap extension powering live find highlight and match counting |

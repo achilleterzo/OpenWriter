@@ -6,13 +6,17 @@ const { t } = require('./i18n.cjs')
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/
 const MAX_TITLE_CHARS = 200
 const MAX_MESSAGE_CHARS = 200000
+const SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,59}$/
+const tokenCount = (value) => (Number.isInteger(value) && value >= 0 ? value : 0)
+const skillIds = (value) => [...new Set((Array.isArray(value) ? value : []).filter((id) => typeof id === 'string' && SKILL_ID_PATTERN.test(id)))].slice(0, 50)
 
 /**
  * Le conversazioni con l'assistente vivono in `<progetto>/.ow/chat/<id>.json`:
- *   { id, title, createdAt, updatedAt, parentId, branchedAt, contextFrom: [id…], messages: [{ role, content, at, error?, thinking?, name?, toolCall? }] }
+ *   { id, title, createdAt, updatedAt, parentId, branchedAt, contextFrom: [id…], skillOverrides: { add: [id…], remove: [id…] }, messages: [{ role, content, at, error?, thinking?, name?, toolCall?, images?, files?, usage? }] }
  * `role` può essere 'tool': il risultato di uno strumento (`name`) chiamato dall'assistente (`toolCall` nel messaggio precedente).
  * `parentId` e `branchedAt` descrivono un ramo (indice dell'ultimo messaggio copiato dalla conversazione di origine);
- * `contextFrom` elenca altre conversazioni da fornire come contesto precedente.
+ * `contextFrom` elenca altre conversazioni da fornire come contesto precedente; `skillOverrides` aggiunge o toglie skill di scrittura
+ * rispetto a quelle attive di default nel progetto.
  * Sono JSON leggibili: servono anche da log e possono essere versionati con il progetto.
  */
 function createChatStore({ getProjectPath }) {
@@ -47,6 +51,7 @@ function createChatStore({ getProjectPath }) {
       parentId: optionalId(input.parentId),
       branchedAt: Number.isInteger(input.branchedAt) ? input.branchedAt : null,
       contextFrom: [...new Set((Array.isArray(input.contextFrom) ? input.contextFrom : []).map(optionalId).filter(Boolean))].filter((id) => id !== input.id),
+      skillOverrides: { add: skillIds(input.skillOverrides?.add), remove: skillIds(input.skillOverrides?.remove) },
       messages: (Array.isArray(input.messages) ? input.messages : [])
         .filter((message) => message && ['user', 'assistant', 'tool'].includes(message.role))
         .map((message) => ({
@@ -65,6 +70,14 @@ function createChatStore({ getProjectPath }) {
           // Le immagini restano su disco (.ow/chat/attachments): nel JSON ci sono solo riferimenti.
           ...(Array.isArray(message.images) && message.images.some((image) => ID_PATTERN.test(String(image?.id || '')))
             ? { images: message.images.filter((image) => ID_PATTERN.test(String(image?.id || ''))).map((image) => ({ id: image.id, mime: image.mime === 'image/jpeg' ? 'image/jpeg' : 'image/png', label: text(image.label, 120) })) }
+            : {}),
+          // PDF allegati dall'utente: come le immagini, nel JSON solo il riferimento al file in .ow/chat/attachments.
+          ...(message.role === 'user' && Array.isArray(message.files) && message.files.some((file) => ID_PATTERN.test(String(file?.id || '')))
+            ? { files: message.files.filter((file) => ID_PATTERN.test(String(file?.id || ''))).map((file) => ({ id: file.id, mime: 'application/pdf', label: text(file.label, 200), size: tokenCount(file.size) })) }
+            : {}),
+          // Token letti e generati dal modello per produrre la risposta.
+          ...(message.role === 'assistant' && message.usage && (tokenCount(message.usage.input) || tokenCount(message.usage.output))
+            ? { usage: { input: tokenCount(message.usage.input), output: tokenCount(message.usage.output) } }
             : {}),
           ...(message.toolCall && typeof message.toolCall === 'object' ? { toolCall: { name: text(message.toolCall.name, 60), arguments: message.toolCall.arguments ?? {} } } : {}),
         })),
@@ -118,7 +131,10 @@ function createChatStore({ getProjectPath }) {
   }
 
   const attachmentsDirectory = () => path.join(directory(), 'attachments')
-  const attachmentExtension = (mime) => (mime === 'image/jpeg' ? 'jpg' : 'png')
+  // Formati degli allegati su disco: immagini (dagli strumenti o dall'utente) e PDF allegati dall'utente.
+  const ATTACHMENT_TYPES = [['png', 'image/png'], ['jpg', 'image/jpeg'], ['pdf', 'application/pdf']]
+  const attachmentMime = (mime) => (ATTACHMENT_TYPES.some(([, known]) => known === mime) ? mime : 'image/png')
+  const attachmentExtension = (mime) => ATTACHMENT_TYPES.find(([, known]) => known === attachmentMime(mime))[0]
 
   function saveAttachment({ mime, data }) {
     const id = crypto.randomUUID()
@@ -126,19 +142,19 @@ function createChatStore({ getProjectPath }) {
     if (!buffer.length) throw new Error(t('Empty attachment'))
     fs.mkdirSync(attachmentsDirectory(), { recursive: true })
     fs.writeFileSync(path.join(attachmentsDirectory(), `${id}.${attachmentExtension(mime)}`), buffer)
-    return { id, mime: mime === 'image/jpeg' ? 'image/jpeg' : 'image/png' }
+    return { id, mime: attachmentMime(mime) }
   }
 
   function getAttachment(id) {
     if (!ID_PATTERN.test(String(id))) throw new Error(t('Invalid attachment identifier'))
-    for (const [extension, mime] of [['png', 'image/png'], ['jpg', 'image/jpeg']]) {
+    for (const [extension, mime] of ATTACHMENT_TYPES) {
       const file = path.join(attachmentsDirectory(), `${id}.${extension}`)
       if (fs.existsSync(file)) return { mime, data: fs.readFileSync(file).toString('base64') }
     }
     throw new Error(t('Attachment not found'))
   }
 
-  const attachmentIds = (conversation) => (conversation.messages || []).flatMap((message) => (message.images || []).map((image) => image.id))
+  const attachmentIds = (conversation) => (conversation.messages || []).flatMap((message) => [...(message.images || []), ...(message.files || [])].map((entry) => entry.id))
 
   // Elimina la conversazione e gli allegati che nessun'altra conversazione (ad esempio un ramo) usa ancora.
   function remove(id) {
@@ -152,7 +168,7 @@ function createChatStore({ getProjectPath }) {
         try { for (const used of attachmentIds(JSON.parse(fs.readFileSync(path.join(directory(), name), 'utf8')))) stillUsed.add(used) } catch {}
       }
       for (const attachment of own.filter((item) => !stillUsed.has(item))) {
-        for (const extension of ['png', 'jpg']) fs.rmSync(path.join(attachmentsDirectory(), `${attachment}.${extension}`), { force: true })
+        for (const [extension] of ATTACHMENT_TYPES) fs.rmSync(path.join(attachmentsDirectory(), `${attachment}.${extension}`), { force: true })
       }
     }
     return true

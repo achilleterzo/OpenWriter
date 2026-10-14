@@ -7,6 +7,7 @@ import openRouterLogo from '../assets/provider-logos/openrouter.svg'
 import codexLogo from '../assets/provider-logos/codex.svg'
 import claudeCodeLogo from '../assets/provider-logos/claude-code.svg'
 import { t } from '../i18n/index.js'
+import ModelPicker from './ModelPicker.jsx'
 
 const ai = window.electronAPI?.ai
 
@@ -39,6 +40,8 @@ export default function AiProviderSettings() {
   const [settings, setSettings] = useState(null)
   const [models, setModels] = useState([])
   const [modelsLoading, setModelsLoading] = useState(false)
+  // Cambia a ogni ricarica dei modelli, così il selettore rilegge anche cosa accettano.
+  const [modelsVersion, setModelsVersion] = useState(0)
   const [status, setStatus] = useState(null)
   const [apiKey, setApiKey] = useState('')
   const [savedKeys, setSavedKeys] = useState({})
@@ -71,6 +74,7 @@ export default function AiProviderSettings() {
     setError('')
     try {
       setModels(await ai.listModels({ provider, endpoint: config.endpoint, ...request }))
+      setModelsVersion((value) => value + 1)
     } catch (reason) {
       setModels([])
       setError(reason.message)
@@ -153,7 +157,6 @@ export default function AiProviderSettings() {
   if (!settings) return null
 
   const connected = status?.provider === provider && status.authenticated
-  const modelOptions = [...new Set([config.model, ...models].filter(Boolean))]
 
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-950/40 p-6">
@@ -250,14 +253,20 @@ export default function AiProviderSettings() {
             </label>
           )}
 
-          <label className="text-sm text-slate-300">{t('Model')}<div className="flex gap-2">
-              <select className={fieldClass} value={config.model || ''} onChange={(event) => updateConfig({ model: event.target.value })}>
-                <option value="">{modelsLoading ? t('Loading…') : native ? t('Client default') : t('Select a model')}</option>
-                {modelOptions.map((model) => <option key={model} value={model}>{model}</option>)}
-              </select>
+          <div className="text-sm text-slate-300">{t('Model')}<div className="flex gap-2">
+              <div className="min-w-0 flex-1">
+                <ModelPicker
+                  value={config.model || ''}
+                  models={models}
+                  emptyLabel={modelsLoading ? t('Loading…') : native ? t('Client default') : t('Select a model')}
+                  cacheKey={`${provider}|${config.endpoint || ''}|${modelsVersion}`}
+                  loadInputs={() => ai.listModelInputs({ provider, endpoint: config.endpoint })}
+                  onChange={(model) => updateConfig({ model })}
+                />
+              </div>
               <button type="button" aria-label={t('Refresh models')} title={t('Refresh models')} className={`${buttonClass} mt-2`} disabled={modelsLoading} onClick={() => loadModels()}><RefreshCw size={16} className={modelsLoading ? 'animate-spin' : ''} /></button>
             </div>
-          </label>
+          </div>
 
           <label className="text-sm text-slate-300">{t('Reply language')}<select className={fieldClass} value={settings.language} onChange={(event) => persist({ ...settings, language: event.target.value })}>
               <option value="">{t('Same as the interface')}</option>

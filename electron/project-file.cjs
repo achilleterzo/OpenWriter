@@ -14,6 +14,7 @@ const MAX_CONTEXT_CHARS = 20000
  * La directory `.ow` nella radice del progetto contiene:
  *   project.json                         { name, ai: { language, documentLanguage }, options: { autoVersions } }
  *   context.md                           contesto per l'assistente AI (testo libero)
+ *   skills/<id>.md                       skill di scrittura del progetto (vedi skills-store.cjs); quelle attive di default in project.json → skills.active
  *   history/<documento>/index.json       metadati delle versioni di un documento
  *   history/<documento>/<id>.md          contenuto di ogni versione
  * `<documento>` è il percorso del file relativo alla `.ow` che lo possiede (la più vicina, vedi project-owner.cjs): per un file di un
@@ -21,6 +22,7 @@ const MAX_CONTEXT_CHARS = 20000
  * Le chiavi sconosciute di project.json vengono conservate.
  */
 const cleanLanguages = (value) => (Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === 'string' && item))] : [])
+const cleanSkillIds = (value) => (Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === 'string' && /^[a-z0-9][a-z0-9-]{0,59}$/.test(item)))].slice(0, 50) : [])
 
 function createProjectFile({ getProjectPath }) {
   const root = () => {
@@ -67,6 +69,7 @@ function createProjectFile({ getProjectPath }) {
       ai: { language: '', documentLanguage: '', ...(parsed.ai && typeof parsed.ai === 'object' ? parsed.ai : {}) },
       options: { autoVersions: true, ...(parsed.options && typeof parsed.options === 'object' ? parsed.options : {}) },
       spellcheck: { languages: [], ...(parsed.spellcheck && typeof parsed.spellcheck === 'object' ? parsed.spellcheck : {}) },
+      skills: { ...(parsed.skills && typeof parsed.skills === 'object' ? parsed.skills : {}), active: cleanSkillIds(parsed.skills?.active) },
     }
   }
 
@@ -112,7 +115,8 @@ function createProjectFile({ getProjectPath }) {
    * Contesto dell'assistente per un documento: la catena delle `.ow` dalla più esterna alla più vicina al documento.
    * Dentro il progetto aperto un sotto-progetto eredita dal padre, salvo `inherit: false`. Un progetto aperto da solo
    * (autonomo) risale oltre la propria radice solo se ha `inherit: true`.
-   * Ogni voce: { path (relativo al progetto, '' per la radice, null se fuori dal progetto), name, context, extraContext, language, documentLanguage }.
+   * Ogni voce: { path (relativo al progetto, '' per la radice, null se fuori dal progetto), base (cartella assoluta), name, context, extraContext,
+   * language, documentLanguage, activeSkills (id delle skill attive di default) }.
    */
   function getContextChain(document) {
     const project = getProjectPath()
@@ -142,11 +146,13 @@ function createProjectFile({ getProjectPath }) {
       const toProject = path.relative(root, base)
       return {
         path: toProject.startsWith('..') || path.isAbsolute(toProject) ? null : toProject.split(path.sep).join('/'),
+        base,
         name: settings.name || path.basename(base),
         context: fs.existsSync(contextPath) ? fs.readFileSync(contextPath, 'utf8') : '',
         extraContext: readExtraContext(base),
         language: String(settings.ai.language || ''),
         documentLanguage: String(settings.ai.documentLanguage || ''),
+        activeSkills: settings.skills.active,
       }
     })
   }
@@ -166,19 +172,30 @@ function createProjectFile({ getProjectPath }) {
       ai: { context, extraContext: readExtraContext(), language: String(settings.ai.language || ''), documentLanguage: String(settings.ai.documentLanguage || '') },
       options: { autoVersions: settings.options.autoVersions !== false },
       spellcheck: { languages: cleanLanguages(settings.spellcheck.languages) },
+      skills: { active: settings.skills.active },
     }
   }
 
-  function saveSettings({ name, ai, options, spellcheck, inherit } = {}) {
+  // `skills` è facoltativo: chi non lo passa (es. la copia del contesto) lascia intatte le skill attive.
+  function saveSettings({ name, ai, options, spellcheck, inherit, skills } = {}) {
     const settings = readSettings()
     if (inherit !== undefined) settings.inherit = Boolean(inherit)
     settings.name = String(name || '').slice(0, 200)
     settings.ai = { ...settings.ai, language: String(ai?.language || '').slice(0, 50), documentLanguage: String(ai?.documentLanguage || '').slice(0, 50) }
     settings.options = { ...settings.options, autoVersions: options?.autoVersions !== false }
     settings.spellcheck = { ...settings.spellcheck, languages: cleanLanguages(spellcheck?.languages) }
+    if (skills !== undefined) settings.skills = { ...settings.skills, active: cleanSkillIds(skills?.active) }
     writeAtomic(settingsFile(), JSON.stringify(settings, null, 2))
     writeAtomic(contextFile(), String(ai?.context || '').slice(0, MAX_CONTEXT_CHARS))
     return getSettings()
+  }
+
+  // Skill attive di default: si salvano da sole, senza toccare il resto delle impostazioni.
+  function setActiveSkills(active) {
+    const settings = readSettings()
+    settings.skills = { ...settings.skills, active: cleanSkillIds(active) }
+    writeAtomic(settingsFile(), JSON.stringify(settings, null, 2))
+    return settings.skills.active
   }
 
   // Da chiamare all'apertura del progetto: crea .ow con i file di base se mancano, lo nasconde e lascia intatto quanto esiste già.
@@ -262,7 +279,7 @@ function createProjectFile({ getProjectPath }) {
     return true
   }
 
-  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, getContextChain, saveSettings, autoVersionsEnabled, addVersion, listVersions, getVersion, deleteVersion }
+  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, getContextChain, saveSettings, setActiveSkills, autoVersionsEnabled, addVersion, listVersions, getVersion, deleteVersion }
 }
 
 module.exports = { createProjectFile }

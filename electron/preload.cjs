@@ -81,6 +81,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportDocx: (html) => ipcRenderer.invoke('document:export-docx', { html }),
   printDocument: (html) => ipcRenderer.invoke('document:print', { html }),
   exportPdf: (html) => ipcRenderer.invoke('document:export-pdf', { html }),
+  skills: {
+    list: (request) => ipcRenderer.invoke('skills:list', request),
+    get: (request) => ipcRenderer.invoke('skills:get', request),
+    save: (request) => ipcRenderer.invoke('skills:save', request),
+    remove: (request) => ipcRenderer.invoke('skills:delete', request),
+    parse: (markdown) => ipcRenderer.invoke('skills:parse', markdown),
+    openFolder: (request) => ipcRenderer.invoke('skills:open-folder', request),
+    setActive: (request) => ipcRenderer.invoke('skills:set-active', request),
+    // Sceglie un file Markdown e ne restituisce i campi della skill (null se annullato), senza salvarla.
+    importFile: () => ipcRenderer.invoke('skills:import-file'),
+  },
   ai: {
     getSettings: () => ipcRenderer.invoke('ai:get-settings'),
     saveSettings: (settings) => ipcRenderer.invoke('ai:save-settings', settings),
@@ -88,11 +99,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     login: (provider) => ipcRenderer.invoke('ai:login', provider),
     submitLoginCode: (code) => ipcRenderer.invoke('ai:login-code', code),
     listModels: (request) => ipcRenderer.invoke('ai:models', request),
+    listModelInputs: (request) => ipcRenderer.invoke('ai:model-inputs', request),
     hasApiKey: (provider) => ipcRenderer.invoke('ai:has-api-key', provider),
     saveApiKey: (value, provider) => ipcRenderer.invoke('ai:save-api-key', value, provider),
     chat: (messages) => ipcRenderer.invoke('ai:chat', messages),
     getCapabilities: (model) => ipcRenderer.invoke('ai:capabilities', model),
-    // Risposta in streaming: onEvent riceve { type: 'text' | 'thinking' | 'status', delta | text }; cancel() interrompe.
+    // Allegati della chat: percorsi scelti dall'utente (solo i tipi indicati), lettura di un file (immagine o PDF), normalizzazione di un'immagine in base64.
+    pickAttachments: (types) => ipcRenderer.invoke('chat:pick-attachments', types),
+    readAttachment: (path) => ipcRenderer.invoke('chat:read-attachment', path),
+    prepareImage: (data) => ipcRenderer.invoke('chat:prepare-image', { data }),
+    // Risposta in streaming: onEvent riceve { type: 'text' | 'thinking' | 'status' | 'usage', delta | text | input+output }; cancel() interrompe.
     chatStream: (messages, onEvent, options = {}) => {
       const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
       const listener = (_event, payload) => { if (payload.requestId === requestId) onEvent(payload.event) }
