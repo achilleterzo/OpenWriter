@@ -1,4 +1,5 @@
 const { execFile, execFileSync, spawn } = require('node:child_process')
+const crypto = require('node:crypto')
 const http = require('node:http')
 const https = require('node:https')
 const fs = require('node:fs')
@@ -6,11 +7,11 @@ const os = require('node:os')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
 
-const PROVIDERS = ['ollama', 'ollama-cloud', 'openrouter', 'codex', 'claude']
+const PROVIDERS = ['ollama', 'ollama-cloud', 'openrouter', 'codex', 'claude', 'gemini']
 const CODEX_SANDBOXES = ['read-only', 'workspace-write', 'danger-full-access']
-const LABELS = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', openrouter: 'OpenRouter', codex: 'Codex', claude: 'Claude' }
+const LABELS = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', openrouter: 'OpenRouter', codex: 'Codex', claude: 'Claude', gemini: 'Gemini' }
 // Provider con chiave API salvata (cifrata) dall'app.
-const KEY_PROVIDERS = ['ollama-cloud', 'openrouter']
+const KEY_PROVIDERS = ['ollama-cloud', 'openrouter', 'gemini']
 // Livelli di ragionamento supportati da ciascun provider; il primo è il predefinito.
 const REASONING_LEVELS = {
   ollama: ['instant', 'low', 'medium', 'high'],
@@ -18,9 +19,12 @@ const REASONING_LEVELS = {
   openrouter: ['default', 'low', 'medium', 'high'],
   codex: ['default', 'low', 'medium', 'high', 'xhigh'],
   claude: ['default', 'low', 'medium', 'high', 'xhigh', 'max'],
+  gemini: ['default', 'low', 'medium', 'high'],
 }
 const OLLAMA_CLOUD_URL = 'https://ollama.com'
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1'
+// API di Gemini (Google AI Studio) con il protocollo compatibile OpenAI.
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai'
 // Errori temporanei di OpenRouter (limiti di frequenza, provider a monte non disponibile): si ritenta con attese crescenti.
 const OPENROUTER_TRANSIENT_STATUSES = [408, 429, 500, 502, 503, 504]
 const OPENROUTER_RETRY_DELAYS_MS = [1500, 4000]
@@ -231,7 +235,9 @@ function extractCliText(raw) {
 // Dettaglio leggibile da un corpo di errore: Ollama usa { error: "..." }, le API OpenAI-compatibili { error: { message } }.
 function errorDetail(raw) {
   try {
-    const error = JSON.parse(raw)?.error
+    const parsed = JSON.parse(raw)
+    // Gemini risponde a volte con un array: [{ error: { message } }].
+    const error = (Array.isArray(parsed) ? parsed[0] : parsed)?.error
     return typeof error === 'string' ? error : error?.message || raw
   } catch { return raw }
 }
@@ -323,16 +329,45 @@ function normalizeProviderConfig(provider, value = {}) {
   // Sandbox di Codex (solo per Codex): impostazione avanzata, predefinito workspace-write.
   if (provider === 'codex') normalized.sandbox = CODEX_SANDBOXES.includes(config.sandbox) ? config.sandbox : 'workspace-write'
   // Parametri di generazione (impostazioni avanzate di Ollama e OpenRouter): vuoto = predefinito del modello.
-  if (provider === 'ollama' || provider === 'ollama-cloud' || provider === 'openrouter') {
+  if (provider === 'ollama' || provider === 'ollama-cloud' || provider === 'openrouter' || provider === 'gemini') {
     const whole = (value, min, max) => { const number = Math.round(Number(value)); return value !== '' && value != null && Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : '' }
     const temperature = Number(config.temperature)
     normalized.temperature = config.temperature !== '' && config.temperature != null && Number.isFinite(temperature) ? Math.min(2, Math.max(0, temperature)) : ''
     normalized.numPredict = whole(config.numPredict, 1, 131072)
-    if (provider !== 'openrouter') normalized.numCtx = whole(config.numCtx, 512, 1048576)
+    if (provider === 'ollama' || provider === 'ollama-cloud') normalized.numCtx = whole(config.numCtx, 512, 1048576)
     if (provider === 'ollama') normalized.keepAlive = /^-?\d+(?:[smh])?$/.test(String(config.keepAlive || '').trim()) ? String(config.keepAlive).trim() : ''
   }
   if (provider === 'ollama') normalized.endpoint = String(config.endpoint || 'http://localhost:11434').replace(/\/$/, '')
   return normalized
+}
+
+// Azioni rapide della chat: null = tutte di default. Altrimenti un elenco ordinato di voci: le azioni di default (id fisso, non
+// eliminabili; solo i testi cambiati dall'utente) e quelle create dall'utente ({ id, label, prompt }).
+const DEFAULT_QUICK_ACTION_IDS = ['proofread', 'rewrite', 'summarize', 'lengthen', 'review']
+function normalizeQuickActions(value) {
+  if (!Array.isArray(value)) return null
+  const text = (item, limit) => String(item ?? '').trim().slice(0, limit)
+  const seen = new Set()
+  const result = []
+  let custom = 0
+  for (const item of value) {
+    const id = String(item?.id ?? '').trim()
+    const label = text(item?.label, 40)
+    const prompt = text(item?.prompt, 2000)
+    if (DEFAULT_QUICK_ACTION_IDS.includes(id)) {
+      if (seen.has(id)) continue
+      seen.add(id)
+      result.push({ id, ...(label ? { label } : {}), ...(prompt ? { prompt } : {}) })
+    } else if (label && prompt && custom < 12) {
+      const customId = /^[a-z0-9-]{1,40}$/.test(id) && !seen.has(id) ? id : `custom-${crypto.randomUUID().slice(0, 8)}`
+      seen.add(customId)
+      custom += 1
+      result.push({ id: customId, label, prompt })
+    }
+  }
+  // Le azioni di default non si perdono mai: se mancano, tornano in fondo.
+  for (const id of DEFAULT_QUICK_ACTION_IDS) if (!seen.has(id)) result.push({ id })
+  return result
 }
 
 function normalizeSettings(settings = {}) {
@@ -343,6 +378,7 @@ function normalizeSettings(settings = {}) {
     providers: Object.fromEntries(PROVIDERS.map((provider) => [provider, normalizeProviderConfig(provider, saved[provider])])),
     // Vuota = la lingua dell'interfaccia (risolta nella chat); altrimenti il nome scelto, es. "Italiano".
     language: String(settings.language || ''),
+    quickActions: normalizeQuickActions(settings.quickActions),
     // Quante chiamate agli strumenti può concatenare l'assistente in una singola richiesta.
     // Al limite di passaggi, continuare da soli dopo un conto alla rovescia (utile se ci si assenta).
     autoContinue: settings.autoContinue === true,
@@ -363,7 +399,7 @@ function normalizeSettings(settings = {}) {
 }
 
 /**
- * Livello di connessione ai provider AI (Ollama, Ollama Cloud, OpenRouter, Codex CLI, Claude CLI).
+ * Livello di connessione ai provider AI (Ollama, Ollama Cloud, OpenRouter, Codex CLI, Claude CLI, Gemini).
  * `app` e `safeStorage` arrivano da electron; `getWorkingDirectory` è opzionale.
  */
 function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undefined, log: externalLog = () => {} }) {
@@ -436,6 +472,13 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     return { service: 'OpenRouter', headers: { Authorization: `Bearer ${key}`, Accept: 'application/json', 'X-Title': 'OpenWriter' } }
   }
 
+  // Intestazioni per Gemini (Google AI Studio): la chiave API come token Bearer sull'endpoint compatibile OpenAI.
+  function geminiOptions(supplied = '') {
+    const key = apiKey('gemini', supplied)
+    if (!key) throw new Error(t('Gemini API key required'))
+    return { service: 'Gemini', headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' } }
+  }
+
   function thinkingPayload(provider) {
     const reasoning = providerConfig(provider).reasoning
     return { think: reasoning === 'instant' ? false : reasoning }
@@ -455,6 +498,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     if (activeProvider() === 'ollama' && !(config.endpoint && config.model)) throw new Error(t('Configure the Ollama endpoint and model in the settings'))
     if (activeProvider() === 'ollama-cloud' && !(apiKey('ollama-cloud') && config.model)) throw new Error(t('Configure the Ollama Cloud API key and model in the settings'))
     if (activeProvider() === 'openrouter' && !(apiKey('openrouter') && config.model)) throw new Error(t('Configure the OpenRouter API key and model in the settings'))
+    if (activeProvider() === 'gemini' && !(apiKey('gemini') && config.model)) throw new Error(t('Configure the Gemini API key and model in the settings'))
   }
 
   // Invia il prompt alla CLI in modalità streaming e traduce i suoi eventi in { type: 'text' | 'thinking' | 'status', ... }.
@@ -667,25 +711,31 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     })
   }
 
-  // OpenRouter in streaming (SSE): testo in delta.content, ragionamento in delta.reasoning, chiamate agli strumenti in
-  // delta.tool_calls a pezzi (nome e argomenti JSON da ricomporre). Come per Ollama, la chiamata diventa un blocco <tool_call>.
-  async function streamOpenRouter(model, messages, onEvent, signal, tools = []) {
-    const config = providerConfig('openrouter')
+  // API compatibili OpenAI in streaming (SSE), per OpenRouter e Gemini: testo in delta.content, ragionamento in delta.reasoning,
+  // chiamate agli strumenti in delta.tool_calls a pezzi (nome e argomenti JSON da ricomporre). Come per Ollama, la chiamata diventa un blocco <tool_call>.
+  async function streamOpenAi(provider, model, messages, onEvent, signal, tools = []) {
+    const config = providerConfig(provider)
+    const gemini = provider === 'gemini'
+    const label = LABELS[provider]
+    const endpoint = gemini ? GEMINI_URL : OPENROUTER_URL
+    const options = gemini ? geminiOptions() : openRouterOptions()
     const params = {
       ...(config.temperature !== '' && config.temperature != null ? { temperature: config.temperature } : {}),
       ...(config.numPredict !== '' && config.numPredict != null ? { max_tokens: config.numPredict } : {}),
     }
-    const reasoning = config.reasoning && config.reasoning !== 'default' ? { reasoning: { effort: config.reasoning } } : {}
-    // I PDF allegati devono essere letti dal modello in modo nativo, senza l'estrazione del testo di OpenRouter.
-    const hasFiles = messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === 'file'))
+    const effort = config.reasoning && config.reasoning !== 'default' ? config.reasoning : ''
+    const reasoning = effort ? (gemini ? { reasoning_effort: effort } : { reasoning: { effort } }) : {}
+    // I PDF allegati devono essere letti dal modello in modo nativo, senza l'estrazione del testo di OpenRouter (Gemini non ne riceve: vedi chatStream).
+    const hasFiles = !gemini && messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === 'file'))
     const files = hasFiles ? { plugins: [{ id: 'file-parser', pdf: { engine: 'native' } }] } : {}
+    const usage = gemini ? { stream_options: { include_usage: true } } : { usage: { include: true } }
     const once = async (extra, state) => {
       let text = ''
       let call = null
-      await streamJson(`${OPENROUTER_URL}/chat/completions`, { ...openRouterOptions(), sse: true }, { model, messages, ...params, ...files, usage: { include: true }, ...extra, stream: true }, (chunk) => {
+      await streamJson(`${endpoint}/chat/completions`, { ...options, sse: true }, { model, messages, ...params, ...files, ...usage, ...extra, stream: true }, (chunk) => {
         // Errore arrivato dentro lo stream (la risposta HTTP era già 200): di solito il provider a monte ha fallito.
         if (chunk.error) {
-          log(`[AI] OpenRouter errore nello stream: ${JSON.stringify(chunk.error).slice(0, 800)}`)
+          log(`[AI] ${label} errore nello stream: ${JSON.stringify(chunk.error).slice(0, 800)}`)
           const upstream = chunk.provider ? ` (${chunk.provider})` : ''
           throw Object.assign(new Error(`${String(chunk.error.message || chunk.error)}${upstream}`), { fatal: true, streamError: true })
         }
@@ -697,7 +747,9 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
         if (delta.reasoning) { state.emitted = true; onEvent({ type: 'thinking', delta: delta.reasoning }) }
         if (delta.content) { state.emitted = true; text += delta.content; onEvent({ type: 'text', delta: delta.content }) }
         for (const part of delta.tool_calls || []) {
-          if ((part.index ?? 0) !== 0) continue
+          if ((part.index ?? 0) !== 0 || call?.done) continue
+          // Gemini numera tutte le chiamate parallele con indice 0: un secondo nome chiude la prima chiamata, le altre si ignorano (una per messaggio).
+          if (part.function?.name && call?.name) { call.done = true; continue }
           call ??= { name: '', arguments: '' }
           if (part.function?.name) call.name += part.function.name
           if (part.function?.arguments) call.arguments += part.function.arguments
@@ -722,11 +774,11 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
         } catch (error) {
           const transient = error.streamError || OPENROUTER_TRANSIENT_STATUSES.includes(error.httpStatus)
           if (error.name === 'AbortError' || !transient || state.emitted || retry >= OPENROUTER_RETRY_DELAYS_MS.length) {
-            if (transient) log(`[AI] OpenRouter errore definitivo dopo ${retry + 1} tentativi: ${error.message}`)
+            if (transient) log(`[AI] ${label} errore definitivo dopo ${retry + 1} tentativi: ${error.message}`)
             throw error
           }
-          log(`[AI] OpenRouter errore temporaneo, nuovo tentativo ${retry + 1}: ${error.message}`)
-          onEvent({ type: 'status', text: t('{name} is not responding, trying again…', { name: 'OpenRouter' }) })
+          log(`[AI] ${label} errore temporaneo, nuovo tentativo ${retry + 1}: ${error.message}`)
+          onEvent({ type: 'status', text: t('{name} is not responding, trying again…', { name: label }) })
           await wait(OPENROUTER_RETRY_DELAYS_MS[retry], signal)
         }
       }
@@ -760,6 +812,14 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     return openRouterCatalog
   }
 
+  // Modelli di Gemini per la chiave data: solo quelli che generano testo (esclusi embedding, immagini, audio, ecc.). Gli id arrivano come "models/gemini-…".
+  async function geminiModels(supplied = '') {
+    const data = await requestJson(`${GEMINI_URL}/models`, geminiOptions(supplied))
+    return (Array.isArray(data?.data) ? data.data : [])
+      .map((model) => String(model?.id || '').replace(/^models\//, ''))
+      .filter((id) => /^gemini-/.test(id) && !/embedding|image|tts|audio|live|robotics|computer-use|aqa/.test(id))
+  }
+
   /**
    * Invia una conversazione `[{ role, content }]` al provider attivo in streaming.
    * `onEvent` riceve { type: 'text' | 'thinking' | 'status', delta | text }; `signal` interrompe la richiesta.
@@ -788,8 +848,8 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     if (provider === 'ollama-cloud') {
       return (await streamOllama(OLLAMA_CLOUD_URL, { model: config.model, messages: ollamaMessages }, provider, cloudOptions(), onEvent, signal, tools)).trim()
     }
-    if (provider === 'openrouter') {
-      return (await streamOpenRouter(config.model, openRouterMessages(list), onEvent, signal, tools)).trim()
+    if (provider === 'openrouter' || provider === 'gemini') {
+      return (await streamOpenAi(provider, config.model, openRouterMessages(list), onEvent, signal, tools)).trim()
     }
     // Le CLI ricevono un unico prompt: ogni immagine lascia un segnaposto [Immagine N] e viene allegata nello stesso ordine.
     // Allo stesso modo ogni PDF lascia un segnaposto [Document N: nome] (solo Claude li riceve).
@@ -816,6 +876,8 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
   async function modelCapabilities(provider, model, endpoint) {
     // Claude legge i PDF in modo nativo; Codex solo le immagini.
     if (provider === 'claude' || provider === 'codex') return { known: true, vision: true, tools: true, pdf: provider === 'claude' }
+    // Gemini: i modelli di testo accettano immagini e usano gli strumenti. I PDF non passano dall'endpoint compatibile OpenAI, quindi non si offrono.
+    if (provider === 'gemini') return { known: Boolean(model), vision: true, tools: true, pdf: false }
     if (!model) return UNKNOWN_CAPABILITIES
     const key = `${provider}:${model}:${endpoint || ''}`
     if (capabilityCache.has(key)) return capabilityCache.get(key)
@@ -854,7 +916,8 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     const target = endpoint ?? providerConfig(provider).endpoint
     const ids = provider === 'claude' ? CLAUDE_MODEL_ALIASES
       : provider === 'openrouter' ? (await openRouterModels()).map((model) => model.id)
-        : await listModels({ provider, endpoint: target })
+        : provider === 'gemini' ? await geminiModels()
+          : await listModels({ provider, endpoint: target })
     const result = {}
     let next = 0
     const worker = async () => {
@@ -873,7 +936,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     const config = providerConfig(selected)
     const base = { provider: selected, label: LABELS[selected] }
     if (selected === 'ollama') return { ...base, installed: true, authenticated: false, configured: Boolean(config.endpoint && config.model) }
-    if (selected === 'ollama-cloud' || selected === 'openrouter') return { ...base, installed: true, authenticated: Boolean(apiKey(selected)), configured: Boolean(apiKey(selected) && config.model) }
+    if (selected === 'ollama-cloud' || selected === 'openrouter' || selected === 'gemini') return { ...base, installed: true, authenticated: Boolean(apiKey(selected)), configured: Boolean(apiKey(selected) && config.model) }
     const command = cliCommand(selected)
     const status = await runCliStatus(selected, selected === 'codex' ? ['login', 'status'] : ['auth', 'status'])
     // `claude auth status` esce con 0 anche da non autenticato: va letto il campo loggedIn.
@@ -986,6 +1049,12 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
       const supplied = String(suppliedKey || '').trim()
       if (supplied) sessionApiKeys.openrouter = supplied
       return (await openRouterModels(true)).map((model) => model.id).sort((left, right) => left.localeCompare(right))
+    }
+    if (provider === 'gemini') {
+      const supplied = String(suppliedKey || '').trim()
+      const models = await geminiModels(supplied)
+      if (supplied) sessionApiKeys.gemini = supplied
+      return models.sort((left, right) => left.localeCompare(right))
     }
     const names = (data) => (Array.isArray(data?.models) ? data.models : []).map((model) => model.name || model.model).filter(Boolean)
     if (provider === 'ollama-cloud') {
