@@ -52,6 +52,39 @@ function RenameInput({ entry, onCommit, onCancel }) {
   )
 }
 
+// Riga di creazione in linea: compare nell'albero, dentro la cartella in cui si sta creando, al posto in cui comparirà il nuovo elemento.
+// Invio conferma, Esc annulla; perdendo il focus (clic altrove) si annulla, salvo che sia la finestra a perderlo.
+function CreateRow({ depth, menu }) {
+  const ref = useRef(null)
+  const directory = menu.creating.type === 'directory'
+
+  useEffect(() => {
+    ref.current?.focus()
+    ref.current?.scrollIntoView({ block: 'nearest' })
+  }, [])
+
+  return (
+    <div style={{ paddingLeft: 8 + depth * 14 }} className="flex items-center gap-1.5 py-0.5 pr-2">
+      <span className="w-3.5 shrink-0" />
+      {directory ? <Folder size={14} className="shrink-0 text-accent-400" /> : <FileText size={14} className="shrink-0 text-accent-400" />}
+      <input
+        ref={ref}
+        value={menu.newName}
+        maxLength={120}
+        aria-label={directory ? t('Folder name') : t('Document name')}
+        placeholder={directory ? t('Folder name') : t('Document name')}
+        className="min-w-0 flex-1 rounded border border-accent-400 bg-slate-800 px-1.5 py-0.5 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+        onChange={(event) => menu.setNewName(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') { event.preventDefault(); menu.commitCreate() }
+          if (event.key === 'Escape') { event.preventDefault(); menu.cancelCreate() }
+        }}
+        onBlur={() => { if (document.hasFocus()) menu.cancelCreate() }}
+      />
+    </div>
+  )
+}
+
 function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onToggle, onOpenFile, drop, menu }) {
   const expanded = expandedPaths.has(entry.path)
   const [children, setChildren] = useState(null)
@@ -159,7 +192,8 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
         {menu.renaming === entry.path ? <RenameInput entry={entry} onCommit={menu.commitRename} onCancel={menu.cancelRename} /> : <span className="truncate">{entry.name}</span>}
       </button>
       {expanded && error && <p style={indent} className="py-1 text-xs text-rose-400">{error}</p>}
-      {expanded && children?.length === 0 && <p style={{ paddingLeft: 8 + (depth + 1) * 14 + 20 }} className="py-1 text-xs text-slate-500">{t('Empty')}</p>}
+      {expanded && menu.creating?.parent === entry.path && <CreateRow depth={depth + 1} menu={menu} />}
+      {expanded && children?.length === 0 && menu.creating?.parent !== entry.path && <p style={{ paddingLeft: 8 + (depth + 1) * 14 + 20 }} className="py-1 text-xs text-slate-500">{t('Empty')}</p>}
       {expanded && children?.map((child) => (
         <TreeNode key={child.path} entry={child} depth={depth + 1} activePath={activePath} refreshToken={refreshToken} expandedPaths={expandedPaths} onToggle={onToggle} onOpenFile={onOpenFile} drop={drop} menu={menu} />
       ))}
@@ -239,7 +273,14 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   useEffect(() => { setSelectedFolder(null) }, [project])
 
   function startCreate(parent, type) {
+    // La cartella di destinazione si apre, così la riga di creazione si vede dove comparirà il nuovo elemento.
+    if (parent !== project && !expandedPaths.has(parent)) onToggle(parent)
     setCreating({ parent, type })
+    setNewName('')
+  }
+
+  function cancelCreate() {
+    setCreating(null)
     setNewName('')
   }
 
@@ -249,7 +290,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     const { parent, type } = creating
     try {
       const created = await electronAPI.createEntry({ parent, name, type })
-      setCreating(null)
+      cancelCreate()
       if (parent !== project && !expandedPaths.has(parent)) onToggle(parent)
       setLocalRefresh((value) => value + 1)
       if (type === 'file') onOpenFile(created)
@@ -261,6 +302,11 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   // Menu contestuale (Apri, Rinomina, Elimina, Mostra nel file manager) e scorciatoie F2 / Canc.
   const menu = {
     renaming,
+    creating,
+    newName,
+    setNewName,
+    commitCreate,
+    cancelCreate,
     selected: selectedFolder,
     select: setSelectedFolder,
     open(event, entry) {
@@ -435,14 +481,6 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
         <button type="button" aria-label={t('Refresh')} title={t('Refresh')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => setLocalRefresh((value) => value + 1)}><RefreshCw size={14} /></button>
         <button type="button" aria-label={t('Project settings')} title={t('Project settings')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => setSubSettings({ path: project, name })}><Settings size={14} /></button>
       </div>
-      {creating && (
-        <form className="grid gap-1 border-b border-slate-800 px-3 py-2" onSubmit={(event) => { event.preventDefault(); commitCreate() }}>
-          <label htmlFor="new-entry-name" className="truncate text-xs text-slate-400">
-            {creating.type === 'directory' ? t('New folder in {folder}', { folder: creating.parent === project ? name : creating.parent.split(/[\\/]/).filter(Boolean).at(-1) }) : t('New document in {folder}', { folder: creating.parent === project ? name : creating.parent.split(/[\\/]/).filter(Boolean).at(-1) })}
-          </label>
-          <input id="new-entry-name" autoFocus value={newName} maxLength={120} className="w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-sm text-slate-100 outline-none focus:border-accent-400" onChange={(event) => setNewName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') setCreating(null) }} />
-        </form>
-      )}
       {subSettings && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setSubSettings(null) }}>
           <div role="dialog" aria-modal="true" aria-label={subSettings.path === project ? t('Project settings') : t('Sub-project settings')} className="my-4 w-full max-w-2xl rounded-xl bg-slate-900 p-1 shadow-xl">
@@ -462,6 +500,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       >
         {error && <p className="px-3 py-2 text-xs text-rose-400">{error}</p>}
         {!error && entries.length === 0 && <p className="px-3 py-2 text-xs text-slate-500">{t('No documents (.md, .docx, .pdf) in this folder. Drop files here to copy them.')}</p>}
+        {creating?.parent === project && <CreateRow depth={0} menu={menu} />}
         {entries.map((entry) => (
           <TreeNode key={entry.path} entry={entry} depth={0} activePath={activePath} refreshToken={token} expandedPaths={expandedPaths} onToggle={onToggle} onOpenFile={onOpenFile} drop={drop} menu={menu} />
         ))}

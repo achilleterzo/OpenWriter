@@ -877,5 +877,7 @@
   "Edit description": "Editar la descripción",
   "Alternative text": "Texto alternativo",
   "Title (tooltip)": "Título (sugerencia)",
-  "Alternative text: describe the image for those who cannot see it": "Texto alternativo: describe la imagen para quien no pueda verla"
+  "Alternative text: describe the image for those who cannot see it": "Texto alternativo: describe la imagen para quien no pueda verla",
+  "Folder name": "Nombre de la carpeta",
+  "Document name": "Nombre del documento"
 }
