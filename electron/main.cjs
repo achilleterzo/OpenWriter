@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, net, protocol, safeStorage, screen, session, shell, webContents } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, nativeImage, net, protocol, safeStorage, screen, session, shell, webContents } = require('electron')
 const { pathToFileURL } = require('node:url')
 const fs = require('node:fs/promises')
 const fsSync = require('node:fs')
@@ -672,8 +672,8 @@ ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools }) =
   }
 })
 ipcMain.handle('ai:cancel', (_event, requestId) => { aiRequests.get(requestId)?.abort(); return true })
-ipcMain.handle('tools:list-directory', async (_event, relativePath) => {
-  const result = await projectTools.listDirectory(relativePath)
+ipcMain.handle('tools:list-directory', async (_event, relativePath, options = {}) => {
+  const result = await projectTools.listDirectory(relativePath, { sort: options?.sort === 'date' ? 'date' : 'name' })
   if (result.path === '.') result.linked = linksStore.list()
   return result
 })
@@ -1014,6 +1014,18 @@ ipcMain.handle('projects:reveal', (_event, directory) => {
   const target = path.resolve(String(directory || ''))
   if (!projectsStore.list().some((item) => path.resolve(item.path).toLowerCase() === target.toLowerCase()) || !fsSync.existsSync(target)) throw new Error(t('The project folder no longer exists'))
   shell.openPath(target)
+})
+// Trascinamento in uscita: l'elemento (file o cartella del progetto, o documento collegato) parte come trascinamento nativo del sistema,
+// così si può rilasciare in un'altra applicazione o nel file manager. Solo percorsi del progetto o collegati.
+ipcMain.on('workspace:start-drag', (event, targets) => {
+  try {
+    const files = (Array.isArray(targets) ? targets : [targets]).slice(0, 50).map((item) => (linksStore.has(String(item)) ? path.resolve(String(item)) : resolveInProject(String(item)))).filter((item) => fsSync.existsSync(item))
+    if (!files.length) return
+    const icon = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'icon.png')).resize({ width: 32, height: 32 })
+    event.sender.startDrag(files.length > 1 ? { files, icon } : { file: files[0], icon })
+  } catch (error) {
+    console.error('Trascinamento non avviato:', error.message)
+  }
 })
 ipcMain.handle('workspace:move-path', (_event, request) => moveIntoDirectory(request || {}))
 ipcMain.handle('workspace:reveal-path', (_event, target) => { shell.showItemInFolder(resolveInProject(target)) })

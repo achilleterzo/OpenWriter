@@ -9,10 +9,12 @@ import { t } from '../i18n/index.js'
 const electronAPI = window.electronAPI
 const revealLabel = /Win/.test(navigator.platform) ? t('Show in File Explorer') : /Mac/.test(navigator.platform) ? t('Reveal in Finder') : t('Show in file manager')
 const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes('Files')
-// Trascinamento interno: un elemento dell'albero spostato in un'altra cartella.
-const INTERNAL_DRAG = 'application/x-openwriter-path'
 const parentOf = (target) => target.replace(/[\\/][^\\/]*$/, '')
-const hasInternal = (event) => Array.from(event.dataTransfer?.types || []).includes(INTERNAL_DRAG)
+// Il percorso sta dentro la cartella del progetto (confronto senza distinguere maiuscole e separatori).
+const isInsideProject = (target, project) => {
+  const normalize = (value) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  return normalize(target).startsWith(`${normalize(project)}/`)
+}
 
 // Campo di rinomina in linea: Invio conferma, Esc annulla, la perdita del focus conferma. Seleziona il nome senza estensione.
 function RenameInput({ entry, onCommit, onCancel }) {
@@ -85,7 +87,8 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
           onDragOver={(event) => drop.over(event, parentOf(entry.path))}
           onDrop={(event) => drop.drop(event, parentOf(entry.path))}
           className={`${rowClass} ${active ? 'bg-slate-800 text-slate-50' : 'text-slate-400'}`}
-          onClick={() => onOpenFile(entry.path)}
+          onClick={() => onOpenFile(entry.path, { preview: true })}
+          onDoubleClick={() => onOpenFile(entry.path, { permanent: true })}
           onContextMenu={(event) => menu.open(event, entry)}
           onKeyDown={(event) => menu.key(event, entry)}
         >
@@ -116,7 +119,8 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
             style={{ paddingLeft: 8 + (depth + 1) * 14 }}
             title={`${original.path} · ${t('Original, read-only')}`}
             className={`${rowClass} ${original.path === activePath ? 'bg-slate-800 text-slate-50' : 'text-slate-500'}`}
-            onClick={() => onOpenFile(original.path, { original: true })}
+            onClick={() => onOpenFile(original.path, { original: true, preview: true })}
+            onDoubleClick={() => onOpenFile(original.path, { original: true, permanent: true })}
             onContextMenu={(event) => menu.open(event, { ...original, isDirectory: false })}
             onKeyDown={(event) => menu.key(event, { ...original, isDirectory: false })}
           >
@@ -170,8 +174,6 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   const [dropTarget, setDropTarget] = useState(null)
   // Impostazioni di un sotto-progetto (lingua, contesto…): { path, name } della cartella.
   const [subSettings, setSubSettings] = useState(null)
-  // Elemento che si sta trascinando (il contenuto del trascinamento non è leggibile finché non si rilascia).
-  const dragged = useRef(null)
 
   const [renaming, setRenaming] = useState(null)
   // Nuova cartella o nuovo documento: { parent, type: 'directory' | 'file' } con il nome in corso di digitazione.
@@ -295,56 +297,52 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     },
   }
 
-  // Trascinando file dal sistema si copiano nella cartella sotto il puntatore, o nella radice del progetto.
+  // Trascinamento dei file. In uscita il file è trascinato dal sistema (si può rilasciare in un'altra applicazione o nel file manager,
+  // per allegarlo o copiarlo lì). Lo stesso trascinamento, rilasciato nell'albero, sposta l'elemento se viene dal progetto; i file che
+  // arrivano da fuori si copiano nella cartella sotto il puntatore, o nella radice del progetto.
   const drop = {
     target: dropTarget,
     start(event, entry) {
-      dragged.current = entry.path
-      event.dataTransfer.setData(INTERNAL_DRAG, entry.path)
-      event.dataTransfer.effectAllowed = 'copyMove'
+      event.preventDefault()
+      electronAPI.startDrag([entry.path])
     },
     end() {
-      dragged.current = null
       setDropTarget(null)
     },
-    // Rilasciare un elemento nella cartella in cui già sta (o su sé stesso) non sposta nulla: il rilascio non è nemmeno consentito.
-    isNoop: (event, directory) => hasInternal(event) && dragged.current !== null && (parentOf(dragged.current) === directory || dragged.current === directory),
     over(event, directory) {
-      if (!hasFiles(event) && !hasInternal(event)) return
-      if (drop.isNoop(event, directory)) {
-        event.stopPropagation()
-        event.dataTransfer.dropEffect = 'none'
-        setDropTarget(null)
-        return
-      }
+      if (!hasFiles(event)) return
       event.preventDefault()
       event.stopPropagation()
-      event.dataTransfer.dropEffect = hasInternal(event) ? 'move' : 'copy'
+      event.dataTransfer.dropEffect = 'copy'
       setDropTarget(directory)
     },
     async drop(event, directory) {
-      if (!hasFiles(event) && !hasInternal(event)) return
+      if (!hasFiles(event)) return
       event.preventDefault()
       event.stopPropagation()
       setDropTarget(null)
-      if (drop.isNoop(event, directory)) { dragged.current = null; return }
-      if (hasInternal(event)) {
-        // Cronologia, note e memoria dell'elemento lo seguono, anche se la cartella è un sotto-progetto.
-        const from = event.dataTransfer.getData(INTERNAL_DRAG)
-        try {
-          const destination = await electronAPI.moveIntoDirectory({ from, toDirectory: directory })
-          if (destination !== from) {
-            onRenamed(from, destination)
-            if (directory !== project && !expandedPaths.has(directory)) onToggle(directory)
-            setLocalRefresh((value) => value + 1)
-            onStatus(t('Moved to {folder}', { folder: directory === project ? name : directory.split(/[\\/]/).filter(Boolean).at(-1) }))
+      const paths = electronAPI.getDroppedPaths(Array.from(event.dataTransfer.files))
+      if (!paths.length) return
+      const folderName = directory === project ? name : directory.split(/[\\/]/).filter(Boolean).at(-1)
+      // Tutto ciò che viene dal progetto stesso si sposta (cronologia, note e memoria lo seguono, anche per un sotto-progetto).
+      if (paths.every((item) => isInsideProject(item, project))) {
+        let moved = 0
+        for (const from of paths) {
+          if (parentOf(from) === directory || from === directory) continue
+          try {
+            const destination = await electronAPI.moveIntoDirectory({ from, toDirectory: directory })
+            if (destination !== from) { onRenamed(from, destination); moved += 1 }
+          } catch (reason) {
+            onStatus(t('Move failed: {message}', { message: reason.message }))
           }
-        } catch (reason) {
-          onStatus(t('Move failed: {message}', { message: reason.message }))
+        }
+        if (moved) {
+          if (directory !== project && !expandedPaths.has(directory)) onToggle(directory)
+          setLocalRefresh((value) => value + 1)
+          onStatus(t('Moved to {folder}', { folder: folderName }))
         }
         return
       }
-      const paths = electronAPI.getDroppedPaths(Array.from(event.dataTransfer.files))
       try {
         const result = await electronAPI.importFiles({ paths, targetDirectory: directory })
         if (directory !== project && !expandedPaths.has(directory)) onToggle(directory)
@@ -460,7 +458,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
             <h3 className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500" title={t('Documents outside the project folder, linked here: they are opened and edited where they are, not copied.')}><Link2 size={12} /> {t('Linked documents')}</h3>
             {links.map((link) => (
               <div key={link.path} onContextMenu={(event) => openLinkMenu(event, link)} className={`group flex items-center pr-1 text-sm transition hover:bg-slate-800/70 ${link.path === activePath ? 'bg-slate-800 text-slate-50' : link.missing ? 'text-slate-600' : 'text-slate-400'}`}>
-                <button type="button" disabled={link.missing} title={link.missing ? `${link.path} · ${t('File not found')}` : link.path} className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-3 text-left disabled:cursor-not-allowed" onClick={() => onOpenFile(link.path)}>
+                <button type="button" disabled={link.missing} title={link.missing ? `${link.path} · ${t('File not found')}` : link.path} className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-3 text-left disabled:cursor-not-allowed" onClick={() => onOpenFile(link.path, { preview: true })} onDoubleClick={() => onOpenFile(link.path, { permanent: true })}>
                   <span className="w-3.5 shrink-0" />
                   <FileText size={14} className={`shrink-0 ${link.missing ? 'text-slate-600' : 'text-accent-400'}`} />
                   <span className={`truncate ${link.missing ? 'line-through' : ''}`}>{link.name}</span>
