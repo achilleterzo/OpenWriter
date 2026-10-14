@@ -2,6 +2,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
+const { writeFileAtomic } = require('./atomic-write.cjs')
 const { ownerRoot, findOwners, looseKey, looseFromKey } = require('./project-owner.cjs')
 
 const KINDS = ['comment', 'suggestion']
@@ -43,9 +44,7 @@ function createNotesStore({ getProjectPath, getMainPath = () => null }) {
 
   function writeAtomic(file, content) {
     fs.mkdirSync(path.dirname(file), { recursive: true })
-    const temporary = `${file}.tmp`
-    fs.writeFileSync(temporary, content)
-    fs.renameSync(temporary, file)
+    writeFileAtomic(file, content)
   }
 
   function readNotes(file) {

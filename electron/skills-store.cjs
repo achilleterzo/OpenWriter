@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
+const { writeFileAtomic } = require('./atomic-write.cjs')
 
 const MAX_SKILL_CHARS = 20000
 const MAX_SKILLS_PER_FOLDER = 100
@@ -104,9 +105,7 @@ function createSkillsStore({ getGlobalDirectory }) {
 
   function writeAtomic(file, content) {
     fs.mkdirSync(path.dirname(file), { recursive: true })
-    const temporary = `${file}.tmp`
-    fs.writeFileSync(temporary, content)
-    fs.renameSync(temporary, file)
+    writeFileAtomic(file, content)
   }
 
   // Le skill di una cartella; un file illeggibile o vuoto finisce in `problems` senza nascondere le altre.

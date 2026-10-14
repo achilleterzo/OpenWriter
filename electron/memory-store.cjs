@@ -2,6 +2,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
+const { writeFileAtomic } = require('./atomic-write.cjs')
 const { ownerRoot, findOwners, isInside } = require('./project-owner.cjs')
 
 const AUTHORS = ['ai', 'user']
@@ -39,9 +40,7 @@ function createMemoryStore({ getProjectPath }) {
   function writeAt(base, list) {
     const target = memoryFile(base)
     fs.mkdirSync(path.dirname(target), { recursive: true })
-    const temporary = `${target}.tmp`
-    fs.writeFileSync(temporary, JSON.stringify(list, null, 2))
-    fs.renameSync(temporary, target)
+    writeFileAtomic(target, JSON.stringify(list, null, 2))
   }
 
   const text = (value, limit) => String(value ?? '').trim().slice(0, limit)

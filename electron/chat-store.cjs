@@ -2,6 +2,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
+const { writeFileAtomic } = require('./atomic-write.cjs')
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/
 const MAX_TITLE_CHARS = 200
@@ -33,9 +34,7 @@ function createChatStore({ getProjectPath }) {
 
   function writeAtomic(file, content) {
     fs.mkdirSync(path.dirname(file), { recursive: true })
-    const temporary = `${file}.tmp`
-    fs.writeFileSync(temporary, content)
-    fs.renameSync(temporary, file)
+    writeFileAtomic(file, content)
   }
 
   const text = (value, limit) => String(value ?? '').slice(0, limit)
