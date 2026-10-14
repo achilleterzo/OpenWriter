@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderOpen, FolderPlus, FolderRoot, Lock, RefreshCw, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderOpen, FolderPlus, FolderRoot, Link2, Lock, RefreshCw, X } from 'lucide-react'
 
 import { ContextMenuContext } from './ContextMenu.jsx'
 import ProjectSettings from './ProjectSettings.jsx'
@@ -332,6 +332,16 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     electronAPI.listDirectory(project).then((list) => { setEntries(list); setError('') }).catch((reason) => setError(reason.message))
   }, [project, token])
 
+  // Documenti collegati al progetto: stanno altrove e si aprono (e si modificano) lì.
+  const [links, setLinks] = useState([])
+  useEffect(() => {
+    if (!project) { setLinks([]); return }
+    electronAPI.listLinks().then(setLinks).catch(() => setLinks([]))
+  }, [project, token])
+  const removeLink = async (link) => {
+    try { setLinks(await electronAPI.removeLink(link.path)) } catch (reason) { setError(reason.message) }
+  }
+
   useEffect(() => {
     if (!subSettings) return undefined
     const closeOnEscape = (event) => { if (event.key === 'Escape') setSubSettings(null) }
@@ -389,6 +399,21 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
         {entries.map((entry) => (
           <TreeNode key={entry.path} entry={entry} depth={0} activePath={activePath} refreshToken={token} expandedPaths={expandedPaths} onToggle={onToggle} onOpenFile={onOpenFile} drop={drop} menu={menu} />
         ))}
+        {links.length > 0 && (
+          <div className="mt-2 border-t border-slate-800 pt-1">
+            <h3 className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500" title={t('Documents outside the project folder, linked here: they are opened and edited where they are, not copied.')}><Link2 size={12} /> {t('Linked documents')}</h3>
+            {links.map((link) => (
+              <div key={link.path} className={`group flex items-center pr-1 text-sm transition hover:bg-slate-800/70 ${link.path === activePath ? 'bg-slate-800 text-slate-50' : link.missing ? 'text-slate-600' : 'text-slate-400'}`}>
+                <button type="button" disabled={link.missing} title={link.missing ? `${link.path} · ${t('File not found')}` : link.path} className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-3 text-left disabled:cursor-not-allowed" onClick={() => onOpenFile(link.path)}>
+                  <span className="w-3.5 shrink-0" />
+                  <FileText size={14} className={`shrink-0 ${link.missing ? 'text-slate-600' : 'text-accent-400'}`} />
+                  <span className={`truncate ${link.missing ? 'line-through' : ''}`}>{link.name}</span>
+                </button>
+                <button type="button" aria-label={t('Unlink')} title={t('Unlink (the file is not touched)')} className="rounded p-1 text-slate-500 opacity-0 transition hover:bg-slate-700 hover:text-slate-50 group-hover:opacity-100 focus:opacity-100" onClick={() => removeLink(link)}><X size={12} /></button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
