@@ -4,9 +4,10 @@ import MarkdownMessage from './MarkdownMessage.jsx'
 import { useDialogs } from './Dialogs.jsx'
 import { GenerateSkillDialog, SkillEditor } from './SkillsManager.jsx'
 import ModelPicker from './ModelPicker.jsx'
-import { reasoningByProvider } from '../lib/aiOptions.js'
+import { reasoningByProvider, toolLabels } from '../lib/aiOptions.js'
 import { formatDateTime, languageEnglishName } from '../i18n/index.js'
-import { DEFAULT_MAX_TOOL_STEPS, TOOL_DEFINITIONS, createToolRunner, describeCall, parseToolCall, splitNextPrompt, toolSchemas, toolsPrompt, visibleText } from '../lib/aiTools.js'
+import { quickActionsOf } from '../lib/quickActions.js'
+import { DEFAULT_MAX_TOOL_STEPS, TOOL_DEFINITIONS, createToolRunner, describeCall, parseToolCall, splitNextPrompt, toolAvailable, toolSchemas, toolsPrompt, visibleText } from '../lib/aiTools.js'
 import { t } from '../i18n/index.js'
 import { activeSkillIds, skillsPromptText } from '../lib/skills.js'
 import { MAX_MODEL_USER_IMAGES, MAX_MODEL_USER_PDFS, MAX_PENDING_ATTACHMENTS, blobToBase64, canAttach, formatBytes, formatTokens, prepareImage, readAttachmentFile, totalUsage } from '../lib/chatAttachments.js'
@@ -68,13 +69,6 @@ function userAttachmentParts(message, loaded) {
     note: omitted.length ? `\n\n[Attached files not sent now (to save tokens, or because the current model cannot read them): ${omitted.join(', ')}]` : '',
   }
 }
-
-const quickActions = [
-  { label: t('Proofread'), prompt: t('Fix spelling, grammar and punctuation without changing the meaning. Return only the corrected text.') },
-  { label: t('Rewrite'), prompt: t('Rewrite the text to be clearer and smoother, keeping the meaning and the tone.') },
-  { label: t('Summarize'), prompt: t('Summarize the text in a few key points.') },
-  { label: t('Review'), prompt: t('Review the text: list issues of style, clarity and consistency and suggest concrete improvements.') },
-]
 
 // Titoli lunghi: nelle liste a discesa si abbreviano, il titolo completo resta nel tooltip.
 const ellipsize = (value, limit) => (value.length > limit ? `${value.slice(0, limit - 1).trimEnd()}…` : value)
@@ -505,7 +499,7 @@ const ChatInput = forwardRef(function ChatInput({ busy, suggestion, onSend, onSt
   )
 })
 
-export default function AiChatPanel({ editor, contextTab, openDocuments = [], contextPins, onContextPinsChange, toolBridge, request, onRequestHandled, onOpenNote, project, settingsVersion, conversationId, onConversationChange, onOpenSettings, onOpenProjects }) {
+export default function AiChatPanel({ editor, contextTab, openDocuments = [], contextPins, onContextPinsChange, toolBridge, request, onRequestHandled, onOpenNote, project, loose = false, settingsVersion, conversationId, onConversationChange, onOpenSettings, onOpenProjects }) {
   const [settings, setSettings] = useState(null)
   const [capabilities, setCapabilities] = useState(null)
   const [viewer, setViewer] = useState(null)
@@ -623,7 +617,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
 
   const provider = settings?.provider
   const model = settings?.providers?.[provider]?.model
-  const providerLabel = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', openrouter: 'OpenRouter', codex: 'Codex', claude: 'Claude' }[provider]
+  const providerLabel = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', openrouter: 'OpenRouter', codex: 'Codex', claude: 'Claude', gemini: 'Gemini' }[provider]
   const enabled = Boolean(settings?.aiEnabled)
   // Quali istruzioni di progetto stanno arrivando all'assistente: una sola → "contesto del progetto"; più d'una → i nomi dei progetti.
   const instructed = contextChain.filter((owner) => owner.context?.trim() || owner.extraContext?.length)
@@ -631,7 +625,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     ? t(' · context: {names}', { names: instructed.map((owner) => owner.name).join(' + ') })
     : (instructed.length || (!contextChain.length && projectSettings?.ai?.context?.trim())) ? t(' · project context') : ''
   // Per Ollama il modello va scelto per forza; Claude e Codex hanno un predefinito.
-  const canUseNativeProvider = ['ollama', 'ollama-cloud'].includes(provider)
+  const canUseNativeProvider = ['ollama', 'ollama-cloud', 'gemini'].includes(provider)
   // Prompt suggerito dall'ultima risposta dell'assistente, finché la conversazione non prosegue.
   const lastMessage = current.messages[current.messages.length - 1]
   const suggestion = !busy && lastMessage?.role === 'assistant' && !lastMessage.error && editingIndex === null ? lastMessage.nextPrompt || '' : ''
@@ -784,10 +778,12 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const handledRequest = useRef(null)
   useEffect(() => {
     if (!request || handledRequest.current === request.id || busy || !enabled || !settings) return
+    // Ripresa dopo il cambio di progetto: aspetta che la conversazione sia stata caricata.
+    if (request.resume && current.id !== request.conversationId) return
     handledRequest.current = request.id
     // Consumata: altrimenti, rimontando il pannello (es. dopo le impostazioni), la stessa richiesta ripartirebbe da sola.
     onRequestHandled?.()
-    send(request.text, request.attachment)
+    send(request.text || '', request.attachment, request.resume ? { resume: true } : {})
   })
 
   // Riprende da dove si era interrotto: l'ultimo messaggio è dell'utente (o un errore dell'assistente, che viene scartato).
@@ -894,7 +890,12 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       memory: Boolean(toolSettings.memory && project),
     }
     const anyTool = Object.values(toolsOn).some(Boolean)
-    const canUseNative = ['ollama', 'ollama-cloud', 'openrouter'].includes(settings.provider)
+    // Strumenti spenti dall'utente nelle impostazioni: il modello lo sa e può chiedere di attivarli.
+    const labels = toolLabels()
+    const disabledTools = Object.keys(labels).filter((group) => !toolSettings[group]).map((group) => ({ group, label: labels[group] }))
+    // Senza cartella di progetto (area di lavoro "main") l'assistente lavora solo sui documenti aperti nelle schede.
+    if (loose) toolsOn.loose = true
+    const canUseNative = ['ollama', 'ollama-cloud', 'openrouter', 'gemini'].includes(settings.provider)
     const snapshotted = new Set()
     // Documenti modificati dall'assistente in questa richiesta: a lavoro finito vengono salvati (la versione precedente è archiviata da beforeEdit).
     const editedTabs = new Set()
@@ -909,9 +910,12 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       pendingAskRef.current = finish
       setPendingAsk({ ...spec, resolve: finish })
     })
+    // Progetto creato dall'assistente in questo turno: appena il risultato è salvato la conversazione passa al nuovo progetto.
+    let handoff = null
     const runTool = createToolRunner({
       api,
-      project,
+      project: loose ? null : project,
+      loose,
       enabled: toolsOn,
       getDocument: (path) => toolBridge.getDocument(path),
       getOpenDocumentText: (path) => toolBridge.getOpenDocumentText(path),
@@ -920,6 +924,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       captureDocument: (path) => toolBridge.captureDocument(path),
       captureBrowser: (tab) => toolBridge.captureBrowser(tab),
       askUser,
+      createProject: (request) => toolBridge.createProject(request),
+      onProjectCreated: (created) => { handoff = created },
       onNotesChanged: () => toolBridge.onNotesChanged(),
       onFilesChanged: () => toolBridge.onFilesChanged(),
       onMemoryChanged: () => toolBridge.onMemoryChanged(),
@@ -984,7 +990,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
               chainValue(chain, 'language') || projectSettings?.ai?.language || settings.language || languageEnglishName(),
               chain.length ? chainInstructions(chain) : [projectSettings?.ai?.context, ...(projectSettings?.ai?.extraContext || []).map((file) => `## ${file.name}\n${file.text}`)].filter((part) => part && part.trim()).join('\n\n'),
               previous,
-              anyTool ? toolsPrompt(toolsOn, { documentPath: toolBridge.activeDocumentPath(), native, maxSteps }) : '',
+              anyTool || disabledTools.length ? toolsPrompt(toolsOn, { documentPath: toolBridge.activeDocumentPath(), native, maxSteps, disabled: disabledTools }) : '',
               chainValue(chain, 'documentLanguage') || projectSettings?.ai?.documentLanguage || '',
               memoryText,
               skillsText,
@@ -997,7 +1003,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
             if (!reply.reply.trim()) reply = await streamReply([...modelMessages, { role: 'user', content: 'Your reply was empty. Reply now, or use a tool.' }], streamOptions)
             // Se il modello parla degli strumenti (ne cita il nome) invece di usarli, si richiama una volta: confronto sui nomi tecnici, non sul testo in lingua.
             if (anyTool && reply.reply.trim() && !parseToolCall(reply.reply)) {
-              const mentioned = TOOL_DEFINITIONS.some((tool) => toolsOn[tool.group] && reply.reply.includes(tool.name))
+              const mentioned = TOOL_DEFINITIONS.some((tool) => toolAvailable(tool, toolsOn) && reply.reply.includes(tool.name))
               // Dopo il risultato di uno strumento una risposta molto breve senza chiamata è quasi sempre un abbandono prematuro: si richiama una volta.
               const prematureStop = conversation.messages.at(-1)?.role === 'tool' && reply.reply.trim().length < 600
               if (mentioned || prematureStop) {
@@ -1089,6 +1095,15 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
           await append({ role: 'tool', name: parsed.call.name, content: resultText, ...(stored.length ? { images: stored } : {}) })
         } catch (reason) {
           await append({ role: 'tool', name: parsed.call.name, content: reason.message, error: true })
+        }
+        // Il progetto è stato creato: da qui la conversazione prosegue nel nuovo progetto (questo pannello viene ricostruito).
+        if (handoff) {
+          const created = handoff
+          handoff = null
+          // Le schede stanno per essere sostituite: prima si salvano i documenti già modificati dall'assistente.
+          for (const id of editedTabs) await toolBridge.saveDocument(id).catch((error) => console.error(error))
+          await toolBridge.moveToCreatedProject({ ...created, conversationId: conversation.id })
+          return
         }
         if (runRef.current.cancelled) break
       }
@@ -1317,8 +1332,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
               </div>
             )}
             <div className="mb-2 flex flex-wrap gap-1.5">
-              {quickActions.map((action) => (
-                <button key={action.label} type="button" disabled={busy} className="rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50" onClick={() => send(action.prompt)}>{action.label}</button>
+              {quickActionsOf(settings).map((action) => (
+                <button key={action.id} type="button" disabled={busy} className="rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50" onClick={() => send(action.prompt)}>{action.label}</button>
               ))}
               {activeSkills.flatMap((skill) => skill.actions.map((action) => (
                 <button key={`${skill.id}:${action.label}`} type="button" disabled={busy} title={`${skill.name}: ${action.prompt}`} className="flex items-center gap-1 rounded-full border border-accent-500/40 px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50" onClick={() => send(action.prompt)}><Wand2 size={11} className="text-accent-400" /> {action.label}</button>
