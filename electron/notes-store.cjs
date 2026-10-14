@@ -2,7 +2,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
-const { ownerRoot, findOwners } = require('./project-owner.cjs')
+const { ownerRoot, findOwners, looseKey, looseFromKey } = require('./project-owner.cjs')
 
 const KINDS = ['comment', 'suggestion']
 const STATUSES = ['open', 'accepted', 'rejected', 'resolved']
@@ -15,18 +15,24 @@ const AUTHORS = ['ai', 'user']
  * `quote` è il testo ancorato; `prefix`/`suffix` servono a ritrovarlo se compare più volte.
  * `kind` = 'comment' (osservazione) oppure 'suggestion' (con `replacement` da accettare o rifiutare).
  */
-function createNotesStore({ getProjectPath }) {
+function createNotesStore({ getProjectPath, getMainPath = () => null }) {
   const notesRoot = (base) => path.join(base, '.ow', 'notes')
 
-  // Dove stanno le note di un documento: { base: cartella proprietaria della `.ow`, key: percorso relativo a base con "/" }; null se fuori dal progetto.
+  // Dove stanno le note di un documento: { base: cartella proprietaria della `.ow`, key: percorso relativo a base con "/" };
+  // un documento fuori dal progetto aperto sta nel progetto main (vedi looseKey).
   function locate(document) {
+    if (!document) return null
     const project = getProjectPath()
-    if (!project || !document) return null
     const resolved = path.resolve(document)
-    const relative = path.relative(project, resolved)
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null
-    const base = ownerRoot(project, resolved)
-    return { base, key: path.relative(base, resolved).split(path.sep).join('/') }
+    if (project) {
+      const relative = path.relative(project, resolved)
+      if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+        const base = ownerRoot(project, resolved)
+        return { base, key: path.relative(base, resolved).split(path.sep).join('/') }
+      }
+    }
+    const main = getMainPath()
+    return main ? { base: path.resolve(main), key: looseKey(resolved) } : null
   }
 
   function fileFor(document) {
@@ -121,7 +127,10 @@ function createNotesStore({ getProjectPath }) {
             const notes = readNotes(full)
             if (!notes.length) continue
             const inBase = path.relative(notesRoot(base), full).slice(0, -'.json'.length)
-            result.push({ path: path.relative(project, path.join(base, inBase)).split(path.sep).join('/'), notes })
+            const relative = path.relative(project, path.join(base, inBase)).split(path.sep).join('/')
+            // Le note dei documenti sparsi (progetto main) si presentano con il percorso assoluto del documento.
+            const absolute = looseFromKey(inBase.split(path.sep).join('/'))
+            result.push({ path: absolute || relative, absolute: Boolean(absolute), notes })
           } catch {}
         }
       }

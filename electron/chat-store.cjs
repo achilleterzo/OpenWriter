@@ -174,12 +174,30 @@ function createChatStore({ getProjectPath }) {
     return true
   }
 
+  // Copia una conversazione (e gli allegati che usa) nella chat di un altro progetto: serve a proseguirla lì.
+  function copyTo(id, targetProject) {
+    const conversation = readConversation(id)
+    const targetChat = path.join(path.resolve(String(targetProject)), '.ow', 'chat')
+    fs.mkdirSync(targetChat, { recursive: true })
+    fs.writeFileSync(path.join(targetChat, `${id}.json`), JSON.stringify(conversation, null, 2))
+    for (const attachment of new Set(attachmentIds(conversation))) {
+      if (!ID_PATTERN.test(String(attachment))) continue
+      for (const [extension] of ATTACHMENT_TYPES) {
+        const source = path.join(attachmentsDirectory(), `${attachment}.${extension}`)
+        if (!fs.existsSync(source)) continue
+        fs.mkdirSync(path.join(targetChat, 'attachments'), { recursive: true })
+        fs.copyFileSync(source, path.join(targetChat, 'attachments', `${attachment}.${extension}`))
+      }
+    }
+    return id
+  }
+
   function ensureDirectory() {
     fs.mkdirSync(directory(), { recursive: true })
     return directory()
   }
 
-  return { list, get: readConversation, create, save, remove, ensureDirectory, saveAttachment, getAttachment }
+  return { list, get: readConversation, create, save, remove, copyTo, ensureDirectory, saveAttachment, getAttachment }
 }
 
 module.exports = { createChatStore }

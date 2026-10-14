@@ -55,8 +55,9 @@ function createProjectTools({ getProjectPath, readDocument }) {
     return { path: relative || '.', entries: items, truncated: visible.length > MAX_LIST_ENTRIES }
   }
 
-  async function readFile(relativePath, { offset = 0, limit = DEFAULT_READ_CHARS } = {}) {
-    const { target, relative } = resolveInside(relativePath)
+  // `absolute`: il percorso è quello (assoluto) di un documento collegato al progetto, già verificato dal chiamante.
+  async function readFile(relativePath, { offset = 0, limit = DEFAULT_READ_CHARS, absolute = false } = {}) {
+    const { target, relative } = absolute ? { target: path.resolve(String(relativePath)), relative: path.resolve(String(relativePath)) } : resolveInside(relativePath)
     const stats = await fs.promises.stat(target).catch(() => null)
     if (!stats) throw new Error(t('File not found: {path}', { path: relative }))
     if (!stats.isFile()) throw new Error(t('Not a file: use list_directory for folders'))

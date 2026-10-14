@@ -3,7 +3,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
-const { ownerRoot, parentOwner } = require('./project-owner.cjs')
+const { ownerRoot, parentOwner, looseKey } = require('./project-owner.cjs')
 
 const DIRECTORY_NAME = '.ow'
 const FORMAT_VERSION = 1
@@ -24,7 +24,8 @@ const MAX_CONTEXT_CHARS = 20000
 const cleanLanguages = (value) => (Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === 'string' && item))] : [])
 const cleanSkillIds = (value) => (Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === 'string' && /^[a-z0-9][a-z0-9-]{0,59}$/.test(item)))].slice(0, 50) : [])
 
-function createProjectFile({ getProjectPath }) {
+// `getMainPath`: cartella del progetto main, che tiene cronologia e note dei documenti fuori dal progetto aperto.
+function createProjectFile({ getProjectPath, getMainPath = () => null }) {
   const root = () => {
     const project = getProjectPath()
     if (!project) throw new Error(t('No project open'))
@@ -74,15 +75,20 @@ function createProjectFile({ getProjectPath }) {
   }
 
   // Dove sta la cronologia di un documento: { base: cartella proprietaria della `.ow`, key: percorso relativo a base con "/" };
-  // null se il documento è fuori dal progetto.
+  // Un documento fuori dal progetto aperto sta nel progetto main (vedi looseKey); null solo senza progetto main.
   function locate(document) {
+    if (!document) return null
     const project = getProjectPath()
-    if (!project || !document) return null
     const resolved = path.resolve(document)
-    const relative = path.relative(project, resolved)
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null
-    const base = ownerRoot(project, resolved)
-    return { base, key: path.relative(base, resolved).split(path.sep).join('/') }
+    if (project) {
+      const relative = path.relative(project, resolved)
+      if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+        const base = ownerRoot(project, resolved)
+        return { base, key: path.relative(base, resolved).split(path.sep).join('/') }
+      }
+    }
+    const main = getMainPath()
+    return main ? { base: path.resolve(main), key: looseKey(resolved) } : null
   }
 
   const historyDirectory = ({ base, key }) => path.join(base, DIRECTORY_NAME, 'history', ...key.split('/'))
@@ -146,7 +152,10 @@ function createProjectFile({ getProjectPath }) {
     if (!project) return []
     const root = path.resolve(project)
     const list = (Array.isArray(documents) ? documents : [documents]).filter(Boolean)
-    const chains = list.length ? list.map((document) => chainBases(root, document)) : [chainBases(root, null)]
+    // Un documento fuori dal progetto aperto usa le istruzioni del progetto main (se il progetto aperto è il main, solo quelle).
+    const main = getMainPath() ? path.resolve(getMainPath()) : null
+    const isOutside = (document) => { const relative = path.relative(root, path.resolve(document)); return !relative || relative.startsWith('..') || path.isAbsolute(relative) }
+    const chains = list.length ? list.map((document) => (isOutside(document) && main ? (main === root ? chainBases(root, null) : [main]) : chainBases(root, document))) : [chainBases(root, null)]
     const depth = (base) => {
       const relative = path.relative(root, base)
       if (!relative) return 0
