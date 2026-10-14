@@ -72,7 +72,8 @@ function ProjectIconField({ directory, name, onChanged, onError }) {
   )
 }
 
-export default function ProjectSettings({ project, projectPath = null, onChanged, onEditContext, onMove }) {
+// `embedded`: dentro una finestra che ha già il suo riquadro (e scorre da sola): niente bordo e sfondo propri.
+export default function ProjectSettings({ project, projectPath = null, onChanged, onEditContext, onMove, embedded = false }) {
   const [form, setForm] = useState(null)
   const [spellcheck, setSpellcheck] = useState({ available: [], global: [] })
   const [info, setInfo] = useState({ available: false })
@@ -119,7 +120,7 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
   if (!form) return null
 
   return (
-    <section className="grid gap-5 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+    <section className={embedded ? 'grid gap-5 p-5' : 'grid gap-5 rounded-xl border border-slate-800 bg-slate-950/40 p-6'}>
       <div>
         <div className="flex items-center gap-2">
           <FolderCog className="text-accent-400" size={20} />

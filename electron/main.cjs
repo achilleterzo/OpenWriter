@@ -16,6 +16,7 @@ const { createProjectTools } = require('./project-tools.cjs')
 const { createNotesStore } = require('./notes-store.cjs')
 const projectIcon = require('./project-icon.cjs')
 const { planImageMove, applyImageMove } = require('./document-images.cjs')
+const { writeFileAtomic } = require('./atomic-write.cjs')
 const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-links.cjs')
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
@@ -1123,6 +1124,44 @@ function buildMenu() {
     else mainWindow?.webContents.send('document:command', command)
   })
 }
+
+// Preferenze dell'interfaccia (tema, lingua, layout…): un file nei dati dell'app, così non dipendono dall'indirizzo da cui si carica la pagina
+// (il localStorage del browser cambia tra sviluppo e app installata). Il renderer le legge all'avvio in modo sincrono, per non far lampeggiare il tema.
+const preferencesPath = () => path.join(app.getPath('userData'), 'preferences.json')
+let preferences = null
+let preferencesTimer = null
+
+function loadPreferences() {
+  if (preferences) return preferences
+  try {
+    const parsed = JSON.parse(fsSync.readFileSync(preferencesPath(), 'utf8'))
+    preferences = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    preferences = {}
+  }
+  return preferences
+}
+
+function flushPreferences() {
+  clearTimeout(preferencesTimer)
+  preferencesTimer = null
+  if (!preferences) return
+  try {
+    fsSync.mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileAtomic(preferencesPath(), JSON.stringify(preferences, null, 2))
+  } catch (error) {
+    console.error('Preferenze non salvate:', error.message)
+  }
+}
+
+ipcMain.on('preferences:load', (event) => { event.returnValue = loadPreferences() })
+ipcMain.on('preferences:set', (_event, key, value) => {
+  if (typeof key !== 'string' || !/^openwriter\.[A-Za-z0-9.]{1,60}$/.test(key) || typeof value !== 'string' || value.length > 20000) return
+  loadPreferences()[key] = value
+  clearTimeout(preferencesTimer)
+  preferencesTimer = setTimeout(flushPreferences, 200)
+})
+app.on('before-quit', flushPreferences)
 
 ipcMain.handle('app:get-version', () => app.getVersion())
 // Il controllo automatico all'avvio è silenzioso (rete assente, limite di GitHub…); quello manuale segnala l'errore.

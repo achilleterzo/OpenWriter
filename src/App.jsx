@@ -3,6 +3,7 @@ import ActivityBar, { sideTabs } from './components/ActivityBar.jsx'
 import AiChatPanel from './components/AiChatPanel.jsx'
 import BrowserPane from './components/BrowserPane.jsx'
 import ImagePane from './components/ImagePane.jsx'
+import { getPreference, setPreference } from './lib/preferences.js'
 import { isImageFile } from './lib/imagePaths.js'
 import ContextMenu, { ContextMenuContext, modKey } from './components/ContextMenu.jsx'
 import DocumentPane from './components/DocumentPane.jsx'
@@ -120,8 +121,8 @@ export default function App() {
   // Scheda con cui si aprono le impostazioni: Generale, salvo dall'ingranaggio dell'assistente (IA).
   const [settingsSection, setSettingsSection] = useState('general')
   // Note mostrate: 'open' (predefinito) | 'all' | 'mine' (scritte dall'utente) | 'none' (nascoste). Vale per l'elenco e per le evidenziazioni nel testo.
-  const [noteView, setNoteViewState] = useState(() => { try { return ['open', 'all', 'mine', 'none'].includes(localStorage.getItem('openwriter.noteView')) ? localStorage.getItem('openwriter.noteView') : 'open' } catch { return 'open' } })
-  const setNoteView = (value) => { setNoteViewState(value); try { localStorage.setItem('openwriter.noteView', value) } catch { /* solo una preferenza */ } }
+  const [noteView, setNoteViewState] = useState(() => { const saved = getPreference('openwriter.noteView'); return ['open', 'all', 'mine', 'none'].includes(saved) ? saved : 'open' })
+  const setNoteView = (value) => { setNoteViewState(value); setPreference('openwriter.noteView', value) }
   const [noteSearch, setNoteSearch] = useState('')
   const [aboutOpen, setAboutOpen] = useState(false)
   const [aboutCheck, setAboutCheck] = useState(false)

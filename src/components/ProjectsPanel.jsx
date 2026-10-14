@@ -2,7 +2,7 @@ import { useCallback, useContext, useEffect, useState } from 'react'
 import { FolderOpen, FolderPlus, Settings, X } from 'lucide-react'
 import { ContextMenuContext } from './ContextMenu.jsx'
 import { ProjectAvatar } from './ProjectIcon.jsx'
-import ProjectSettings from './ProjectSettings.jsx'
+import ProjectSettingsDialog from './ProjectSettingsDialog.jsx'
 import { formatDateTime, t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
@@ -140,15 +140,12 @@ export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onC
         {!projects.length && <li className="px-3 py-2 text-xs text-slate-500">{t('No projects yet. Create one or open an existing folder.')}</li>}
       </ul>
       {settingsFor && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsFor(null) }}>
-          <div role="dialog" aria-modal="true" aria-label={t('Project settings')} className="my-4 w-full max-w-2xl rounded-xl bg-slate-900 p-1 shadow-xl">
-            <div className="flex items-center justify-between gap-2 px-5 pt-4">
-              <span className="min-w-0 truncate text-sm font-semibold text-slate-200" title={settingsFor.path}>{settingsFor.name}</span>
-              <button type="button" aria-label={t('Close')} title={t('Close (Esc)')} className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-50" onClick={() => setSettingsFor(null)}><X size={16} /></button>
-            </div>
-            <ProjectSettings project projectPath={settingsFor.path} onMove={onMove ? async (directory) => { const moved = await onMove(directory); if (moved) { setSettingsFor(null); await refresh() } return moved } : undefined} onEditContext={project && settingsFor.path.toLowerCase() === project.toLowerCase() ? (file) => { setSettingsFor(null); onOpenFile(file) } : undefined} onChanged={() => { refresh(); if (project && settingsFor.path.toLowerCase() === project.toLowerCase()) onSettingsChanged?.() }} />
-          </div>
-        </div>
+        <ProjectSettingsDialog
+          title={settingsFor.name}
+          path={settingsFor.path}
+          onClose={() => setSettingsFor(null)}
+          onMove={onMove ? async (directory) => { const moved = await onMove(directory); if (moved) { setSettingsFor(null); await refresh() } return moved } : undefined} onEditContext={project && settingsFor.path.toLowerCase() === project.toLowerCase() ? (file) => { setSettingsFor(null); onOpenFile(file) } : undefined} onChanged={() => { refresh(); if (project && settingsFor.path.toLowerCase() === project.toLowerCase()) onSettingsChanged?.() }}
+        />
       )}
     </div>
   )

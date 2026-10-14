@@ -1,6 +1,10 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
+// Preferenze dell'interfaccia lette all'avvio, in modo sincrono: la pagina sa subito tema e lingua (vedi src/lib/preferences.js).
+const preferenceValues = ipcRenderer.sendSync('preferences:load') || {}
+
 contextBridge.exposeInMainWorld('electronAPI', {
+  preferences: { values: preferenceValues, set: (key, value) => ipcRenderer.send('preferences:set', key, value) },
   openDocument: () => ipcRenderer.invoke('document:open'),
   openDocumentPath: (filePath, options) => ipcRenderer.invoke('document:open-path', filePath, options),
   reopenDocument: (filePath) => ipcRenderer.invoke('document:reopen', filePath),

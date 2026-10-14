@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderInpu
 import { ContextMenuContext } from './ContextMenu.jsx'
 import ProjectIcon, { ProjectAvatar } from './ProjectIcon.jsx'
 import { isImageFile } from '../lib/imagePaths.js'
-import ProjectSettings from './ProjectSettings.jsx'
+import ProjectSettingsDialog from './ProjectSettingsDialog.jsx'
 import { t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
@@ -482,15 +482,14 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
         <button type="button" aria-label={t('Project settings')} title={t('Project settings')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => setSubSettings({ path: project, name })}><Settings size={14} /></button>
       </div>
       {subSettings && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setSubSettings(null) }}>
-          <div role="dialog" aria-modal="true" aria-label={subSettings.path === project ? t('Project settings') : t('Sub-project settings')} className="my-4 w-full max-w-2xl rounded-xl bg-slate-900 p-1 shadow-xl">
-            <div className="flex items-center justify-between gap-2 px-5 pt-4">
-              <span className="min-w-0 truncate text-sm font-semibold text-slate-200" title={subSettings.path}>{subSettings.name}</span>
-              <button type="button" aria-label={t('Close')} title={t('Close (Esc)')} className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-50" onClick={() => setSubSettings(null)}><X size={16} /></button>
-            </div>
-            <ProjectSettings project projectPath={subSettings.path} onEditContext={(file) => { setSubSettings(null); onOpenFile(file) }} onChanged={() => onSettingsChanged?.()} />
-          </div>
-        </div>
+        <ProjectSettingsDialog
+          title={subSettings.name}
+          path={subSettings.path}
+          label={subSettings.path === project ? t('Project settings') : t('Sub-project settings')}
+          onClose={() => setSubSettings(null)}
+          onEditContext={(file) => { setSubSettings(null); onOpenFile(file) }}
+          onChanged={() => onSettingsChanged?.()}
+        />
       )}
       <div
         className={`min-h-0 flex-1 overflow-y-auto py-1 ${dropTarget === project ? 'bg-accent-500/10 ring-1 ring-inset ring-accent-400' : ''}`}

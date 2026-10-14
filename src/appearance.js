@@ -1,4 +1,5 @@
 import { t } from './i18n/index.js'
+import { getPreference, setPreference } from './lib/preferences.js'
 const STORAGE_KEY = 'openwriter.appearance'
 
 export const themes = [
@@ -59,11 +60,11 @@ function normalize(value = {}) {
 }
 
 export function loadAppearance() {
-  try { return normalize(JSON.parse(localStorage.getItem(STORAGE_KEY))) } catch { return { ...defaultAppearance } }
+  try { return normalize(JSON.parse(getPreference(STORAGE_KEY))) } catch { return { ...defaultAppearance } }
 }
 
 export function saveAppearance(appearance) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(appearance)) } catch {}
+  try { setPreference(STORAGE_KEY, JSON.stringify(appearance)) } catch {}
 }
 
 const systemQuery = window.matchMedia('(prefers-color-scheme: dark)')
