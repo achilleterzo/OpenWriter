@@ -13,7 +13,7 @@ const READ_ONLY_MESSAGE = 'This document is the read-only original of a converte
 const optionSchema = { anyOf: [{ type: 'string' }, { type: 'object', properties: { label: { type: 'string' }, description: { type: 'string' } }, required: ['label'] }] }
 
 export const TOOL_DEFINITIONS = [
-  { group: 'files', name: 'list_directory', required: [], description: 'Lists the files and folders of a project directory (the .ow folder is excluded).', parameters: { path: 'optional: path relative to the project root (default: the root)' } },
+  { group: 'files', name: 'list_directory', required: [], description: 'Lists the files and folders of a project directory (the .ow folder is excluded), with size and last modification date and time. Folders first by default; with sort=date the most recently modified come first. The date of a file is when it was last saved on disk, not the unsaved changes in an open tab.', parameters: { path: 'optional: path relative to the project root (default: the root)', sort: 'optional: "name" (default: folders first, then files by name) or "date" (most recently modified first, folders and files together)' } },
   { group: 'files', name: 'read_file', required: ['path'], description: 'Reads the text of a project file (.md, .txt, .docx, .pdf, …). Long files are read in chunks. If the file is open in a tab it returns the CURRENT editor text, including unsaved changes (yours too).', parameters: { path: 'path relative to the project root', offset: 'optional: character to start from', limit: 'optional: maximum number of characters' } },
   { group: 'files', name: 'list_versions', required: [], description: 'Lists the saved versions (history) of a project document, newest first, with id, date, kind (manual or automatic), label and size. Versions are archived before the assistant edits a document and at every save. Use it to see how a document changed or to find an earlier text.', parameters: { path: 'optional: document path relative to the project root (default: the active document)' } },
   { group: 'files', name: 'read_version', required: ['id'], description: 'Reads the text of a saved version of a document (id from list_versions). Read-only: it never changes the document; if the user wants an earlier text back, use it to rewrite or restore the passage with the editing tools. Long versions are read in chunks.', parameters: { id: 'version id from list_versions', path: 'optional: document path relative to the project root (default: the active document)', offset: 'optional: character to start from', limit: 'optional: maximum number of characters' } },
@@ -461,11 +461,20 @@ export function createToolRunner(context) {
   const tools = {
     async list_directory(args) {
       needFolder()
-      const { path, entries, truncated, linked = [] } = await api.listDirectoryForAi(text(args.path))
+      const sort = text(args.sort).toLowerCase() === 'date' ? 'date' : 'name'
+      const { path, entries, truncated, linked = [] } = await api.listDirectoryForAi(text(args.path), { sort })
+      // Last modification in the user's local time, minute precision.
+      const when = (modified) => {
+        if (!Number.isFinite(modified)) return ''
+        const date = new Date(modified)
+        const pad = (value) => String(value).padStart(2, '0')
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+      }
       // Documents outside the project folder linked to it (only listed at the project root): opened and edited where they are.
-      const linkedLines = linked.length ? ['', 'Linked documents (outside the project folder, edited in place; open or read them with their full path):', ...linked.map((link) => `  ${link.path}${link.missing ? '  (file not found)' : ''}`)] : []
+      const linkedLines = linked.length ? ['', 'Linked documents (outside the project folder, edited in place; open or read them with their full path):', ...linked.map((link) => `  ${link.path}${link.missing ? '  (file not found)' : link.modified ? `  (modified ${when(link.modified)})` : ''}`)] : []
       if (!entries.length) return [`${path}: empty folder`, ...linkedLines].join('\n')
-      return [`${path}:`, ...entries.map((entry) => (entry.type === 'directory' ? `  ${entry.name}/${entry.project ? '  (sub-project: it has its own instructions, notes and history)' : ''}` : `  ${entry.name} (${entry.size ?? '?'} B)`)), truncated ? '… list truncated' : ''].filter(Boolean).concat(linkedLines).join('\n')
+      const header = sort === 'date' ? `${path} (most recently modified first):` : `${path}:`
+      return [header, ...entries.map((entry) => (entry.type === 'directory' ? `  ${entry.name}/  (${[entry.project ? 'sub-project: it has its own instructions, notes and history' : '', entry.modified ? `modified ${when(entry.modified)}` : ''].filter(Boolean).join('; ') || 'folder'})` : `  ${entry.name} (${entry.size ?? '?'} B${entry.modified ? `, modified ${when(entry.modified)}` : ''})`)), truncated ? '… list truncated' : ''].filter(Boolean).concat(linkedLines).join('\n')
     },
 
     async read_file(args) {

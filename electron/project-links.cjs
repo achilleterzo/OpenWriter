@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
+const { writeFileAtomic } = require('./atomic-write.cjs')
 
 const MARKDOWN_PATTERN = /\.(md|markdown|mdown)$/i
 const MAX_LINKS = 200
@@ -25,9 +26,7 @@ function readLinks(project) {
 function writeLinks(project, list) {
   const file = path.join(project, '.ow', 'links.json')
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  const temporary = `${file}.tmp`
-  fs.writeFileSync(temporary, JSON.stringify(list, null, 2))
-  fs.renameSync(temporary, file)
+  writeFileAtomic(file, JSON.stringify(list, null, 2))
 }
 
 // Percorsi da collegare, controllati: assoluti, esistenti, file Markdown, fuori dal progetto, senza doppioni.
@@ -55,7 +54,11 @@ function createLinksStore({ getProjectPath }) {
 
   // [{ path, name, missing }]: un collegamento a un file che non c'è più resta in elenco, segnalato.
   function list() {
-    return readLinks(project()).map((item) => ({ path: item.path, name: path.basename(item.path), missing: !fs.existsSync(item.path) }))
+    return readLinks(project()).map((item) => {
+      let modified = null
+      try { modified = Math.round(fs.statSync(item.path).mtimeMs) } catch { /* file mancante */ }
+      return { path: item.path, name: path.basename(item.path), missing: modified === null, modified }
+    })
   }
 
   const has = (target) => Boolean(getProjectPath()) && typeof target === 'string' && path.isAbsolute(target) && readLinks(project()).some((item) => samePath(item.path, target))
