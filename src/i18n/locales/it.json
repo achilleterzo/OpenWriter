@@ -66,6 +66,7 @@
   "Browser tab \"{reference}\" not found: use browser_tabs to see the open ones": "Scheda browser \"{reference}\" non trovata: usa browser_tabs per vedere quelle aperte",
   "Browser: {action}": "Browser: {action}",
   "Bulleted list": "Elenco puntato",
+  " · context: {names}": " · contesto: {names}",
   "Edited by the assistant": "Modifica dell'assistente",
   "{count} edits to review": "{count} modifiche da rivedere",
   "Accept all": "Accetta tutte",

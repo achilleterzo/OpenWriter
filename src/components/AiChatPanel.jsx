@@ -439,6 +439,17 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const pendingAskRef = useRef(null)
   const [projectSettings, setProjectSettings] = useState(null)
   const [contextChain, setContextChain] = useState([])
+  // Le istruzioni di progetto seguono i documenti che si mandano all'assistente (incluso quello attivo, o fissati), non quello solo aperto.
+  const contextFilePaths = () => {
+    const paths = []
+    if (contextPins.includeActive && contextTab?.filePath) paths.push(contextTab.filePath)
+    for (const id of contextPins.pinnedIds) {
+      const filePath = id === contextTab?.id ? contextTab.filePath : toolBridge.documentFilePath(id)
+      if (filePath) paths.push(filePath)
+    }
+    return [...new Set(paths)]
+  }
+  const contextPathsKey = JSON.stringify(contextFilePaths())
   const [conversations, setConversations] = useState([])
   const [current, setCurrent] = useState(blankConversation)
   const [renaming, setRenaming] = useState(false)
@@ -491,9 +502,9 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   useEffect(() => {
     if (!project) { setContextChain([]); return undefined }
     let cancelled = false
-    api.getContextChain(contextTab?.filePath || null).then((chain) => { if (!cancelled) setContextChain(chain) }).catch(() => { if (!cancelled) setContextChain([]) })
+    api.getContextChain(JSON.parse(contextPathsKey)).then((chain) => { if (!cancelled) setContextChain(chain) }).catch(() => { if (!cancelled) setContextChain([]) })
     return () => { cancelled = true }
-  }, [project, settingsVersion, contextTab?.filePath])
+  }, [project, settingsVersion, contextPathsKey])
 
   // Carica le conversazioni del progetto e riapre l'ultima in uso. Senza progetto la chat resta solo in memoria.
   useEffect(() => {
@@ -523,8 +534,13 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const model = settings?.providers?.[provider]?.model
   const providerLabel = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', openrouter: 'OpenRouter', codex: 'Codex', claude: 'Claude' }[provider]
   const enabled = Boolean(settings?.aiEnabled)
-  // Per Ollama e OpenRouter il modello va scelto per forza; Claude e Codex hanno un predefinito.
-  const canUseNativeProvider = ['ollama', 'ollama-cloud', 'openrouter'].includes(provider)
+  // Quali istruzioni di progetto stanno arrivando all'assistente: una sola → "contesto del progetto"; più d'una → i nomi dei progetti.
+  const instructed = contextChain.filter((owner) => owner.context?.trim() || owner.extraContext?.length)
+  const contextLabel = instructed.length > 1
+    ? t(' · context: {names}', { names: instructed.map((owner) => owner.name).join(' + ') })
+    : (instructed.length || (!contextChain.length && projectSettings?.ai?.context?.trim())) ? t(' · project context') : ''
+  // Per Ollama il modello va scelto per forza; Claude e Codex hanno un predefinito.
+  const canUseNativeProvider = ['ollama', 'ollama-cloud'].includes(provider)
   // Prompt suggerito dall'ultima risposta dell'assistente, finché la conversazione non prosegue.
   const lastMessage = current.messages[current.messages.length - 1]
   const suggestion = !busy && lastMessage?.role === 'assistant' && !lastMessage.error && editingIndex === null ? lastMessage.nextPrompt || '' : ''
@@ -791,7 +807,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         // La memoria si rilegge a ogni passaggio: l'assistente può averla aggiornata nel frattempo.
         // Il contesto si rilegge all'invio: le istruzioni possono essere cambiate dopo l'apertura del documento.
         let chain = contextChain
-        try { chain = await api.getContextChain(contextTab?.filePath || null) } catch { /* si usa l'ultimo noto */ }
+        try { chain = await api.getContextChain(contextFilePaths()) } catch { /* si usa l'ultimo noto */ }
         let memoryText = ''
         if (toolsOn.memory) {
           try {
@@ -942,7 +958,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400"><Sparkles size={13} className="text-accent-400" /> {t('AI assistant')}</h2>
-            {enabled && <p className="truncate text-xs text-slate-500">{providerLabel}{model ? ` · ${model}` : ''}{(contextChain.length ? contextChain.some((owner) => owner.context?.trim()) : projectSettings?.ai?.context?.trim()) ? t(' · project context') : ''}</p>}
+            {enabled && <p className="truncate text-xs text-slate-500">{providerLabel}{model ? ` · ${model}` : ''}{contextLabel}</p>}
           </div>
           <div className="flex shrink-0 gap-0.5">
             <button type="button" aria-label={t('New conversation')} title={t('New conversation')} disabled={busy || !current.messages.length} className={iconButton} onClick={() => openConversation(null)}><Plus size={14} /></button>

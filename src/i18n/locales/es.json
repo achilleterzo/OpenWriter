@@ -66,6 +66,7 @@
   "Browser tab \"{reference}\" not found: use browser_tabs to see the open ones": "Pestaña del navegador «{reference}» no encontrada: usa browser_tabs para ver las abiertas",
   "Browser: {action}": "Navegador: {action}",
   "Bulleted list": "Lista con viñetas",
+  " · context: {names}": " · contexto: {names}",
   "Edited by the assistant": "Cambio del asistente",
   "{count} edits to review": "{count} cambios por revisar",
   "Accept all": "Aceptar todos",

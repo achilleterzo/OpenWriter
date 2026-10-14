@@ -607,6 +607,9 @@ export default function App() {
     // Quando l'assistente aggiunge o rivede note, si apre la scheda Note per mostrarle.
     onNotesChanged: () => { setNotesVersion((value) => value + 1); setSideTab('notes') },
     // Testo attuale (Markdown) di un documento aperto, per il contesto della chat; null se l'editor non è pronto.
+    documentFilePath(id) {
+      return latest.current.tabs.find((tab) => tab.id === id)?.filePath || null
+    },
     documentMarkdown(id) {
       const editor = latest.current.editors[id]
       return editor ? editor.getMarkdown() : null
