@@ -20,7 +20,7 @@ const sections = [
   { id: 'about', label: t('About'), icon: Info },
 ]
 
-export default function SettingsScreen({ initialSection = 'general', project, onChooseProject, onBack, onOpenFile, version, release, onCheckUpdate }) {
+export default function SettingsScreen({ initialSection = 'general', project, onMoveProject, onChooseProject, onBack, onOpenFile, version, release, onCheckUpdate }) {
   const [section, setSection] = useState(initialSection)
   const current = sections.find((item) => item.id === section)
   const pressedOnBackdrop = useRef(false)
@@ -74,7 +74,7 @@ export default function SettingsScreen({ initialSection = 'general', project, on
 
           <div role="tabpanel" className="min-w-0 flex-1 overflow-y-auto p-6 sm:p-8">
             {section === 'general' && <GeneralSettings project={project} onChooseProject={onChooseProject} />}
-            {section === 'project' && <ProjectSettings project={project} onEditContext={onOpenFile} />}
+            {section === 'project' && <ProjectSettings project={project} onEditContext={onOpenFile} onMove={onMoveProject} />}
             {section === 'appearance' && <AppearanceSettings />}
             {section === 'ai' && <AiProviderSettings />}
             {section === 'actions' && <QuickActionsSettings />}

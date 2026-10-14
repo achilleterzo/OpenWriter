@@ -1,7 +1,8 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderOpen, FolderPlus, FolderRoot, Link2, Lock, RefreshCw, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderInput, FolderOpen, FolderPlus, FolderRoot, Link2, Lock, RefreshCw, Settings, X } from 'lucide-react'
 
 import { ContextMenuContext } from './ContextMenu.jsx'
+import ProjectIcon, { ProjectAvatar } from './ProjectIcon.jsx'
 import ProjectSettings from './ProjectSettings.jsx'
 import { t } from '../i18n/index.js'
 
@@ -148,7 +149,7 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
       >
         {expanded ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
         {entry.isProject
-          ? <FolderRoot size={14} className="shrink-0 text-amber-400" aria-label={t('Sub-project')} />
+          ? <ProjectIcon directory={entry.path} size={14} fallback={<FolderRoot size={14} className="shrink-0 text-amber-400" aria-label={t('Sub-project')} />} />
           : expanded ? <FolderOpen size={14} className="shrink-0 text-accent-400" /> : <Folder size={14} className="shrink-0 text-accent-400" />}
         {menu.renaming === entry.path ? <RenameInput entry={entry} onCommit={menu.commitRename} onCancel={menu.cancelRename} /> : <span className="truncate">{entry.name}</span>}
       </button>
@@ -199,6 +200,34 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     }
   }
 
+  // Sotto-progetto → progetto autonomo: la cartella esce dal progetto (con la sua .ow) nel posto scelto dall'utente.
+  async function moveSubprojectOut(entry) {
+    try {
+      const destination = await electronAPI.moveSubprojectOut(entry.path)
+      if (!destination) return
+      // Le schede aperte su file della cartella seguono lo spostamento (ora sono fuori dal progetto).
+      onRenamed(entry.path, destination)
+      setLocalRefresh((value) => value + 1)
+      onStatus(t('“{name}” is now a standalone project: {path}', { name: entry.name, path: destination }))
+    } catch (reason) {
+      onStatus(t('Move failed: {message}', { message: reason.message }))
+    }
+  }
+
+  // Progetto autonomo → sotto-progetto: sposta qui dentro la cartella di un altro progetto.
+  async function moveProjectIn(directory) {
+    try {
+      const moved = await electronAPI.moveProjectIn(directory)
+      if (!moved) return
+      if (directory !== project && !expandedPaths.has(directory)) onToggle(directory)
+      setLocalRefresh((value) => value + 1)
+      onSettingsChanged?.()
+      onStatus(t('“{name}” is now a sub-project', { name: moved.split(/[\\/]/).filter(Boolean).at(-1) }))
+    } catch (reason) {
+      onStatus(t('Move failed: {message}', { message: reason.message }))
+    }
+  }
+
   function startCreate(parent, type) {
     setCreating({ parent, type })
     setNewName('')
@@ -236,6 +265,8 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
           entry.isDirectory && !entry.isProject && { label: t('Create sub-project…'), onClick: () => createSubproject(entry) },
           entry.isProject && { label: t('Sub-project settings…'), onClick: () => setSubSettings({ path: entry.path, name: entry.name }) },
           entry.isProject && { label: t('Open as project'), onClick: () => onOpenProject(entry.path) },
+          entry.isProject && { label: t('Make standalone project…'), onClick: () => moveSubprojectOut(entry) },
+          entry.isDirectory && { label: t('Move a project here…'), onClick: () => moveProjectIn(entry.path) },
           entry.isDirectory && { separator: true },
           { label: t('Rename'), hint: 'F2', onClick: () => setRenaming(entry.path) },
           { label: t('Delete'), hint: t('Del'), danger: true, onClick: () => deleteEntry(entry) },
@@ -341,6 +372,29 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   const removeLink = async (link) => {
     try { setLinks(await electronAPI.removeLink(link.path)) } catch (reason) { setError(reason.message) }
   }
+  // Aggiorna il collegamento: si sceglie il file a cui deve puntare (di solito lo stesso, spostato o rinominato).
+  const updateLink = async (link) => {
+    try {
+      const updated = await electronAPI.updateLink(link.path)
+      if (updated) { setLinks(updated); onStatus(t('Link updated')) }
+    } catch (reason) {
+      onStatus(t('Could not update the link: {message}', { message: reason.message }))
+    }
+  }
+  const openLinkMenu = (event, link) => {
+    event.preventDefault()
+    openMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        !link.missing && { label: t('Open'), onClick: () => onOpenFile(link.path) },
+        { label: t('Update link…'), onClick: () => updateLink(link) },
+        !link.missing && { label: revealLabel, onClick: () => electronAPI.revealLink(link.path).catch((reason) => onStatus(reason.message)) },
+        { separator: true },
+        { label: t('Unlink'), danger: true, onClick: () => removeLink(link) },
+      ].filter(Boolean),
+    })
+  }
 
   useEffect(() => {
     if (!subSettings) return undefined
@@ -364,10 +418,12 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-1 border-b border-slate-800 px-3 py-2">
-        <button type="button" title={t('{project}\nClick to open the folder in the file manager', { project })} className="min-w-0 flex-1 truncate text-left text-xs font-semibold uppercase tracking-wider text-slate-300 hover:text-slate-50" onClick={() => electronAPI.openProjectFolder().catch((reason) => onStatus(reason.message))}>{name}</button>
+        <button type="button" title={t('{project}\nClick to open the folder in the file manager', { project })} className="min-w-0 flex-1 truncate text-left text-xs font-semibold uppercase tracking-wider text-slate-300 hover:text-slate-50" onClick={() => electronAPI.openProjectFolder().catch((reason) => onStatus(reason.message))}><span className="flex items-center gap-2"><ProjectAvatar directory={project} name={name} active size={28} /><span className="truncate">{name}</span></span></button>
         <button type="button" aria-label={t('New folder…')} title={t('New folder…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => startCreate(project, 'directory')}><FolderPlus size={14} /></button>
         <button type="button" aria-label={t('New document…')} title={t('New document…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => startCreate(project, 'file')}><FilePlus size={14} /></button>
+        <button type="button" aria-label={t('Move a project here…')} title={t('Move a project here…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => moveProjectIn(project)}><FolderInput size={14} /></button>
         <button type="button" aria-label={t('Refresh')} title={t('Refresh')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => setLocalRefresh((value) => value + 1)}><RefreshCw size={14} /></button>
+        <button type="button" aria-label={t('Project settings')} title={t('Project settings')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => setSubSettings({ path: project, name })}><Settings size={14} /></button>
       </div>
       {creating && (
         <form className="grid gap-1 border-b border-slate-800 px-3 py-2" onSubmit={(event) => { event.preventDefault(); commitCreate() }}>
@@ -379,7 +435,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       )}
       {subSettings && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setSubSettings(null) }}>
-          <div role="dialog" aria-modal="true" aria-label={t('Sub-project settings')} className="my-4 w-full max-w-2xl rounded-xl bg-slate-900 p-1 shadow-xl">
+          <div role="dialog" aria-modal="true" aria-label={subSettings.path === project ? t('Project settings') : t('Sub-project settings')} className="my-4 w-full max-w-2xl rounded-xl bg-slate-900 p-1 shadow-xl">
             <div className="flex items-center justify-between gap-2 px-5 pt-4">
               <span className="min-w-0 truncate text-sm font-semibold text-slate-200" title={subSettings.path}>{subSettings.name}</span>
               <button type="button" aria-label={t('Close')} title={t('Close (Esc)')} className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-50" onClick={() => setSubSettings(null)}><X size={16} /></button>
@@ -403,12 +459,13 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
           <div className="mt-2 border-t border-slate-800 pt-1">
             <h3 className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500" title={t('Documents outside the project folder, linked here: they are opened and edited where they are, not copied.')}><Link2 size={12} /> {t('Linked documents')}</h3>
             {links.map((link) => (
-              <div key={link.path} className={`group flex items-center pr-1 text-sm transition hover:bg-slate-800/70 ${link.path === activePath ? 'bg-slate-800 text-slate-50' : link.missing ? 'text-slate-600' : 'text-slate-400'}`}>
+              <div key={link.path} onContextMenu={(event) => openLinkMenu(event, link)} className={`group flex items-center pr-1 text-sm transition hover:bg-slate-800/70 ${link.path === activePath ? 'bg-slate-800 text-slate-50' : link.missing ? 'text-slate-600' : 'text-slate-400'}`}>
                 <button type="button" disabled={link.missing} title={link.missing ? `${link.path} · ${t('File not found')}` : link.path} className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-3 text-left disabled:cursor-not-allowed" onClick={() => onOpenFile(link.path)}>
                   <span className="w-3.5 shrink-0" />
                   <FileText size={14} className={`shrink-0 ${link.missing ? 'text-slate-600' : 'text-accent-400'}`} />
                   <span className={`truncate ${link.missing ? 'line-through' : ''}`}>{link.name}</span>
                 </button>
+                {link.missing && <button type="button" aria-label={t('Update link…')} title={t('Update link…')} className="rounded p-1 text-amber-500 transition hover:bg-slate-700 hover:text-amber-300" onClick={() => updateLink(link)}><Link2 size={12} /></button>}
                 <button type="button" aria-label={t('Unlink')} title={t('Unlink (the file is not touched)')} className="rounded p-1 text-slate-500 opacity-0 transition hover:bg-slate-700 hover:text-slate-50 group-hover:opacity-100 focus:opacity-100" onClick={() => removeLink(link)}><X size={12} /></button>
               </div>
             ))}

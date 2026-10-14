@@ -310,6 +310,21 @@ export default function App() {
   const moveToCreatedProjectRef = useRef(null)
   moveToCreatedProjectRef.current = moveToCreatedProject
 
+  // Sposta un progetto in un'altra cartella (l'utente sceglie dove). Se è quello aperto, resta aperto nel nuovo posto: la sessione
+  // si salva prima (con i vecchi percorsi), il processo principale la riscrive con i nuovi, e qui si ricarica.
+  const moveProject = useCallback(async (directory) => {
+    flushSession()
+    const moved = await electronAPI.moveProject(directory)
+    if (!moved) return null
+    if (moved.wasOpen) {
+      setReady(false)
+      setProject(moved.path)
+      await applySession(await electronAPI.loadSession())
+      setReady(true)
+    }
+    return moved.path
+  }, [flushSession, applySession])
+
   const chooseProject = useCallback(() => switchProject(() => electronAPI.chooseProject()), [switchProject])
   const openProject = useCallback((directory) => switchProject(() => electronAPI.openProject(directory)), [switchProject])
   const createProject = useCallback((name) => switchProject(() => electronAPI.createProject(name)), [switchProject])
@@ -804,7 +819,7 @@ export default function App() {
           <aside style={{ width: widths.left }} className="relative flex shrink-0 flex-col border-r border-slate-800 bg-slate-900/60">
             <PanelResizer side="left" label={t('Side panel width')} width={widths.left} min={PANELS.left.min} max={maxWidthFor('left', resizeContext('left'))} defaultWidth={PANELS.left.default} onChange={resizePanel('left')} onCommit={commitLayout} />
             <h2 className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{sideTabs.find((item) => item.id === sideTab)?.label}</h2>
-            {sideTab === 'projects' && <ProjectsPanel project={project} onOpenFile={(file) => openFromExplorer(file)} onOpen={openProject} onChoose={chooseProject} onCreate={createProject} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
+            {sideTab === 'projects' && <ProjectsPanel project={project} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onOpen={openProject} onChoose={chooseProject} onCreate={createProject} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
             {sideTab === 'files' && (
               <FileExplorer project={project} activePath={contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />
             )}
@@ -864,7 +879,7 @@ export default function App() {
         </div>
       )}
       {aboutOpen && <AboutDialog version={appVersion} release={updateRelease} checkOnOpen={aboutCheck} onCheck={() => checkForUpdate(false)} onClose={() => setAboutOpen(false)} />}
-      {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} version={appVersion} release={updateRelease} onCheckUpdate={() => checkForUpdate(false)} onChooseProject={chooseProject} onOpenFile={(file) => { setScreen('editor'); setSettingsVersion((value) => value + 1); openFromExplorer(file) }} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
+      {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} onMoveProject={moveProject} version={appVersion} release={updateRelease} onCheckUpdate={() => checkForUpdate(false)} onChooseProject={chooseProject} onOpenFile={(file) => { setScreen('editor'); setSettingsVersion((value) => value + 1); openFromExplorer(file) }} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
     </ContextMenuContext.Provider>
   )
 }
