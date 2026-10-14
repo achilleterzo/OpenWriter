@@ -80,15 +80,16 @@ function diffBlocks(before, after) {
 /**
  * Esegue `edit` (una o più modifiche dell'assistente al documento) e segna come da rivedere ciò che è cambiato.
  * Modifiche successive sullo stesso punto si fondono, conservando il testo originale più vecchio.
+ * Restituisce false se la modifica non ha cambiato il documento.
  */
 export function trackEdit(editor, edit) {
-  if (!editor?.view || !pendingKey.get(editor.state)) { edit(); return }
+  if (!editor?.view || !pendingKey.get(editor.state)) { const start = editor?.state?.doc; edit(); return !start || !start.eq(editor.state.doc) }
   const before = editor.state.doc
   const existing = getPending(editor.state)
   tracking = true
   try { edit() } finally { tracking = false }
   const after = editor.state.doc
-  if (before.eq(after)) return
+  if (before.eq(after)) return false
 
   const mapped = new Map(getPending(editor.state).map((change) => [change.id, change]))
   const units = existing.map((change) => ({ id: change.id, existing: true, preFrom: change.from, preTo: change.to, from: mapped.get(change.id)?.from ?? change.from, to: mapped.get(change.id)?.to ?? change.to, old: change.old }))
@@ -125,6 +126,7 @@ export function trackEdit(editor, edit) {
     if (!old.eq(current)) changes.push({ id, from: group.from, to: group.to, old })
   }
   editor.view.dispatch(editor.state.tr.setMeta(pendingKey, { set: changes }).setMeta('addToHistory', false))
+  return true
 }
 
 export function acceptAll(editor) {

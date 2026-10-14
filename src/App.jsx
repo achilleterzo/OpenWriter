@@ -61,6 +61,8 @@ const isDocument = (tab) => tab && tab.kind !== 'browser'
 // Una scheda fissata chiusa resta al suo posto senza documento caricato (con il pulsante "Apri"): non ha editor.
 const isLive = (tab) => isDocument(tab) && !tab.closed
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms) })
+// Percorso assoluto (Windows, di rete o POSIX): l'assistente lo usa per i documenti aperti fuori dal progetto.
+const isAbsolutePath = (value) => /^([A-Za-z]:[\\/]|\\\\|\/)/.test(String(value || ''))
 const samePath = (left, right) => Boolean(left) && Boolean(right) && left.replace(/\\/g, '/').toLowerCase() === right.replace(/\\/g, '/').toLowerCase()
 
 // Ricostruisce le schede dalla sessione salvata: le bozze tornano dal testo salvato, gli altri file dal disco.
@@ -95,6 +97,9 @@ export default function App() {
   const [activeId, setActiveId] = useState(null)
   const [editors, setEditors] = useState({})
   const [project, setProject] = useState(null)
+  // Progetto "main" (nei dati dell'app): area di lavoro dell'assistente quando nessun progetto è aperto.
+  const [mainProject, setMainProject] = useState(null)
+  const workspaceRoot = project || mainProject
   const [sideTab, setSideTab] = useState('files')
   const [expandedPaths, setExpandedPaths] = useState(() => new Set())
   const [explorerRefresh, setExplorerRefresh] = useState(0)
@@ -215,6 +220,7 @@ export default function App() {
     ;(async () => {
       const initial = await electronAPI.getProject()
       setProject(initial)
+      setMainProject(await electronAPI.getMainProject())
       await applySession(await electronAPI.loadSession())
       // Senza progetto si parte dalla home dei progetti.
       if (!initial) setSideTab('projects')
@@ -270,16 +276,39 @@ export default function App() {
   }, [])
 
   // Cambio progetto: la sessione del progetto corrente viene salvata prima, poi si carica quella del nuovo.
-  const switchProject = useCallback(async (pick) => {
+  // `adopt` (facoltativo): lavoro da fare nel nuovo progetto prima di mostrarlo (es. aprire documenti e riprendere una conversazione).
+  const switchProject = useCallback(async (pick, adopt) => {
     flushSession()
     const chosen = await pick()
     if (!chosen || chosen === latest.current.project) return chosen
     setReady(false)
     setProject(chosen)
     await applySession(await electronAPI.loadSession())
+    await adopt?.(chosen)
     setReady(true)
     return chosen
   }, [flushSession, applySession])
+
+  // L'assistente ha creato un progetto: la conversazione lo segue (copiata nella sua chat), i documenti collegati si aprono nelle schede
+  // (sono gli originali, non copie) e l'assistente riprende da dove era, ora con gli strumenti sui file.
+  const moveToCreatedProject = useCallback(async ({ path: target, links, conversationId: movedId }) => {
+    await electronAPI.copyConversationToProject({ id: movedId, target })
+    await switchProject(() => electronAPI.openProject(target), async () => {
+      const opened = []
+      for (const file of links) {
+        try { opened.push(createTab(await electronAPI.openDocumentPath(file))) } catch (error) { console.warn('Documento collegato non aperto', file, error) }
+      }
+      if (opened.length) {
+        setTabs(opened)
+        setActiveId(opened[0].id)
+      }
+      setConversationId(movedId)
+      setAssistantOpen(true)
+      setChatRequest({ id: Date.now(), resume: true, conversationId: movedId })
+    })
+  }, [switchProject])
+  const moveToCreatedProjectRef = useRef(null)
+  moveToCreatedProjectRef.current = moveToCreatedProject
 
   const chooseProject = useCallback(() => switchProject(() => electronAPI.chooseProject()), [switchProject])
   const openProject = useCallback((directory) => switchProject(() => electronAPI.openProject(directory)), [switchProject])
@@ -508,7 +537,8 @@ export default function App() {
     getDocument(relativePath) {
       const { tabs: currentTabs, editors: currentEditors, project: currentProject, contextTabId } = latest.current
       const documents = currentTabs.filter(isLive)
-      const wanted = relativePath ? `${currentProject}/${String(relativePath).replace(/\\/g, '/')}` : null
+      const given = relativePath ? String(relativePath).replace(/\\/g, '/') : null
+      const wanted = given ? (isAbsolutePath(given) ? given : `${currentProject}/${given}`) : null
       const tab = wanted
         ? documents.find((item) => samePath(item.filePath, wanted) || samePath(item.sourcePath, wanted))
         : documents.find((item) => item.id === contextTabId)
@@ -519,8 +549,9 @@ export default function App() {
     // Testo attuale dell'editor per un file del progetto aperto in una scheda (anche con modifiche non salvate).
     getOpenDocumentText(relativePath) {
       const { tabs: currentTabs, editors: currentEditors, project: currentProject } = latest.current
-      if (!currentProject) return null
-      const wanted = `${currentProject}/${String(relativePath).replace(/\\/g, '/')}`
+      const given = String(relativePath).replace(/\\/g, '/')
+      if (!currentProject && !isAbsolutePath(given)) return null
+      const wanted = isAbsolutePath(given) ? given : `${currentProject}/${given}`
       const tab = currentTabs.filter(isLive).find((item) => samePath(item.filePath, wanted) || samePath(item.sourcePath, wanted))
       const editor = tab && currentEditors[tab.id]
       return editor ? { text: editor.getMarkdown(), dirty: tab.dirty } : null
@@ -528,7 +559,7 @@ export default function App() {
     activeDocumentPath() {
       const { tabs: currentTabs, project: currentProject, contextTabId } = latest.current
       const tab = currentTabs.find((item) => item.id === contextTabId)
-      return tab?.filePath ? relativeToProject(currentProject, tab.filePath) : null
+      return tab?.filePath ? relativeToProject(currentProject, tab.filePath) || tab.filePath.replace(/\\/g, '/') : null
     },
     // Schede del browser, con indirizzo e titolo attuali (anche se l'utente ha navigato per conto suo).
     async listBrowserTabs() {
@@ -595,9 +626,22 @@ export default function App() {
       }
       return { number: target.number, shortId: target.shortId, title: info.title || t('untitled'), url: info.url, image }
     },
+    // Crea un progetto per l'assistente: l'utente conferma e sceglie la cartella (nel processo principale); i documenti indicati vi vengono collegati, non copiati.
+    async createProject({ name, documents }) {
+      const paths = []
+      for (const given of documents) {
+        const { tab } = toolBridge.getDocument(given)
+        if (!tab.filePath) throw new Error(t('The document "{relativePath}" is not saved on disk: ask the user to save it before linking it', { relativePath: given }))
+        // Il collegamento punta al file: le modifiche ancora non salvate vanno prima su disco.
+        if (tab.dirty && !(await workspaceRef.current.saveTab(tab.id))) throw new Error(t('The document "{relativePath}" could not be saved', { relativePath: given }))
+        paths.push(tab.filePath)
+      }
+      return electronAPI.createProjectForAi({ name, documents: paths })
+    },
+    moveToCreatedProject: (info) => moveToCreatedProjectRef.current(info),
     // Prima di una modifica dell'assistente si archivia il testo attuale, così è sempre recuperabile dalla cronologia.
     async snapshot(tab, editor) {
-      if (!tab.filePath || !latest.current.project) return
+      if (!tab.filePath) return
       try {
         await electronAPI.addVersion(tab.filePath, editor.getMarkdown(), t('Before the AI edit'))
         setHistoryVersion((value) => value + 1)
@@ -651,11 +695,11 @@ export default function App() {
   // Note del documento di contesto: lette dal disco e mostrate come evidenziazioni nell'editor.
   useEffect(() => {
     const path = contextTab?.filePath
-    if (!project || !path) { setNotes([]); return undefined }
+    if (!workspaceRoot || !path) { setNotes([]); return undefined }
     let cancelled = false
     electronAPI.listNotes(path).then((list) => { if (!cancelled) setNotes(list) }).catch(() => { if (!cancelled) setNotes([]) })
     return () => { cancelled = true }
-  }, [project, contextTab?.filePath, notesVersion])
+  }, [workspaceRoot, contextTab?.filePath, notesVersion])
 
   // Una nota che si chiude (risolta, accettata o rifiutata, anche dall'assistente) smette di essere "selezionata":
   // altrimenti resterebbe in elenco e nel testo anche con la vista "Aperte".
@@ -721,6 +765,14 @@ export default function App() {
 
   openFileRef.current = openFromExplorer
 
+  // Documenti aperti dal sistema (doppio clic su un .md, "Apri con"): quelli arrivati prima dell'avvio, poi quelli successivi.
+  useEffect(() => {
+    if (!ready || !electronAPI?.onExternalDocument) return undefined
+    const open = (document) => workspaceRef.current.openDocument(document)
+    electronAPI.takeExternalDocuments().then((list) => list.forEach(open)).catch((error) => console.error(error))
+    return electronAPI.onExternalDocument(open)
+  }, [ready])
+
   const openDocuments = useMemo(() => tabs.filter(isLive).map((item) => ({ id: item.id, title: item.title })), [tabs])
 
   if (!ready || !activeTab) return <div className="h-screen bg-slate-950" />
@@ -758,11 +810,11 @@ export default function App() {
             )}
             {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} />}
             {sideTab === 'notes' && (editors[contextTab?.id]
-              ? <NotesPanel noteView={noteView} onNoteViewChange={(view) => { setNoteView(view); setActiveNoteId(null) }} search={noteSearch} onSearchChange={setNoteSearch} tab={contextTab} editor={editors[contextTab.id]} project={project} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} />
+              ? <NotesPanel noteView={noteView} onNoteViewChange={(view) => { setNoteView(view); setActiveNoteId(null) }} search={noteSearch} onSearchChange={setNoteSearch} tab={contextTab} editor={editors[contextTab.id]} project={workspaceRoot} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} />
               : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>)}
-            {sideTab === 'memory' && <MemoryPanel project={project} memoryVersion={memoryVersion} activePath={contextTab?.filePath ? relativeToProject(project, contextTab.filePath) : null} onOpenFile={(relative) => openFromExplorer(`${project}/${relative}`)} onStatus={setStatus} />}
+            {sideTab === 'memory' && <MemoryPanel project={workspaceRoot} memoryVersion={memoryVersion} activePath={contextTab?.filePath ? relativeToProject(project, contextTab.filePath) : null} onOpenFile={(relative) => openFromExplorer(`${project}/${relative}`)} onStatus={setStatus} />}
             {sideTab === 'history' && (
-              <HistoryPanel tab={contextTab} editor={editors[contextTab?.id]} project={project} historyVersion={historyVersion} onChanged={() => setHistoryVersion((value) => value + 1)} onStatus={setStatus} />
+              <HistoryPanel tab={contextTab} editor={editors[contextTab?.id]} project={workspaceRoot} historyVersion={historyVersion} onChanged={() => setHistoryVersion((value) => value + 1)} onStatus={setStatus} />
             )}
           </aside>
         )}
@@ -790,7 +842,8 @@ export default function App() {
             toolBridge={toolBridge}
             request={chatRequest} onRequestHandled={() => setChatRequest(null)}
             onOpenNote={selectNote}
-            project={project}
+            project={workspaceRoot}
+            loose={!project}
             settingsVersion={settingsVersion}
             conversationId={conversationId}
             onConversationChange={setConversationId}
