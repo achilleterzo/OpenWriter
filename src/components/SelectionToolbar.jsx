@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getMarkRange } from '@tiptap/core'
 import { useEditorState } from '@tiptap/react'
-import { Bold, Check, Code, ExternalLink, Italic, Link as LinkIcon, Pencil, Strikethrough, Unlink, X } from 'lucide-react'
+import { Bold, Check, Code, ExternalLink, Image as ImageIcon, Italic, Link as LinkIcon, Pencil, Strikethrough, Trash2, Unlink, X } from 'lucide-react'
 import FloatingToolbar, { FloatingButton, FloatingDivider } from './FloatingToolbar.jsx'
 import { resolveDocumentLink } from '../lib/imagePaths.js'
 import { t } from '../i18n/index.js'
@@ -62,12 +62,13 @@ function useSettledSelection(editor) {
  * e il collegamento; dentro un collegamento mostra dove punta (modifica, apri, togli). Ctrl+K, o il pulsante della barra del documento
  * (`request` cambia a ogni richiesta), apre la modifica del collegamento anche a cursore vuoto, per inserirne uno nuovo.
  */
-export default function SelectionToolbar({ editor, containerRef, request, documentPath, onOpenLink }) {
+export default function SelectionToolbar({ editor, containerRef, request, documentPath, onOpenLink, onReplaceImage }) {
   const state = useEditorState({
     editor,
     selector: ({ editor: current }) => (current
       ? {
         link: current.isActive('link'),
+        image: current.isActive('image'),
         href: current.getAttributes('link').href || '',
         empty: current.state.selection.empty,
         bold: current.isActive('bold'),
@@ -75,7 +76,7 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
         strike: current.isActive('strike'),
         code: current.isActive('code'),
       }
-      : { link: false, href: '', empty: true, bold: false, italic: false, strike: false, code: false }),
+      : { link: false, image: false, href: '', empty: true, bold: false, italic: false, strike: false, code: false }),
   })
   const settled = useSettledSelection(editor)
   // In modifica: { mode: 'link' | 'selection' | 'create', range, originalText, text, url }.
@@ -179,6 +180,14 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
         />
         <FloatingButton label={t('Apply')} onClick={apply}><Check size={15} /></FloatingButton>
         <FloatingButton label={t('Cancel')} onClick={finish}><X size={15} /></FloatingButton>
+      </>
+    )
+  } else if (state.image) {
+    // Un'immagine selezionata: gli strumenti del testo non servono; si può sceglierne un'altra o toglierla.
+    content = (
+      <>
+        <FloatingButton label={t('Choose another image…')} onClick={onReplaceImage}><ImageIcon size={14} /></FloatingButton>
+        <FloatingButton label={t('Remove image')} danger onClick={() => editor.chain().focus().deleteSelection().run()}><Trash2 size={14} /></FloatingButton>
       </>
     )
   } else {

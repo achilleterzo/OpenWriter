@@ -58,14 +58,16 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
   const context = useRef({})
   context.current = { documentPath: tab.filePath || null, project }
 
-  // Inserisce un'immagine: `imagePath` è il file da riferire; `copy` lo porta prima nella cartella images/ del progetto.
-  async function insertImage(editor, { imagePath, copy, data, mime, name }) {
+  // Inserisce un'immagine: `imagePath` è il file da riferire, `data` un'immagine incollata. Se il file non è già raggiungibile dal documento
+  // (dentro il progetto, o nella cartella del documento) o non ha un file, si copia accanto al documento (sottocartella images/): resta nel progetto.
+  async function insertImage(editor, { imagePath, data, mime, name }) {
     const { documentPath, project: current } = context.current
     try {
       if (!documentPath) throw new Error(t('Save the document first to add images'))
       let target = imagePath
-      if (data || (copy && !(isInside(imagePath, current) || isInside(imagePath, dirname(documentPath))))) {
-        target = await electronAPI.importImage({ sourcePath: data ? undefined : imagePath, data, mime, name })
+      const reachable = Boolean(imagePath) && (isInside(imagePath, dirname(documentPath)) || Boolean(current && isInside(documentPath, current) && isInside(imagePath, current)))
+      if (data || !reachable) {
+        target = await electronAPI.importImage({ documentPath, sourcePath: data ? undefined : imagePath, data, mime, name })
       }
       const alt = String(name || target.split(/[\\/]/).pop()).replace(/\.[^.]*$/, '')
       editor.chain().focus().setImage({ src: sourceForImage(target, documentPath, current), alt }).run()
@@ -268,7 +270,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
         <div className={`h-full overflow-y-auto ${sourceOpen ? 'hidden' : ''}`} data-document-scroll={tab.id} onScroll={interact} onWheel={interact} onMouseDown={interact} onKeyDown={interact}>
           <EditorContent editor={editor} className="document-editor mx-auto" />
         </div>
-        {!sourceOpen && <SelectionToolbar editor={editor} containerRef={editorArea} request={linkRequest} documentPath={tab.filePath || null} onOpenLink={onOpenLink} />}
+        {!sourceOpen && <SelectionToolbar editor={editor} containerRef={editorArea} request={linkRequest} documentPath={tab.filePath || null} onOpenLink={onOpenLink} onReplaceImage={pickImage} />}
       </div>
     </div>
   )

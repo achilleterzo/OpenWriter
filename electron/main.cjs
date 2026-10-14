@@ -15,6 +15,7 @@ const { fetchLatestRelease } = require('./updates.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
 const { createNotesStore } = require('./notes-store.cjs')
 const projectIcon = require('./project-icon.cjs')
+const { planImageMove, applyImageMove } = require('./document-images.cjs')
 const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-links.cjs')
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
@@ -80,6 +81,8 @@ function textToHtml(text) {
 }
 
 const documentExtensions = ['.md', '.markdown', '.mdown', '.docx', '.pdf']
+// Quel che l'albero dei file mostra: i documenti e le immagini (che si aprono in una scheda di visualizzazione).
+const listedExtensions = [...documentExtensions, ...IMAGE_EXTENSIONS]
 const hiddenDirectories = new Set(['node_modules', 'dist', 'out'])
 
 async function readDocument(filePath) {
@@ -222,7 +225,7 @@ async function importFiles({ paths, targetDirectory }) {
   for (const source of Array.isArray(paths) ? paths : []) {
     try {
       const stats = await fs.stat(source)
-      if (!stats.isFile() || !documentExtensions.includes(path.extname(source).toLowerCase())) { skipped.push(source); continue }
+      if (!stats.isFile() || !listedExtensions.includes(path.extname(source).toLowerCase())) { skipped.push(source); continue }
       const destination = await uniqueDestination(directory, path.basename(source))
       await fs.copyFile(source, destination, fsSync.constants.COPYFILE_EXCL)
       copied.push(destination)
@@ -240,7 +243,7 @@ async function renamePath({ path: target, newName }) {
   if (!name || name === '.' || name === '..' || /[\\/:*?"<>|]/.test(name)) throw new Error(t('Invalid name'))
   const isDirectory = (await fs.stat(source)).isDirectory()
   // Se l'estensione viene omessa o non è supportata, si conserva quella originale.
-  const finalName = isDirectory || documentExtensions.includes(path.extname(name).toLowerCase()) ? name : `${name}${path.extname(source)}`
+  const finalName = isDirectory || listedExtensions.includes(path.extname(name).toLowerCase()) ? name : `${name}${path.extname(source)}`
   const destination = resolveInProject(path.join(path.dirname(source), finalName))
   if (destination === source) return source
   const caseOnlyChange = destination.toLowerCase() === source.toLowerCase()
@@ -268,8 +271,11 @@ async function moveIntoDirectory({ from, toDirectory }) {
   if (directory === source || directory.startsWith(source + path.sep)) throw new Error(t('A folder cannot be moved into itself'))
   const destination = path.join(directory, path.basename(source))
   if (fsSync.existsSync(destination)) throw new Error(t('An item with this name already exists'))
+  // Le immagini accanto al documento (images/) lo seguono; se nella destinazione ce n'è una diversa con lo stesso nome, lo spostamento non parte.
+  const imagePlan = planImageMove(source, destination)
   await fs.rename(source, destination)
   moveArtifacts(source, destination)
+  applyImageMove(imagePlan)
   return destination
 }
 
@@ -351,7 +357,7 @@ async function listDirectory(directory) {
     .filter((entry) => !entry.name.startsWith('.'))
     .filter((entry) => entry.isDirectory()
       ? !hiddenDirectories.has(entry.name)
-      : documentExtensions.includes(path.extname(entry.name).toLowerCase()))
+      : listedExtensions.includes(path.extname(entry.name).toLowerCase()))
   // Un DOCX/PDF che ha già il suo Markdown (stesso nome) non sta più in lista: compare sotto il Markdown, come originale in sola lettura.
   const stem = (entry) => path.basename(entry.name, path.extname(entry.name)).toLowerCase()
   const isMarkdown = (entry) => !entry.isDirectory() && path.extname(entry.name).toLowerCase() === '.md'
@@ -843,9 +849,11 @@ ipcMain.handle('tools:move-path', async (_event, { from, to } = {}) => {
   if (!source.relative || !destination.relative) throw new Error(t('Invalid name'))
   if (!fsSync.existsSync(source.target)) throw new Error(t('This path is not accessible'))
   if (fsSync.existsSync(destination.target)) throw new Error(t('An item with this name already exists'))
+  const imagePlan = planImageMove(source.target, destination.target)
   await fs.mkdir(path.dirname(destination.target), { recursive: true })
   await fs.rename(source.target, destination.target)
   moveArtifacts(source.target, destination.target)
+  applyImageMove(imagePlan)
   return { from: source.target, to: destination.target, path: destination.relative }
 })
 ipcMain.handle('tools:create-directory', (_event, relativePath) => projectTools.createDirectory(relativePath))
@@ -859,20 +867,22 @@ ipcMain.handle('workspace:create-entry', async (_event, { parent, name, type } =
   const directory = type === 'directory'
   const final = directory || path.extname(clean) ? relative : `${relative}.md`
   if (fsSync.existsSync(path.join(projectPath, final))) throw new Error(t('An item with this name already exists'))
-  return (directory ? await projectTools.createDirectory(final) : await projectTools.createFile(final, '')).absolute
+  // Dall'albero il nome lo sceglie l'utente: lo stesso nome in un'altra cartella è lecito (README.md, index.md…); il controllo sui doppioni vale per l'assistente.
+  return (directory ? await projectTools.createDirectory(final) : await projectTools.createFile(final, '', { allowSameName: true })).absolute
 })
 ipcMain.handle('app:open-link', (_event, url) => (/^https?:\/\//i.test(String(url)) ? shell.openExternal(String(url)) : false))
 ipcMain.handle('images:pick', async () => {
   const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openFile'], filters: [{ name: t('Image'), extensions: IMAGE_EXTENSIONS.map((extension) => extension.slice(1)) }] })
   return result.canceled ? null : result.filePaths[0]
 })
-// Porta un'immagine (file esistente o dati incollati) nella cartella images/ del progetto e restituisce il percorso assoluto.
-ipcMain.handle('images:import', async (_event, { sourcePath, data, mime, name } = {}) => {
-  if (!projectPath) throw new Error(t('No project open'))
+// Porta un'immagine (file esistente o dati incollati) accanto al documento, nella sua sottocartella images/, e restituisce il percorso assoluto.
+// Così l'immagine resta nel progetto (e si sposta con lui) invece di puntare a un file fuori.
+ipcMain.handle('images:import', async (_event, { documentPath, sourcePath, data, mime, name } = {}) => {
+  if (!documentPath || !path.isAbsolute(String(documentPath))) throw new Error(t('Save the document first to add images'))
   const fromMime = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/bmp': '.bmp' }[mime]
   const extension = (sourcePath ? path.extname(sourcePath) : fromMime || '').toLowerCase()
   if (!IMAGE_EXTENSIONS.includes(extension)) throw new Error(t('Unsupported format: png, jpg, gif, webp and bmp are allowed'))
-  const directory = path.join(projectPath, 'images')
+  const directory = path.join(path.dirname(path.resolve(String(documentPath))), 'images')
   await fs.mkdir(directory, { recursive: true })
   const base = (sourcePath ? path.basename(sourcePath, extension) : String(name || '').replace(/\.[^.]*$/, '') || `image-${Date.now()}`).replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '') || 'image'
   let target = path.join(directory, `${base}${extension}`)
@@ -1028,6 +1038,11 @@ ipcMain.on('workspace:start-drag', (event, targets) => {
   }
 })
 ipcMain.handle('workspace:move-path', (_event, request) => moveIntoDirectory(request || {}))
+// Dimensione e data di un file del progetto (per la scheda di visualizzazione di un'immagine).
+ipcMain.handle('workspace:file-info', async (_event, target) => {
+  const stats = await fs.stat(resolveInProject(target))
+  return { size: stats.size, modified: Math.round(stats.mtimeMs) }
+})
 ipcMain.handle('workspace:reveal-path', (_event, target) => { shell.showItemInFolder(resolveInProject(target)) })
 ipcMain.handle('workspace:list-directory', (_event, directory) => listDirectory(directory))
 ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, saveAs, defaultName }) => {
