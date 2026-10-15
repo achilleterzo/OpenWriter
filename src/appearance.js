@@ -1,5 +1,6 @@
 import { t } from './i18n/index.js'
 import { getPreference, setPreference } from './lib/preferences.js'
+import { loadFamily } from './lib/fonts.js'
 const STORAGE_KEY = 'openwriter.appearance'
 
 export const themes = [
@@ -35,10 +36,20 @@ export const widths = [
   { value: 'full', label: t('Full'), size: '100%' },
 ]
 
+// Endless: testo continuo; Pages: fogli A4 affiancati verticalmente.
+// La vista a pagine è nascosta (menu Visualizza e impostazioni) finché non è rifinita: con `false` vale sempre la vista continua, anche se una preferenza salvata dice altro.
+// Se si riattiva, va riattivata anche in electron/menu.cjs (PAGES_VIEW_ENABLED).
+export const pagesViewEnabled = false
+
+export const views = [
+  { value: 'endless', label: t('Endless') },
+  { value: 'pages', label: t('Pages (A4)') },
+]
+
 export const fontSizeRange = { min: 14, max: 24 }
 
-// `fontFamily`: un carattere installato scelto per nome (facoltativo): il tipo generico `font` fa da ripiego. Solo estetico: non entra nel documento.
-export const defaultAppearance = { theme: 'system', accent: 'ash', font: 'sans', fontFamily: '', fontSize: 17, lineHeight: 'normal', width: 'medium' }
+// `fontFamily`: un carattere Google scelto per nome (facoltativo, vedi lib/fonts.js): il tipo generico `font` fa da ripiego. Solo estetico: non entra nel documento.
+export const defaultAppearance = { theme: 'system', accent: 'ash', font: 'sans', fontFamily: '', fontSize: 17, lineHeight: 'normal', width: 'medium', view: 'endless' }
 
 // Nome di un carattere: testo libero senza i caratteri che romperebbero il valore CSS.
 // Lo spazio finale non si toglie: mentre si digita "Palatino " serve; si toglie quando il nome viene usato.
@@ -56,6 +67,7 @@ function normalize(value = {}) {
     fontSize: Number.isFinite(size) ? Math.min(fontSizeRange.max, Math.max(fontSizeRange.min, Math.round(size))) : defaultAppearance.fontSize,
     lineHeight: pick(lineHeights, value.lineHeight, defaultAppearance.lineHeight),
     width: pick(widths, value.width, defaultAppearance.width),
+    view: pagesViewEnabled ? pick(views, value.view, defaultAppearance.view) : defaultAppearance.view,
   }
 }
 
@@ -69,12 +81,25 @@ export function saveAppearance(appearance) {
 
 const systemQuery = window.matchMedia('(prefers-color-scheme: dark)')
 
+// Carattere specifico del progetto aperto (vedi impostazioni del progetto): ha la precedenza su quello generale. Non viene salvato nelle preferenze.
+let projectEditor = { font: '', fontFamily: '' }
+
+function effective(appearance) {
+  if (projectEditor.fontFamily) return { ...appearance, font: projectEditor.font || appearance.font, fontFamily: projectEditor.fontFamily }
+  if (projectEditor.font) return { ...appearance, font: projectEditor.font, fontFamily: '' }
+  return appearance
+}
+
 // Scrive le impostazioni come attributi e variabili CSS sulla radice del documento.
-export function applyAppearance(appearance) {
+export function applyAppearance(base) {
   const root = document.documentElement
+  const appearance = effective(base)
   const theme = appearance.theme === 'system' ? (systemQuery.matches ? 'dark' : 'light') : appearance.theme
   root.dataset.theme = theme
   root.dataset.accent = appearance.accent
+  root.dataset.view = appearance.view
+  loadFamily(appearance.fontFamily.trim())
+  window.electronAPI?.setViewMode?.(appearance.view)
   const generic = fonts.find((font) => font.value === appearance.font).family
   const family = appearance.fontFamily.trim()
   root.style.setProperty('--editor-font', family ? `"${family}", ${generic}` : generic)
@@ -87,6 +112,11 @@ let current = loadAppearance()
 const listeners = new Set()
 
 export const getAppearance = () => current
+
+export function setProjectEditor(editor) {
+  projectEditor = { font: editor?.font || '', fontFamily: cleanFamily(editor?.fontFamily).trim() }
+  applyAppearance(current)
+}
 
 export function updateAppearance(changes) {
   current = normalize({ ...current, ...changes })

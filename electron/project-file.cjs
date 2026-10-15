@@ -60,6 +60,16 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
   }
 
   // `base`: cartella di un altro progetto (un sotto-progetto o un progetto sopra); senza, il progetto aperto.
+  // Carattere dell'editor specifico del progetto (facoltativo): `font` è il tipo generico, `fontFamily` un carattere Google per nome. Vuoto = valgono le impostazioni generali.
+  function cleanEditor(value) {
+    const editor = value && typeof value === 'object' ? value : {}
+    const name = typeof editor.fontFamily === 'string' ? editor.fontFamily.trim() : ''
+    return {
+      font: ['sans', 'serif', 'mono'].includes(editor.font) ? editor.font : '',
+      fontFamily: name.length <= 80 && !/["';:{}<>\\\n]/.test(name) ? name : '',
+    }
+  }
+
   function readSettings(base) {
     const parsed = readJson(base ? path.join(rootAt(base), 'project.json') : settingsFile(), {})
     return {
@@ -69,6 +79,7 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
       ai: { language: '', documentLanguage: '', ...(parsed.ai && typeof parsed.ai === 'object' ? parsed.ai : {}) },
       options: { autoVersions: true, ...(parsed.options && typeof parsed.options === 'object' ? parsed.options : {}) },
       spellcheck: { languages: [], ...(parsed.spellcheck && typeof parsed.spellcheck === 'object' ? parsed.spellcheck : {}) },
+      editor: cleanEditor(parsed.editor),
       skills: { ...(parsed.skills && typeof parsed.skills === 'object' ? parsed.skills : {}), active: cleanSkillIds(parsed.skills?.active) },
     }
   }
@@ -194,12 +205,13 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
       ai: { context, extraContext: readExtraContext(), language: String(settings.ai.language || ''), documentLanguage: String(settings.ai.documentLanguage || '') },
       options: { autoVersions: settings.options.autoVersions !== false },
       spellcheck: { languages: cleanLanguages(settings.spellcheck.languages) },
+      editor: cleanEditor(settings.editor),
       skills: { active: settings.skills.active },
     }
   }
 
   // `skills` è facoltativo: chi non lo passa (es. la copia del contesto) lascia intatte le skill attive.
-  function saveSettings({ name, ai, options, spellcheck, inherit, skills } = {}) {
+  function saveSettings({ name, ai, options, spellcheck, inherit, skills, editor } = {}) {
     const settings = readSettings()
     if (inherit !== undefined) settings.inherit = Boolean(inherit)
     settings.name = String(name || '').slice(0, 200)
@@ -207,6 +219,7 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     settings.options = { ...settings.options, autoVersions: options?.autoVersions !== false }
     settings.spellcheck = { ...settings.spellcheck, languages: cleanLanguages(spellcheck?.languages) }
     if (skills !== undefined) settings.skills = { ...settings.skills, active: cleanSkillIds(skills?.active) }
+    if (editor !== undefined) settings.editor = cleanEditor(editor)
     writeAtomic(settingsFile(), JSON.stringify(settings, null, 2))
     writeAtomic(contextFile(), String(ai?.context || '').slice(0, MAX_CONTEXT_CHARS))
     return getSettings()

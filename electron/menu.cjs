@@ -2,7 +2,10 @@ const { Menu } = require('electron')
 const { t } = require('./i18n.cjs')
 
 // Le voci con "role" usano un'etichetta esplicita: altrimenti Electron le mostrerebbe nella lingua del sistema, non in quella scelta.
-function createApplicationMenu(sendCommand) {
+// Menu Visualizza (vista continua / a pagine): nascosto finché la vista a pagine non è rifinita (vedi pagesViewEnabled in src/appearance.js).
+const PAGES_VIEW_ENABLED = false
+
+function createApplicationMenu(sendCommand, state = {}) {
   const command = (name) => () => sendCommand(name)
 
   Menu.setApplicationMenu(Menu.buildFromTemplate([
@@ -42,6 +45,13 @@ function createApplicationMenu(sendCommand) {
         { label: t('Replace…'), accelerator: 'CmdOrCtrl+H', click: command('replace') },
       ],
     },
+    ...(PAGES_VIEW_ENABLED ? [{
+      label: t('View'),
+      submenu: [
+        { label: t('Endless'), type: 'radio', checked: state.view !== 'pages', click: command('view-endless') },
+        { label: t('Pages (A4)'), type: 'radio', checked: state.view === 'pages', click: command('view-pages') },
+      ],
+    }] : []),
     {
       label: t('Help'),
       submenu: [

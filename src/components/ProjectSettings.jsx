@@ -4,6 +4,8 @@ import { ProjectAvatar } from './ProjectIcon.jsx'
 import SkillsManager from './SkillsManager.jsx'
 import { chooseProjectIcon, invalidateProjectIcon, useProjectIcon } from '../lib/projectIcons.js'
 import SpellcheckLanguages from './SpellcheckLanguages.jsx'
+import { EditorFontChoice } from './FontPicker.jsx'
+import { setProjectEditor } from '../appearance.js'
 import { formatNumber } from '../i18n/index.js'
 import { t } from '../i18n/index.js'
 
@@ -90,7 +92,7 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
     // Con `projectPath` si modificano le impostazioni di quel progetto (anche non aperto); altrimenti quelle del progetto aperto.
     ;(projectPath ? electronAPI.getProjectSettingsFor(projectPath) : electronAPI.getProjectSettings()).then((settings) => {
       setInfo(settings)
-      setForm({ name: settings.name, language: settings.ai.language, documentLanguage: settings.ai.documentLanguage || '', context: settings.ai.context, autoVersions: settings.options.autoVersions, inherit: settings.inherit === true, spellcheck: settings.spellcheck.languages })
+      setForm({ name: settings.name, language: settings.ai.language, documentLanguage: settings.ai.documentLanguage || '', context: settings.ai.context, autoVersions: settings.options.autoVersions, inherit: settings.inherit === true, spellcheck: settings.spellcheck.languages, editor: settings.editor })
     }).catch((reason) => setError(reason.message))
   }, [project, projectPath, reloadToken])
 
@@ -101,8 +103,11 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
 
   async function save() {
     try {
-      const payload = ({ name: form.name, ai: { context: form.context, language: form.language, documentLanguage: form.documentLanguage }, options: { autoVersions: form.autoVersions }, ...(info.parent ? { inherit: form.inherit } : {}), spellcheck: { languages: form.spellcheck } })
+      const payload = ({ name: form.name, ai: { context: form.context, language: form.language, documentLanguage: form.documentLanguage }, options: { autoVersions: form.autoVersions }, ...(info.parent ? { inherit: form.inherit } : {}), spellcheck: { languages: form.spellcheck }, editor: form.editor })
       const result = await (projectPath ? electronAPI.saveProjectSettingsFor(projectPath, payload) : electronAPI.saveProjectSettings(payload))
+      // Se è il progetto aperto, il carattere cambia subito.
+      const open = await electronAPI.getProject()
+      if (!projectPath || (open && projectPath.toLowerCase() === String(open).toLowerCase())) setProjectEditor(result.editor)
       onChanged?.()
       setInfo(result)
       setSaved(true)
@@ -184,6 +189,12 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
           onChange={(languages) => update({ spellcheck: languages })}
         />
         <span className="text-xs text-slate-500">{t('If you choose none, the ones from the general settings apply.')}</span>
+      </div>
+
+      <div className="grid gap-2 text-sm text-slate-300">
+        <span>{t('Editor font in this project')}</span>
+        <EditorFontChoice allowDefault font={form.editor.font} fontFamily={form.editor.fontFamily} onChange={(editor) => update({ editor })} />
+        <span className="text-xs text-slate-500">{t('Overrides the font chosen in Settings → Appearance while this project is open.')}</span>
       </div>
 
       <label className="flex items-start gap-3 text-sm text-slate-300">

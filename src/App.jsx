@@ -25,6 +25,7 @@ import { foldText, noteIsShown } from './lib/anchoring.js'
 import { relativeToProject } from './lib/aiTools.js'
 import { PANELS, clampWidth, fitLayout, loadLayout, maxWidthFor, saveLayout } from './lib/layout.js'
 import { AFTER_LANGUAGE_RELOAD_KEY, t } from './i18n/index.js'
+import { setProjectEditor, updateAppearance } from './appearance.js'
 
 const electronAPI = window.electronAPI
 const SAVE_DELAY_MS = 500
@@ -368,8 +369,15 @@ export default function App() {
       if (command === 'about' || command === 'check-updates') { setAboutCheck(command === 'check-updates'); setAboutOpen(true) }
       if (command === 'settings') openSettings()
       if (command === 'open-project') chooseProject()
+      if (command === 'view-endless' || command === 'view-pages') updateAppearance({ view: command.slice(5) })
     })
   }, [chooseProject])
+
+  // Carattere dell'editor specifico del progetto aperto, se le sue impostazioni ne indicano uno.
+  useEffect(() => {
+    if (!electronAPI) return
+    electronAPI.getProjectSettings().then((settings) => setProjectEditor(settings.available ? settings.editor : null)).catch(() => setProjectEditor(null))
+  }, [project])
 
   const registerEditor = useCallback((id, editor) => {
     setEditors((current) => {

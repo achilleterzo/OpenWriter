@@ -5,6 +5,13 @@ const preferenceValues = ipcRenderer.sendSync('preferences:load') || {}
 
 contextBridge.exposeInMainWorld('electronAPI', {
   preferences: { values: preferenceValues, set: (key, value) => ipcRenderer.send('preferences:set', key, value) },
+  setViewMode: (mode) => ipcRenderer.send('view:changed', mode),
+  fonts: {
+    catalog: () => ipcRenderer.invoke('fonts:catalog'),
+    list: () => ipcRenderer.invoke('fonts:list'),
+    install: (family) => ipcRenderer.invoke('fonts:install', family),
+    remove: (family) => ipcRenderer.invoke('fonts:remove', family),
+  },
   openDocument: () => ipcRenderer.invoke('document:open'),
   openDocumentPath: (filePath, options) => ipcRenderer.invoke('document:open-path', filePath, options),
   reopenDocument: (filePath) => ipcRenderer.invoke('document:reopen', filePath),
