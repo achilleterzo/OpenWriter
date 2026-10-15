@@ -431,3 +431,87 @@ body {
   background-repeat: repeat-y;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.35), 0 8px 24px rgb(0 0 0 / 0.2);
 }
+
+/* Tabelle (GFM). Le celle contengono paragrafi: senza il margine di fondo restano compatte. */
+.document-editor .tiptap table {
+  width: 100%;
+  margin: 0 0 1rem;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.document-editor .tiptap th,
+.document-editor .tiptap td {
+  position: relative;
+  min-width: 3rem;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid rgb(var(--slate-700));
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.document-editor .tiptap th {
+  background: rgb(var(--slate-900));
+  font-weight: 600;
+  text-align: left;
+}
+.document-editor .tiptap th p,
+.document-editor .tiptap td p { margin: 0; }
+.document-editor .tiptap .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgb(var(--accent-400) / 0.2);
+  pointer-events: none;
+}
+
+/* Note a piè di pagina: richiamo in apice e definizione (testo grezzo, come nel file). */
+.document-editor .tiptap .ow-footnote-ref {
+  color: rgb(var(--accent-400));
+  font-size: 0.75em;
+  font-weight: 600;
+}
+.document-editor .tiptap .ow-footnote-ref::before { content: '['; }
+.document-editor .tiptap .ow-footnote-ref::after { content: ']'; }
+.document-editor .tiptap pre.ow-footnote-definition {
+  font-family: var(--editor-font);
+  font-size: 0.85em;
+  color: rgb(var(--slate-400));
+  border-left: 2px solid rgb(var(--slate-700));
+  padding-left: 0.75rem;
+}
+
+/* Formule: testo grezzo (non si disegnano), in carattere a spaziatura fissa. */
+.document-editor .tiptap .ow-math {
+  border-radius: 0.25rem;
+  background: rgb(var(--slate-800));
+  padding: 0 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+/* Avvisi di GitHub: citazione con etichetta colorata. */
+.document-editor .tiptap blockquote[data-alert] {
+  --alert: var(--accent-400);
+  border-left: 3px solid rgb(var(--alert));
+  background: rgb(var(--alert) / 0.08);
+  padding: 0.5rem 1rem;
+  border-radius: 0 0.375rem 0.375rem 0;
+}
+.document-editor .tiptap blockquote[data-alert]::before {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: rgb(var(--alert));
+  font-size: 0.8em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.document-editor .tiptap blockquote[data-alert='NOTE'] { --alert: 96 165 250; }
+.document-editor .tiptap blockquote[data-alert='NOTE']::before { content: 'Note'; }
+.document-editor .tiptap blockquote[data-alert='TIP'] { --alert: var(--emerald-400); }
+.document-editor .tiptap blockquote[data-alert='TIP']::before { content: 'Tip'; }
+.document-editor .tiptap blockquote[data-alert='IMPORTANT'] { --alert: 167 139 250; }
+.document-editor .tiptap blockquote[data-alert='IMPORTANT']::before { content: 'Important'; }
+.document-editor .tiptap blockquote[data-alert='WARNING'] { --alert: var(--amber-400); }
+.document-editor .tiptap blockquote[data-alert='WARNING']::before { content: 'Warning'; }
+.document-editor .tiptap blockquote[data-alert='CAUTION'] { --alert: var(--rose-400); }
+.document-editor .tiptap blockquote[data-alert='CAUTION']::before { content: 'Caution'; }

@@ -1,4 +1,6 @@
 import {
+  BetweenHorizontalEnd,
+  BetweenVerticalEnd,
   Bold,
   Check,
   Code2,
@@ -17,6 +19,8 @@ import {
   Save,
   Search,
   Strikethrough,
+  Table2,
+  Trash2,
   Undo2,
 } from 'lucide-react'
 import { useEditorState } from '@tiptap/react'
@@ -59,6 +63,7 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onL
       taskList: currentEditor.isActive('taskList'),
       blockquote: currentEditor.isActive('blockquote'),
       codeBlock: currentEditor.isActive('codeBlock'),
+      table: currentEditor.isActive('table'),
     }),
   })
   const headingLevel = active.headingLevel
@@ -118,7 +123,17 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onL
         <ToolbarButton label={t('Quote')} active={active.blockquote} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote size={17} /></ToolbarButton>
         <ToolbarButton label={t('Code block')} active={active.codeBlock} onClick={() => editor.chain().focus().toggleCodeBlock().run()}><Code2 size={17} /></ToolbarButton>
         <ToolbarButton label={t('Horizontal rule')} onClick={() => editor.chain().focus().setHorizontalRule().run()}><Minus size={17} /></ToolbarButton>
+        <ToolbarButton label={t('Insert table')} active={active.table} onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}><Table2 size={17} /></ToolbarButton>
       </ToolbarGroup>
+      {active.table && (
+        <ToolbarGroup>
+          <ToolbarButton label={t('Add row below')} onClick={() => editor.chain().focus().addRowAfter().run()}><BetweenHorizontalEnd size={17} /></ToolbarButton>
+          <ToolbarButton label={t('Add column to the right')} onClick={() => editor.chain().focus().addColumnAfter().run()}><BetweenVerticalEnd size={17} /></ToolbarButton>
+          <ToolbarButton label={t('Delete row')} onClick={() => editor.chain().focus().deleteRow().run()}><Minus size={17} /></ToolbarButton>
+          <ToolbarButton label={t('Delete column')} onClick={() => editor.chain().focus().deleteColumn().run()}><Minus size={17} className="rotate-90" /></ToolbarButton>
+          <ToolbarButton label={t('Delete table')} onClick={() => editor.chain().focus().deleteTable().run()}><Trash2 size={17} /></ToolbarButton>
+        </ToolbarGroup>
+      )}
       <ToolbarGroup>
         <ToolbarButton label={t('Undo')} onClick={() => editor.chain().focus().undo().run()}><Undo2 size={17} /></ToolbarButton>
         <ToolbarButton label={t('Redo')} onClick={() => editor.chain().focus().redo().run()}><Redo2 size={17} /></ToolbarButton>

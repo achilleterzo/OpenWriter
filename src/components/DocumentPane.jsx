@@ -10,12 +10,17 @@ import FindBar from './FindBar.jsx'
 import { Annotations } from '../lib/annotationExtension.js'
 import { Search } from '../lib/searchExtension.js'
 import { KeepSelection } from '../lib/keepSelectionExtension.js'
-import { DocumentImage } from '../lib/imageExtension.js'
+import { DocumentImage, markdownDestination } from '../lib/imageExtension.js'
+import { MathBlock, MathInline } from '../lib/mathExtensions.js'
+import { AlertBlockquote } from '../lib/alertExtension.js'
 import { PendingChanges, acceptAll, getPending, pendingKey, rejectAll, restorePending } from '../lib/pendingChangesExtension.js'
 import { useEditorState } from '@tiptap/react'
 import Link from '@tiptap/extension-link'
 import { TaskItem, TaskList } from '@tiptap/extension-list'
+import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import { FrontMatter, HtmlBlock, HtmlInline } from '../lib/rawMarkdownExtensions.js'
+import { FootnoteDefinition, FootnoteRef } from '../lib/footnoteExtensions.js'
+import { MarkdownListItem } from '../lib/listItemExtension.js'
 import { mergeAttributes } from '@tiptap/core'
 import SelectionToolbar from './SelectionToolbar.jsx'
 import ChangeMarkers from './ChangeMarkers.jsx'
@@ -38,6 +43,18 @@ const toBase64 = (file) => new Promise((resolve, reject) => {
 const DocumentLink = Link.configure({ openOnClick: false }).extend({
   renderHTML({ HTMLAttributes }) {
     return ['a', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, { title: t('{target} — Ctrl+click to open', { target: HTMLAttributes.href }) }), 0]
+  },
+  renderMarkdown(node, helpers) {
+    const href = node.attrs?.href ?? ''
+    const title = node.attrs?.title ?? ''
+    const text = helpers.renderChildren(node)
+    return title ? `[${text}](${markdownDestination(href)} "${title}")` : `[${text}](${markdownDestination(href)})`
+  },
+  // Un link che racchiude solo un'immagine diventa un'immagine con il suo link (vedi imageExtension.js).
+  parseMarkdown(token, helpers) {
+    const only = token.tokens?.length === 1 && token.tokens[0].type === 'image' ? token.tokens[0] : null
+    if (only) return helpers.createNode('image', { src: only.href, title: only.title, alt: only.text, href: token.href, linkTitle: token.title || null })
+    return helpers.applyMark('link', helpers.parseInline(token.tokens || []), { href: token.href, title: token.title || null })
   },
 })
 
@@ -121,16 +138,27 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
     },
     extensions: [
       DocumentImage.configure({ allowBase64: true, resolveSource: (src) => displaySource(src, context.current.documentPath) }),
-      StarterKit.configure({ heading: false, code: false, link: false }),
+      StarterKit.configure({ heading: false, code: false, link: false, listItem: false, blockquote: false }),
+      AlertBlockquote,
+      MarkdownListItem,
       DocumentLink,
       // Un link può racchiudere codice in linea ([`file.md`](url)): nello schema predefinito il codice esclude ogni altro marchio e il Markdown non sarebbe valido.
       Code.extend({ excludes: 'bold italic strike' }),
       Heading.configure({ levels: [1, 2, 3, 4, 5, 6, 7] }),
       TaskList,
       TaskItem.configure({ nested: true }),
+      // Tabelle GFM: senza queste estensioni le righe con "|" sparivano all'apertura (e quindi anche dal file al salvataggio).
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
       FrontMatter,
       HtmlBlock,
       HtmlInline,
+      FootnoteRef,
+      MathInline,
+      MathBlock,
+      FootnoteDefinition,
       Markdown,
       Annotations.configure({ onSelect: (id) => onNoteSelect?.(id) }),
       Search,
