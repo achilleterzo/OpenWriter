@@ -20,6 +20,7 @@ const { createFontsStore } = require('./fonts.cjs')
 const { parsePdf, MARKER } = require('./pdf-import.cjs')
 const { createBrowserHistory } = require('./browser-history.cjs')
 const { createReferencesStore } = require('./project-references.cjs')
+const projectPack = require('./project-pack.cjs')
 const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-links.cjs')
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
@@ -603,6 +604,47 @@ ipcMain.handle('projects:remove-icon', (_event, directory) => {
   return true
 })
 // Copia il contesto per l'assistente (context.md, gli altri .md di istruzioni e le skill in .ow) da un progetto a un altro.
+// Configurazione condivisibile del progetto (contesto, skill, impostazioni; vedi project-pack.cjs): si esporta in un file e si importa in un altro progetto.
+ipcMain.handle('projects:export-setup', async (_event, { directory } = {}) => {
+  const { target, file } = projectFileFor(directory)
+  const settings = file.getSettings()
+  const base = (settings.name || path.basename(target)).replace(/[\\/:*?"<>|\r\n]+/g, ' ').trim().slice(0, 60) || 'project'
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: t('Export the project setup'),
+    defaultPath: path.join(projectPath || target, `${base} - setup.json`),
+    filters: [{ name: t('OpenWriter project setup'), extensions: ['json'] }],
+  })
+  if (result.canceled || !result.filePath) return null
+  const pack = projectPack.buildPack({ settings, directory: target, appVersion: app.getVersion() })
+  await fs.writeFile(result.filePath, JSON.stringify(pack, null, 2), 'utf8')
+  return { path: result.filePath, ...projectPack.summarize({ ...pack, exportedAt: pack.exportedAt, app: pack.app, instructionFiles: pack.instructionFiles, skills: pack.skills }) }
+})
+// Importazione in due tempi: si sceglie e si legge il file (con un riepilogo da mostrare), poi si applica con le opzioni scelte.
+const pendingSetups = new Map()
+ipcMain.handle('projects:import-setup-choose', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: t('Import a project setup'),
+    properties: ['openFile'],
+    filters: [{ name: t('OpenWriter project setup'), extensions: ['json'] }],
+  })
+  if (result.canceled || !result.filePaths[0]) return null
+  const stat = await fs.stat(result.filePaths[0])
+  if (stat.size > 5 * 1024 * 1024) throw new Error(t('The setup file is too large'))
+  const pack = projectPack.parsePack(await fs.readFile(result.filePaths[0], 'utf8'))
+  const id = require('node:crypto').randomUUID()
+  if (pendingSetups.size >= 5) pendingSetups.delete(pendingSetups.keys().next().value)
+  pendingSetups.set(id, pack)
+  return { id, fileName: path.basename(result.filePaths[0]), ...projectPack.summarize(pack) }
+})
+ipcMain.handle('projects:import-setup-apply', (_event, { id, directory, mode, overwrite, applySettings } = {}) => {
+  const pack = pendingSetups.get(String(id))
+  if (!pack) throw new Error(t('The setup file is no longer loaded: choose it again'))
+  const { target, file } = projectFileFor(directory)
+  const outcome = projectPack.applyPack({ pack, file, directory: target, mode: mode === 'append' ? 'append' : 'replace', overwrite: overwrite === true, applySettings: applySettings !== false })
+  pendingSetups.delete(String(id))
+  if (projectPath && path.resolve(projectPath).toLowerCase() === target.toLowerCase()) applySpellcheck()
+  return outcome
+})
 ipcMain.handle('projects:copy-context', (_event, { from, to, mode } = {}) => {
   const source = projectFileFor(from)
   const destination = projectFileFor(to)
