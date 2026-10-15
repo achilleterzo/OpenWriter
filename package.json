@@ -10,7 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "start": "electron .",
-    "lint": "node --check electron/main.cjs && node --check electron/ai-providers.cjs && node --check electron/chat-store.cjs && node --check electron/notes-store.cjs && node --check electron/project-file.cjs && node --check electron/project-tools.cjs && node --check electron/images.cjs && node --check electron/menu.cjs && node --check electron/i18n.cjs && node --check electron/projects.cjs && node --check electron/project-owner.cjs && node --check electron/skills-store.cjs && node --check electron/memory-store.cjs && node --check electron/project-links.cjs && node --check electron/project-icon.cjs && node --check electron/atomic-write.cjs && node --check electron/document-images.cjs && node --check electron/preload.cjs",
+    "lint": "node --check electron/main.cjs && node --check electron/ai-providers.cjs && node --check electron/chat-store.cjs && node --check electron/notes-store.cjs && node --check electron/project-file.cjs && node --check electron/project-tools.cjs && node --check electron/images.cjs && node --check electron/menu.cjs && node --check electron/i18n.cjs && node --check electron/projects.cjs && node --check electron/project-owner.cjs && node --check electron/skills-store.cjs && node --check electron/memory-store.cjs && node --check electron/project-links.cjs && node --check electron/project-icon.cjs && node --check electron/atomic-write.cjs && node --check electron/document-images.cjs && node --check electron/fonts.cjs && node --check electron/pdf-import.cjs && node --check electron/preload.cjs",
     "test": "npm run build",
     "dist:desktop": "npm run build && electron-builder --win",
     "dist:mac": "npm run build && electron-builder --mac",
@@ -23,6 +23,14 @@
     "pdf-parse": "^1.1.1"
   },
   "devDependencies": {
+    "@fontsource/eb-garamond": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/lora": "^5.3.0",
+    "@fontsource/merriweather": "^5.3.0",
+    "@fontsource/source-sans-3": "^5.3.1",
+    "@fontsource/source-serif-4": "^5.3.1",
     "@mozilla/readability": "^0.6.0",
     "@tiptap/core": "^3.29.2",
     "@tiptap/extension-code": "^3.29.2",
