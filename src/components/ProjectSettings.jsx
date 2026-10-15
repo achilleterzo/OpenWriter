@@ -208,6 +208,8 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
         <SkillsManager scope="project" projectPath={projectPath} onChanged={onChanged} />
       </div>
 
+      <ShareSetup target={projectPath || null} onImported={() => { onChanged?.(); setReloadToken((value) => value + 1) }} />
+
       <CopyContext target={projectPath || null} onCopied={() => { onChanged?.(); setReloadToken((value) => value + 1) }} />
 
       <div className="flex items-center gap-3">
@@ -216,6 +218,85 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
         {error && <span className="text-sm text-rose-400">{error}</span>}
       </div>
     </section>
+  )
+}
+
+// Esporta la configurazione del progetto (contesto, skill, impostazioni) in un file e la importa da uno: per passare ad altri un modo standard di lavorare.
+// L'importazione segue la copia del contesto: il contesto sostituisce o si aggiunge, i file e le skill già presenti restano (a meno di "sostituisci").
+function ShareSetup({ target, onImported }) {
+  const [directory, setDirectory] = useState(target)
+  const [pending, setPending] = useState(null)
+  const [mode, setMode] = useState('replace')
+  const [overwrite, setOverwrite] = useState(false)
+  const [applySettings, setApplySettings] = useState(true)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (target) setDirectory(target)
+    else electronAPI.getProject().then(setDirectory).catch(() => {})
+  }, [target])
+
+  async function run(action) {
+    setBusy(true)
+    setMessage('')
+    setError('')
+    try { await action() } catch (reason) { setError(reason.message) } finally { setBusy(false) }
+  }
+
+  const exportSetup = () => run(async () => {
+    const result = await electronAPI.exportProjectSetup(directory)
+    if (result) setMessage(t('Setup exported: {name}', { name: result.path.split(/[\\/]/).pop() }))
+  })
+
+  const chooseSetup = () => run(async () => {
+    const chosen = await electronAPI.chooseProjectSetup()
+    if (chosen) setPending(chosen)
+  })
+
+  const applySetup = () => run(async () => {
+    const result = await electronAPI.applyProjectSetup({ id: pending.id, directory, mode, overwrite, applySettings })
+    setPending(null)
+    setMessage(t('Setup imported: {written} files written, {skipped} left as they were', { written: result.written, skipped: result.skipped }))
+    onImported?.()
+  })
+
+  if (!directory) return null
+
+  return (
+    <div className="grid gap-2 rounded-lg border border-slate-800 p-3 text-sm text-slate-300">
+      <span>{t('Share the project setup')}</span>
+      <span className="text-xs text-slate-500">{t('Exports the context, the other instruction files, the project skills and the settings (languages, spell checker, editor font, default skills) to a single file you can give to others. History, conversations, notes, memory, links and references are never included.')}</span>
+      {!pending && (
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="button" disabled={busy} className="rounded-md bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-100 transition hover:bg-slate-600 disabled:opacity-50" onClick={exportSetup}>{t('Export setup…')}</button>
+          <button type="button" disabled={busy} className="rounded-md bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-100 transition hover:bg-slate-600 disabled:opacity-50" onClick={chooseSetup}>{t('Import setup…')}</button>
+        </div>
+      )}
+      {pending && (
+        <div className="grid gap-2 rounded-md border border-slate-700 bg-slate-900/60 p-3">
+          <span className="text-xs text-slate-400">{pending.fileName}{pending.app ? ` · ${pending.app}` : ''}</span>
+          <ul className="list-disc pl-5 text-xs text-slate-400">
+            <li>{t('Context: {count} characters', { count: pending.contextCharacters })}</li>
+            <li>{t('Instruction files: {names}', { names: pending.instructionFiles.join(', ') || t('None') })}</li>
+            <li>{t('Skills: {names}', { names: pending.skills.join(', ') || t('None') })}</li>
+          </ul>
+          <div className="flex flex-wrap gap-4 text-xs text-slate-400">
+            <label className="flex items-center gap-1.5"><input type="radio" name="setup-mode" className="accent-accent-500" checked={mode === 'replace'} onChange={() => setMode('replace')} /> {t('Replace the current context')}</label>
+            <label className="flex items-center gap-1.5"><input type="radio" name="setup-mode" className="accent-accent-500" checked={mode === 'append'} onChange={() => setMode('append')} /> {t('Add after the current context')}</label>
+          </div>
+          <label className="flex items-center gap-1.5 text-xs text-slate-400"><input type="checkbox" className="accent-accent-500" checked={applySettings} onChange={(event) => setApplySettings(event.target.checked)} /> {t('Also apply the settings (languages, spell checker, editor font, default skills)')}</label>
+          <label className="flex items-center gap-1.5 text-xs text-slate-400"><input type="checkbox" className="accent-accent-500" checked={overwrite} onChange={(event) => setOverwrite(event.target.checked)} /> {t('Replace instruction files and skills that already exist')}</label>
+          <div className="flex items-center gap-3">
+            <button type="button" disabled={busy} className="rounded-md bg-accent-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-accent-500 disabled:opacity-50" onClick={applySetup}>{t('Import')}</button>
+            <button type="button" disabled={busy} className="rounded-md px-3 py-1.5 text-xs text-slate-400 transition hover:bg-slate-800 hover:text-slate-50" onClick={() => setPending(null)}>{t('Cancel')}</button>
+          </div>
+        </div>
+      )}
+      {message && <span className="text-xs text-emerald-400">{message}</span>}
+      {error && <span className="text-xs text-rose-400">{error}</span>}
+    </div>
   )
 }
 
