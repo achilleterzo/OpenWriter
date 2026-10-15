@@ -13,8 +13,8 @@ const READ_ONLY_MESSAGE = 'This document is the read-only original of a converte
 const optionSchema = { anyOf: [{ type: 'string' }, { type: 'object', properties: { label: { type: 'string' }, description: { type: 'string' } }, required: ['label'] }] }
 
 export const TOOL_DEFINITIONS = [
-  { group: 'files', name: 'list_directory', required: [], description: 'Lists the files and folders of a project directory (the .ow folder is excluded), with size and last modification date and time. Folders first by default; with sort=date the most recently modified come first. The date of a file is when it was last saved on disk, not the unsaved changes in an open tab.', parameters: { path: 'optional: path relative to the project root (default: the root)', sort: 'optional: "name" (default: folders first, then files by name) or "date" (most recently modified first, folders and files together)' } },
-  { group: 'files', name: 'read_file', required: ['path'], description: 'Reads the text of a project file (.md, .txt, .docx, .pdf, …). Long files are read in chunks. If the file is open in a tab it returns the CURRENT editor text, including unsaved changes (yours too).', parameters: { path: 'path relative to the project root', offset: 'optional: character to start from', limit: 'optional: maximum number of characters' } },
+  { group: 'files', name: 'list_directory', required: [], description: 'Lists the files and folders of a project directory (the .ow folder is excluded), with size and last modification date and time. Folders first by default; with sort=date the most recently modified come first. The date of a file is when it was last saved on disk, not the unsaved changes in an open tab.', parameters: { path: 'optional: path relative to the project root (default: the root); "@name/…" lists a reference folder (read-only, see the root listing)', sort: 'optional: "name" (default: folders first, then files by name) or "date" (most recently modified first, folders and files together)' } },
+  { group: 'files', name: 'read_file', required: ['path'], description: 'Reads the text of a project file (.md, .txt, .docx, .pdf, …). Long files are read in chunks. If the file is open in a tab it returns the CURRENT editor text, including unsaved changes (yours too).', parameters: { path: 'path relative to the project root, or "@name/file.md" for a file in a reference folder (read-only)', offset: 'optional: character to start from', limit: 'optional: maximum number of characters' } },
   { group: 'files', name: 'list_versions', required: [], description: 'Lists the saved versions (history) of a project document, newest first, with id, date, kind (manual or automatic), label and size. Versions are archived before the assistant edits a document and at every save. Use it to see how a document changed or to find an earlier text.', parameters: { path: 'optional: document path relative to the project root (default: the active document)' } },
   { group: 'files', name: 'read_version', required: ['id'], description: 'Reads the text of a saved version of a document (id from list_versions). Read-only: it never changes the document; if the user wants an earlier text back, use it to rewrite or restore the passage with the editing tools. Long versions are read in chunks.', parameters: { id: 'version id from list_versions', path: 'optional: document path relative to the project root (default: the active document)', offset: 'optional: character to start from', limit: 'optional: maximum number of characters' } },
   { group: 'create', name: 'create_directory', required: ['path'], description: 'Creates a folder (and any missing parent folders) in the project. Does nothing if it already exists.', parameters: { path: 'path of the folder, relative to the project root' } },
@@ -40,6 +40,7 @@ export const TOOL_DEFINITIONS = [
   { group: 'web', name: 'web_search', required: ['query'], description: 'Searches the web (DuckDuckGo) in a browser tab. Returns titles, addresses and previews.', parameters: { query: 'text to search for', tab: 'optional: tab number or id', new_tab: 'optional: true to search in a new tab' } },
   { group: 'web', name: 'browser_navigate', required: ['action'], description: 'Moves through the history of a tab: back, forward or reload. Returns the resulting page.', parameters: { action: 'back | forward | reload', tab: 'optional: tab number or id' } },
   { group: 'web', name: 'browser_follow_link', required: ['link'], description: 'Follows a link of the page open in a tab, navigating in the same tab. Identify it by the number in the "Links" list of the last read, by its text (even partial) or by an address, also relative to the page.', parameters: { link: 'number, text or address of the link', tab: 'optional: tab number or id' } },
+  { group: 'web', name: 'browser_history', required: [], description: 'Lists the pages YOU (the assistant) opened in the browser in this project, most recent first, with title, address and time. It does not include the pages the user visited. Use it to find again a page you already consulted.', parameters: { query: 'optional: only entries whose title or address contains this text', limit: 'optional: how many entries (default 30, max 100)' } },
   { group: 'web', name: 'web_read', required: [], description: 'Keeps reading the page of a tab beyond the first characters, after web_open or browser_read.', parameters: { offset: 'character to resume from (given in the previous result)', tab: 'optional: tab number or id' } },
   { group: 'vision', name: 'screenshot_document', required: [], description: 'Takes a screenshot of the open document as the user sees it (the visible part: layout, highlights, notes). Useful to judge its visual look.', parameters: { path: 'optional: document (default: the active one)' } },
   { group: 'vision', name: 'screenshot_browser', required: [], description: 'Takes a screenshot of a browser tab: the page as rendered, with images, charts and layout.', parameters: { tab: 'optional: tab number or id (default: the foreground one or the last used)' } },
@@ -110,7 +111,7 @@ export function toolsPrompt(enabled, { documentPath, native = false, maxSteps = 
   const editHint = enabled.edit ? `${enabled.loose ? 'Change the documents open in tabs' : 'To modify an existing document that is not open, first open it with open_document; then change it'} with replace_text or insert_text (small changes) or replace_document (full rewrite). Do not say that the files are read-only: you edit through these tools. When the user asks you to change, fix or rewrite a document, make the change with the tools instead of only describing it.` : ''
   const memoryHint = enabled.memory ? 'The project memory (listed in the conversation) holds lasting information saved by the user or by you: take it into account. Save new important information with remember when you learn it (a decision, a term, a style rule, a fact about the project), linking the files it applies to; refine your own entries with update_memory instead of duplicating them. Keep entries few and short.' : ''
   const notesHint = enabled.notes ? "If the user asks to review or reconsider the notes: read them with list_notes, update YOUR still-open notes with update_note (text and proposed correction) and answer the user's notes by adding new ones with add_note. Accepting or rejecting a suggestion is always up to the user. When reviewing, add few, meaningful notes, all in ONE add_note call (\"notes\"), and give each correction as the complete rewritten passage in \"replacement\". If the user asks you to fix or rewrite the text, edit it directly with replace_text instead of leaving notes. Notes you have dealt with must not stay open: replace_text closes the open notes on the passage it replaces, and for any other note you have addressed (for example after replace_document or a different edit) call update_note with status \"resolved\"." : ''
-  const webHint = enabled.web ? 'To know what the user is looking at in the browser use browser_tabs and then browser_read on the tab concerned; to search or open pages use web_search and web_open, choosing the tab with the tab parameter. To follow a link of a page use browser_follow_link (link number or text).' : ''
+  const webHint = enabled.web ? 'To know what the user is looking at in the browser use browser_tabs and then browser_read on the tab concerned; to search or open pages use web_search and web_open, choosing the tab with the tab parameter. To follow a link of a page use browser_follow_link (link number or text). To find again a page you already opened in this project use browser_history.' : ''
   const visionHint = enabled.vision ? 'You can look at images and screenshots with view_image, screenshot_document and screenshot_browser: use them when the visual look matters (layout, charts, images in pages). Images arrive as attachments: describe only what you really see.' : ''
   const askHint = enabled.ask ? 'When you need a decision or a piece of information that boils down to a few alternatives (which topic to cover, which way to go, which variant to prefer), use ask_choice instead of listing the options in the text, then go on according to the answer. Do not ask for needless confirmations.' : ''
   const activeDocument = documentPath === undefined ? '' : `Active document: ${documentPath || 'not saved yet'}.`
@@ -258,6 +259,7 @@ export function describeCall(name, args = {}) {
     case 'insert_text': return t('Inserting text')
     case 'web_search': return t('Searching the web: {query}', { query: short(args.query) })
     case 'browser_tabs': return t('Looking at the browser tabs')
+    case 'browser_history': return t('Checking the pages already consulted')
     case 'browser_read': return args.tab ? t('Reading browser tab {tab}', { tab: args.tab }) : t('Reading the browser tab')
     case 'screenshot_document': return t('Looking at the document')
     case 'screenshot_browser': return t('Looking at the browser tab')
@@ -466,7 +468,7 @@ export function createToolRunner(context) {
     async list_directory(args) {
       needFolder()
       const sort = text(args.sort).toLowerCase() === 'date' ? 'date' : 'name'
-      const { path, entries, truncated, linked = [] } = await api.listDirectoryForAi(text(args.path), { sort })
+      const { path, entries, truncated, linked = [], references = [] } = await api.listDirectoryForAi(text(args.path), { sort })
       // Last modification in the user's local time, minute precision.
       const when = (modified) => {
         if (!Number.isFinite(modified)) return ''
@@ -476,9 +478,11 @@ export function createToolRunner(context) {
       }
       // Documents outside the project folder linked to it (only listed at the project root): opened and edited where they are.
       const linkedLines = linked.length ? ['', 'Linked documents (outside the project folder, edited in place; open or read them with their full path):', ...linked.map((link) => `  ${link.path}${link.missing ? '  (file not found)' : link.modified ? `  (modified ${when(link.modified)})` : ''}`)] : []
-      if (!entries.length) return [`${path}: empty folder`, ...linkedLines].join('\n')
+      // Reference folders (outside the project, READ-ONLY; only listed at the project root): read them with the @name/ prefix.
+      const referenceLines = references.length ? ['', 'Reference folders (outside the project, READ-ONLY: list and read them with list_directory / read_file using the path @name/…; you cannot change them):', ...references.map((reference) => `  @${reference.name}/  (${reference.path}${reference.missing ? ' — folder not found: the user has to relink it' : ''})`)] : []
+      if (!entries.length) return [`${path}: empty folder`, ...linkedLines, ...referenceLines].join('\n')
       const header = sort === 'date' ? `${path} (most recently modified first):` : `${path}:`
-      return [header, ...entries.map((entry) => (entry.type === 'directory' ? `  ${entry.name}/  (${[entry.project ? 'sub-project: it has its own instructions, notes and history' : '', entry.modified ? `modified ${when(entry.modified)}` : ''].filter(Boolean).join('; ') || 'folder'})` : `  ${entry.name} (${entry.size ?? '?'} B${entry.modified ? `, modified ${when(entry.modified)}` : ''})`)), truncated ? '… list truncated' : ''].filter(Boolean).concat(linkedLines).join('\n')
+      return [header, ...entries.map((entry) => (entry.type === 'directory' ? `  ${entry.name}/  (${[entry.project ? 'sub-project: it has its own instructions, notes and history' : '', entry.modified ? `modified ${when(entry.modified)}` : ''].filter(Boolean).join('; ') || 'folder'})` : `  ${entry.name} (${entry.size ?? '?'} B${entry.modified ? `, modified ${when(entry.modified)}` : ''})`)), truncated ? '… list truncated' : ''].filter(Boolean).concat(linkedLines, referenceLines).join('\n')
     },
 
     async read_file(args) {
@@ -818,6 +822,14 @@ export function createToolRunner(context) {
       const tabs = await context.listBrowserTabs()
       if (!tabs.length) return 'No browser tab open.'
       return [WEB_WARNING, ...tabs.map((tab) => `${tab.number}. [${tab.id}]${tab.active ? ' (foreground)' : ''} ${tab.title || '(untitled)'} — ${tab.url || 'about:blank'}`)].join('\n')
+    },
+
+    async browser_history(args) {
+      const limit = Math.min(100, Math.max(1, Math.round(Number(args.limit)) || 30))
+      const query = text(args.query).trim().toLowerCase()
+      const entries = (await context.api.browserHistory.list({ agent: true })).filter((entry) => !query || entry.url.toLowerCase().includes(query) || String(entry.title || '').toLowerCase().includes(query))
+      if (!entries.length) return query ? 'No page in your browsing history matches.' : 'You have not opened any page in the browser in this project yet.'
+      return [WEB_WARNING, `Pages you opened, most recent first (${Math.min(limit, entries.length)} of ${entries.length}):`, ...entries.slice(0, limit).map((entry, index) => `${index + 1}. ${entry.title || '(untitled)'} — ${entry.url} (${entry.visitedAt})`)].join('\n')
     },
 
     async browser_read(args) {

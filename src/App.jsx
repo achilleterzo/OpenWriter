@@ -95,7 +95,14 @@ async function restoreTabs(session) {
       console.warn('Scheda non ripristinata', saved?.title, error)
     }
   }
-  return tabs.length ? tabs : [createTab()]
+  const result = tabs.length ? tabs : [createTab()]
+  // Le schede del browser tornano dove stavano, alla pagina in cui erano.
+  for (const saved of [...(Array.isArray(session?.browser) ? session.browser : [])].sort((left, right) => left.index - right.index)) {
+    if (typeof saved?.id !== 'string') continue
+    const url = /^https?:\/\//i.test(saved.url) ? saved.url : ''
+    result.splice(Math.min(Math.max(Number(saved.index) || 0, 0), result.length), 0, { ...createBrowserTab(), id: saved.id, title: String(saved.title || t('Browser')), initialUrl: url })
+  }
+  return result
 }
 
 export default function App() {
@@ -110,6 +117,8 @@ export default function App() {
   const [sideTab, setSideTab] = useState('files')
   const [expandedPaths, setExpandedPaths] = useState(() => new Set())
   const [explorerRefresh, setExplorerRefresh] = useState(0)
+  // Cambia quando le modifiche dell'assistente da rivedere vengono accettate o rifiutate: serve a ridisegnare il pulsante "Salva tutto".
+  const [, setPendingTick] = useState(0)
   const [memoryVersion, setMemoryVersion] = useState(0)
   const [historyVersion, setHistoryVersion] = useState(0)
   const [status, setStatus] = useState('')
@@ -169,10 +178,15 @@ export default function App() {
       assistantOpen: latest.current.assistantOpen,
       conversationId: latest.current.conversationId,
       chatContext: { includeActive: latest.current.contextPins.includeActive, pinnedIds: latest.current.contextPins.pinnedIds.filter((id) => currentTabs.some((tab) => tab.id === id)) },
+      // Schede del browser: indirizzo attuale e posizione tra le schede. Si riaprono alla pagina dov'erano (non la cronologia di navigazione).
+      browser: currentTabs.map((tab, index) => ({ tab, index })).filter(({ tab }) => tab.kind === 'browser').map(({ tab, index }) => ({ id: tab.id, title: tab.title, url: browserControllers.current.get(tab.id)?.info().url || tab.initialUrl || '', index })),
+      activeBrowserId: currentTabs.some((tab) => tab.id === currentActive && tab.kind === 'browser') ? currentActive : null,
       tabs: currentTabs.filter(isDocument).map((tab) => {
         const editor = currentEditors[tab.id]
         // Bozze e documenti mai salvati conservano il testo; gli altri si rileggono dal file.
-        const keepText = (tab.dirty || !tab.sourcePath) && editor
+        // Se l'editor non è ancora pronto (appena riaperta la sessione) il testo non salvato si tiene com'è: altrimenti un salvataggio troppo presto lo perderebbe.
+        const unsavedText = editor ? editor.getMarkdown() : (tab.contentType === 'markdown' && typeof tab.content === 'string' && tab.content ? tab.content : undefined)
+        const keepText = (tab.dirty || !tab.sourcePath) && unsavedText !== undefined
         // Modifiche dell'assistente ancora da rivedere (o non ancora rimesse in sosta dopo la riapertura): restano nella sessione.
         const pending = (editor && serializePending(editor)) || tab.pending
         return {
@@ -187,7 +201,7 @@ export default function App() {
           ...(pending ? { pending } : {}),
           closed: Boolean(tab.closed),
           ...(tab.readOnly ? { readOnly: true } : {}),
-          ...(keepText ? { markdown: editor.getMarkdown() } : {}),
+          ...(keepText ? { markdown: unsavedText } : {}),
         }
       }),
     }
@@ -208,7 +222,7 @@ export default function App() {
   const applySession = useCallback(async (session) => {
     const restored = await restoreTabs(session)
     setTabs(restored)
-    setActiveId(restored.some((tab) => tab.id === session?.activeId) ? session.activeId : restored[0].id)
+    setActiveId(restored.some((tab) => tab.id === session?.activeBrowserId) ? session.activeBrowserId : restored.some((tab) => tab.id === session?.activeId) ? session.activeId : restored.find(isDocument)?.id ?? restored[0].id)
     setSideTab(session && 'sideTab' in session ? session.sideTab : 'files')
     setExpandedPaths(new Set(session?.expanded || []))
     setAssistantOpen(Boolean(session?.assistantOpen))
@@ -581,7 +595,7 @@ export default function App() {
       setTabs((current) => (current.some((tab) => tab.id === id && tab.pending) ? current.map((tab) => { if (tab.id !== id) return tab; const { pending, ...rest } = tab; return rest }) : current))
     },
     // Una modifica è stata accettata o rifiutata: si aggiorna la sessione.
-    pendingChanged() { scheduleSave() },
+    pendingChanged() { setPendingTick((value) => value + 1); scheduleSave() },
     promoteTab(id) {
       setTabs((current) => (current.some((tab) => tab.id === id && tab.preview) ? current.map((tab) => (tab.id === id ? { ...tab, preview: false } : tab)) : current))
     },
@@ -849,7 +863,9 @@ export default function App() {
   const workspaceRef = useRef(null)
 
   // Documenti aperti con modifiche da salvare e già associati a un file (gli altri chiederebbero dove salvare, uno per uno).
-  const unsavedTabs = (currentTabs) => currentTabs.filter((tab) => isLive(tab) && tab.dirty && tab.filePath)
+  // Un documento con modifiche dell'assistente ancora da rivedere conta come da salvare anche se il testo coincide col file: salvandolo si accettano.
+  const hasPendingEdits = (tab) => { const editor = latest.current.editors[tab.id]; return Boolean(editor && !editor.isDestroyed && getPending(editor.state).length) }
+  const unsavedTabs = (currentTabs) => currentTabs.filter((tab) => isLive(tab) && tab.filePath && (tab.dirty || hasPendingEdits(tab)))
 
   // Salva tutte le schede modificate. Le modifiche dell'assistente ancora da rivedere si accettano: con conferma, perché è una scelta irreversibile
   // per il segno "da rivedere" (il testo precedente resta comunque nella cronologia).
@@ -950,7 +966,7 @@ export default function App() {
             {tabs.map((tab) => (tab.kind === 'image'
               ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab.id} onStatus={setStatus} onInteract={workspace.promoteTab} />
               : tab.kind === 'browser'
-              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
+              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
               : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} />))}
           </section>
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">

@@ -18,6 +18,8 @@ const { planImageMove, applyImageMove } = require('./document-images.cjs')
 const { writeFileAtomic } = require('./atomic-write.cjs')
 const { createFontsStore } = require('./fonts.cjs')
 const { parsePdf, MARKER } = require('./pdf-import.cjs')
+const { createBrowserHistory } = require('./browser-history.cjs')
+const { createReferencesStore } = require('./project-references.cjs')
 const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-links.cjs')
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
@@ -40,9 +42,16 @@ const storePath = () => projectPath || mainDirectory()
 const projectFile = createProjectFile({ getProjectPath: storePath, getMainPath: mainDirectory })
 const chatStore = createChatStore({ getProjectPath: storePath })
 const memoryStore = createMemoryStore({ getProjectPath: storePath })
+// Cronologia del browser integrato: una per progetto (senza progetto aperto, quella del progetto main).
+const browserHistory = createBrowserHistory({ getProjectPath: storePath })
+// Quella delle pagine visitate dall'assistente: a parte, non si mischia con la cronologia dell'utente.
+const agentBrowserHistory = createBrowserHistory({ getProjectPath: storePath, fileName: 'browser-history-agent.json' })
+const historyFor = (agent) => (agent ? agentBrowserHistory : browserHistory)
 const notesStore = createNotesStore({ getProjectPath: storePath, getMainPath: mainDirectory })
 // Documenti esterni collegati al progetto aperto (senza copiarli).
 const linksStore = createLinksStore({ getProjectPath: () => projectPath })
+// Cartelle di riferimento (fuori dal progetto, solo lettura per l'assistente).
+const referencesStore = createReferencesStore({ getProjectPath: () => projectPath })
 const skillsStore = createSkillsStore({ getGlobalDirectory: () => path.join(app.getPath('userData'), 'skills') })
 const projectTools = createProjectTools({ getProjectPath: () => projectPath, readDocument: (filePath) => readDocument(filePath) })
 const aiRequests = new Map()
@@ -685,15 +694,30 @@ ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools }) =
   }
 })
 ipcMain.handle('ai:cancel', (_event, requestId) => { aiRequests.get(requestId)?.abort(); return true })
+// Gli strumenti di lettura valgono anche per le cartelle di riferimento: un percorso `@sigla/…` si legge dentro quella cartella (e solo lì).
+function toolsFor(given) {
+  const reference = projectPath ? referencesStore.resolve(given) : null
+  if (!reference) return { tools: projectTools, relative: given, prefix: '' }
+  return { tools: createProjectTools({ getProjectPath: () => reference.root, readDocument: (filePath) => readDocument(filePath) }), relative: reference.relative, prefix: `@${reference.name}` }
+}
+const withPrefix = (prefix, relative) => (prefix ? (relative && relative !== '.' ? `${prefix}/${relative}` : `${prefix}/`) : relative)
+
 ipcMain.handle('tools:list-directory', async (_event, relativePath, options = {}) => {
-  const result = await projectTools.listDirectory(relativePath, { sort: options?.sort === 'date' ? 'date' : 'name' })
-  if (result.path === '.') result.linked = linksStore.list()
+  const { tools, relative, prefix } = toolsFor(relativePath)
+  const result = await tools.listDirectory(relative, { sort: options?.sort === 'date' ? 'date' : 'name' })
+  if (prefix) result.path = withPrefix(prefix, result.path)
+  else if (result.path === '.') { result.linked = linksStore.list(); result.references = referencesStore.list() }
   return result
 })
-ipcMain.handle('tools:read-file', (_event, { path: relativePath, offset, limit } = {}) => projectTools.readFile(relativePath, { offset, limit, absolute: linksStore.has(relativePath) }))
+ipcMain.handle('tools:read-file', async (_event, { path: relativePath, offset, limit } = {}) => {
+  const { tools, relative, prefix } = toolsFor(relativePath)
+  const result = await tools.readFile(relative, { offset, limit, absolute: !prefix && linksStore.has(relativePath) })
+  if (prefix) result.path = withPrefix(prefix, result.path)
+  return result
+})
 ipcMain.handle('ai:capabilities', (_event, model) => aiProviders.getCapabilities(model))
 ipcMain.handle('images:fetch', (_event, url) => images.fetchImage(String(url)))
-ipcMain.handle('images:read-file', async (_event, relativePath) => images.prepareBuffer(await projectTools.readImage(relativePath)))
+ipcMain.handle('images:read-file', async (_event, relativePath) => { const { tools, relative } = toolsFor(relativePath); return images.prepareBuffer(await tools.readImage(relative)) })
 // Schermate: solo la finestra dell'app o le sue schede browser (webview), mai altro.
 ipcMain.handle('images:capture-page', async (_event, rect) => {
   const area = { x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)), width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)) }
@@ -704,6 +728,26 @@ ipcMain.handle('images:capture-webview', async (_event, contentsId) => {
   if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) throw new Error(t('Invalid browser tab'))
   return images.prepareImage(await contents.capturePage())
 })
+// Schermata della scheda del browser, a piena risoluzione, salvata come PNG in <progetto>/screenshots/. Restituisce il percorso del file.
+ipcMain.handle('browser:save-screenshot', async (_event, { contentsId, title } = {}) => {
+  if (!projectPath) throw new Error(t('Open a project folder to save screenshots'))
+  const contents = webContents.fromId(Number(contentsId))
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) throw new Error(t('Invalid browser tab'))
+  const image = await contents.capturePage()
+  if (image.isEmpty()) throw new Error(t('Empty image or unsupported format'))
+  const directory = path.join(projectPath, 'screenshots')
+  await fs.mkdir(directory, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
+  const label = String(title || '').replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'screenshot'
+  let target = path.join(directory, `${label}-${stamp}.png`)
+  for (let counter = 2; fsSync.existsSync(target); counter += 1) target = path.join(directory, `${label}-${stamp}-${counter}.png`)
+  await fs.writeFile(target, image.toPNG())
+  return target
+})
+ipcMain.handle('browser-history:list', (_event, { agent } = {}) => historyFor(agent === true).list())
+ipcMain.handle('browser-history:add', (_event, { agent, ...entry } = {}) => historyFor(agent === true).add(entry))
+ipcMain.handle('browser-history:remove', (_event, url, { agent } = {}) => historyFor(agent === true).remove(url))
+ipcMain.handle('browser-history:clear', (_event, { agent } = {}) => historyFor(agent === true).clear())
 ipcMain.handle('chat:save-attachment', (_event, attachment) => chatStore.saveAttachment(attachment || {}))
 ipcMain.handle('chat:get-attachment', (_event, id) => chatStore.getAttachment(id))
 // File allegati dall'utente in chat (scelti col dialogo o trascinati, anche fuori dal progetto): solo immagini e PDF,
@@ -818,6 +862,37 @@ ipcMain.handle('tools:create-project', async (_event, { name, documents } = {}) 
   if (fsSync.existsSync(target)) throw new Error(t('An item with this name already exists'))
   await fs.mkdir(target)
   return { path: target, links: writeLinksTo(target, linked) }
+})
+ipcMain.handle('references:list', () => (projectPath ? referencesStore.list() : []))
+// Aggiunge una cartella di riferimento: si sceglie col dialogo (o, per il trascinamento, si passa il percorso).
+ipcMain.handle('references:add', async (_event, directory) => {
+  if (!projectPath) throw new Error(t('No project open'))
+  let chosen = directory
+  if (!chosen) {
+    const result = await dialog.showOpenDialog(mainWindow, { title: t('Choose a reference folder'), properties: ['openDirectory'] })
+    if (result.canceled || !result.filePaths[0]) return null
+    chosen = result.filePaths[0]
+  }
+  return referencesStore.add(chosen)
+})
+// Ricollega un riferimento (di solito perché la cartella è stata spostata o rinominata): si sceglie la nuova posizione, la sigla non cambia.
+ipcMain.handle('references:update', async (_event, name) => {
+  const reference = referencesStore.get(String(name))
+  if (!reference) throw new Error(t('Reference not found'))
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: t('Choose the folder this reference should point to'),
+    defaultPath: fsSync.existsSync(path.dirname(reference.path)) ? path.dirname(reference.path) : undefined,
+    properties: ['openDirectory'],
+  })
+  if (result.canceled || !result.filePaths[0]) return null
+  return referencesStore.update(reference.name, result.filePaths[0])
+})
+ipcMain.handle('references:remove', (_event, name) => referencesStore.remove(String(name)))
+ipcMain.handle('references:reveal', async (_event, name) => {
+  const reference = referencesStore.get(String(name))
+  if (!reference || !fsSync.existsSync(reference.path)) throw new Error(t('Folder not found'))
+  const failure = await shell.openPath(reference.path)
+  if (failure) throw new Error(failure)
 })
 ipcMain.handle('links:list', () => (projectPath ? linksStore.list() : []))
 ipcMain.handle('links:remove', (_event, target) => linksStore.remove(target))
@@ -1210,6 +1285,37 @@ ipcMain.on('preferences:set', (_event, key, value) => {
 })
 app.on('before-quit', flushPreferences)
 
+// Il browser integrato mantiene i login dopo un riavvio. I cookie con scadenza li tiene già la partizione persistente; quelli "di sessione"
+// (senza scadenza: molti siti li usano per il login) Chromium li butta alla chiusura, quindi si rendono persistenti, con una scadenza di 30 giorni.
+const SESSION_COOKIE_DAYS = 30
+function keepBrowserLogins(browserSession) {
+  const sameSite = { unspecified: 'unspecified', no_restriction: 'no_restriction', lax: 'lax', strict: 'strict' }
+  browserSession.cookies.on('changed', (_event, cookie, _cause, removed) => {
+    if (removed || !cookie.session) return
+    const host = String(cookie.domain || '').replace(/^\./, '')
+    if (!host) return
+    browserSession.cookies.set({
+      url: `http${cookie.secure ? 's' : ''}://${host}${cookie.path || '/'}`,
+      name: cookie.name,
+      value: cookie.value,
+      ...(cookie.hostOnly ? {} : { domain: cookie.domain }),
+      path: cookie.path || '/',
+      secure: cookie.secure,
+      httpOnly: cookie.httpOnly,
+      sameSite: sameSite[cookie.sameSite] || 'unspecified',
+      expirationDate: Math.floor(Date.now() / 1000) + SESSION_COOKIE_DAYS * 86400,
+    }).catch(() => { /* cookie non valido (es. prefisso __Host-): resta di sessione */ })
+  })
+  // Prima di uscire si scrivono su disco, senza aspettare il salvataggio periodico di Chromium.
+  let flushed = false
+  app.on('before-quit', (event) => {
+    if (flushed) return
+    event.preventDefault()
+    flushed = true
+    Promise.race([browserSession.cookies.flushStore(), new Promise((resolve) => { setTimeout(resolve, 3000) })]).catch(() => {}).finally(() => app.quit())
+  })
+}
+
 ipcMain.handle('app:get-version', () => app.getVersion())
 // Il controllo automatico all'avvio è silenzioso (rete assente, limite di GitHub…); quello manuale segnala l'errore.
 ipcMain.handle('app:latest-release', async (_event, silent) => fetchLatestRelease().catch((error) => { if (silent) return null; throw error }))
@@ -1275,6 +1381,7 @@ app.whenReady().then(async () => {
   const browserSession = session.fromPartition(BROWSER_PARTITION)
   browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   browserSession.on('will-download', (event) => event.preventDefault())
+  keepBrowserLogins(browserSession)
   loadLanguage()
   await loadProject()
   createWindow()
