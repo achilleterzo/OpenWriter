@@ -19,6 +19,7 @@ import { FrontMatter, HtmlBlock, HtmlInline } from '../lib/rawMarkdownExtensions
 import { mergeAttributes } from '@tiptap/core'
 import SelectionToolbar from './SelectionToolbar.jsx'
 import ChangeMarkers from './ChangeMarkers.jsx'
+import SourceEditor from './SourceEditor.jsx'
 import { displaySource, isInside, dirname, resolveDocumentLink, sourceForImage } from '../lib/imagePaths.js'
 import { t } from '../i18n/index.js'
 
@@ -119,7 +120,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
       },
     },
     extensions: [
-      DocumentImage.configure({ resolveSource: (src) => displaySource(src, context.current.documentPath) }),
+      DocumentImage.configure({ allowBase64: true, resolveSource: (src) => displaySource(src, context.current.documentPath) }),
       StarterKit.configure({ heading: false, code: false, link: false }),
       DocumentLink,
       // Un link può racchiudere codice in linea ([`file.md`](url)): nello schema predefinito il codice esclude ogni altro marchio e il Markdown non sarebbe valido.
@@ -276,16 +277,10 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
       <div ref={editorArea} className="relative min-h-0 flex-1">
         {findOpen && !sourceOpen && <FindBar editor={editor} replaceMode={replaceMode} onReplaceMode={setReplaceMode} focusToken={focusToken} onClose={closeFind} />}
         {sourceOpen && (
-          <textarea
-            value={sourceText}
-            spellCheck={false}
-            aria-label={t('Markdown source')}
-            className="document-source h-full w-full resize-none border-0 bg-transparent p-6 font-mono text-sm leading-6 text-slate-200 outline-none"
-            onChange={(event) => editSource(event.target.value)}
-          />
+          <SourceEditor value={sourceText} label={t('Markdown source')} onChange={editSource} />
         )}
         {/* Qualunque operazione sul documento (anche uno scorrimento o un clic) toglie alla scheda lo stato di anteprima. */}
-        <div className={`h-full overflow-y-auto ${sourceOpen ? 'hidden' : ''}`} data-document-scroll={tab.id} onScroll={interact} onWheel={interact} onMouseDown={interact} onKeyDown={interact}>
+        <div className={`document-scroll h-full overflow-y-auto ${sourceOpen ? 'hidden' : ''}`} data-document-scroll={tab.id} onScroll={interact} onWheel={interact} onMouseDown={interact} onKeyDown={interact}>
           <EditorContent editor={editor} className="document-editor mx-auto" />
         </div>
         {!sourceOpen && <ChangeMarkers editor={editor} containerRef={editorArea} onSelectNote={onNoteSelect} />}

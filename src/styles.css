@@ -363,3 +363,71 @@ body {
   background: rgb(245 158 11 / 0.75);
   outline: 1px solid rgb(251 191 36);
 }
+
+/* Vista sorgente: numeri di riga a sinistra. La colonna dei numeri contiene una copia invisibile del testo con lo stesso carattere e la stessa larghezza,
+   così ogni numero si allinea alla prima riga visiva anche quando la riga va a capo; la textarea le sta sopra e prende l'altezza dal contenitore. */
+.document-source {
+  --source-gutter: 3.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  color: rgb(var(--slate-200));
+}
+.document-source .source-wrap { position: relative; min-height: 100%; }
+.document-source .source-lines { padding: 1.5rem 1.5rem 1.5rem 0; min-height: 100%; border-right: 0; }
+.document-source .source-line { position: relative; padding-left: var(--source-gutter); }
+.document-source .source-line-number {
+  position: absolute;
+  left: 0;
+  width: calc(var(--source-gutter) - 0.75rem);
+  text-align: right;
+  color: rgb(var(--slate-500));
+  user-select: none;
+}
+.document-source .source-line-text { display: block; visibility: hidden; white-space: pre-wrap; overflow-wrap: break-word; tab-size: 4; }
+.document-source .source-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 1.5rem 1.5rem 1.5rem var(--source-gutter);
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 4;
+}
+.document-source .source-wrap::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--source-gutter) - 0.375rem);
+  border-left: 1px solid rgb(var(--slate-800));
+}
+
+/* Visualizza → Pagine: fogli A4 su un piano di lavoro. Il foglio ha i margini della stampa (2 cm); tra un foglio e l'altro c'è uno stacco.
+   È una resa visiva: il testo scorre in modo continuo, non si divide in pagine vere. */
+:root[data-view='pages'] .document-scroll {
+  background: rgb(var(--slate-900));
+  padding: 1.5rem 1rem 3rem;
+}
+:root[data-view='pages'] .document-editor {
+  width: 210mm;
+  max-width: 100%;
+}
+:root[data-view='pages'] .document-editor .tiptap {
+  min-height: 297mm;
+  padding: 20mm;
+  background-color: rgb(var(--slate-950));
+  background-image: linear-gradient(to bottom, transparent 297mm, rgb(var(--slate-900)) 297mm);
+  background-size: 100% calc(297mm + 1.5rem);
+  background-repeat: repeat-y;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35), 0 8px 24px rgb(0 0 0 / 0.2);
+}
