@@ -29,11 +29,11 @@ function RenameInput({ entry, onCommit, onCancel }) {
     input.setSelectionRange(0, dot > 0 ? dot : entry.name.length)
   }, [entry])
 
-  const finish = (commit) => {
+  const finish = (commit, keepFocus = false) => {
     if (finished.current) return
     finished.current = true
-    if (commit) onCommit(entry, inputRef.current.value)
-    else onCancel()
+    if (commit) onCommit(entry, inputRef.current.value, { keepFocus })
+    else onCancel(entry, { keepFocus })
   }
 
   return (
@@ -45,8 +45,8 @@ function RenameInput({ entry, onCommit, onCancel }) {
       onClick={(event) => event.stopPropagation()}
       onBlur={() => finish(true)}
       onKeyDown={(event) => {
-        if (event.key === 'Enter') finish(true)
-        if (event.key === 'Escape') finish(false)
+        if (event.key === 'Enter') { event.preventDefault(); finish(true, true) }
+        if (event.key === 'Escape') { event.preventDefault(); finish(false, true) }
       }}
     />
   )
@@ -85,6 +85,34 @@ function CreateRow({ depth, menu }) {
   )
 }
 
+// Frecce nell'albero (come in un file manager): su/giù tra le righe visibili, Home/Fine agli estremi; destra apre una cartella (o scende nel suo contenuto),
+// sinistra la chiude (o torna alla cartella che contiene la riga). Invio apre il file: è già il clic del pulsante.
+function navigateTree(event) {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+  const row = event.target.closest?.('[data-tree-row]')
+  // Il campo di testo di rinomina o creazione tiene le sue frecce.
+  if (!row || event.target !== row) return
+  const rows = [...event.currentTarget.querySelectorAll('[data-tree-row]')]
+  const index = rows.indexOf(row)
+  const go = (target) => { if (target) { event.preventDefault(); target.focus(); target.scrollIntoView({ block: 'nearest' }) } }
+  const isFolder = row.dataset.treeRow === 'directory'
+  const expanded = row.getAttribute('aria-expanded') === 'true'
+  if (event.key === 'ArrowDown') go(rows[index + 1])
+  else if (event.key === 'ArrowUp') go(rows[index - 1])
+  else if (event.key === 'Home') go(rows[0])
+  else if (event.key === 'End') go(rows[rows.length - 1])
+  else if (event.key === 'ArrowRight' && isFolder) {
+    event.preventDefault()
+    if (!expanded) row.click()
+    else if (Number(rows[index + 1]?.dataset.depth) > Number(row.dataset.depth)) go(rows[index + 1])
+  } else if (event.key === 'ArrowLeft') {
+    if (isFolder && expanded) { event.preventDefault(); row.click() } else {
+      const depth = Number(row.dataset.depth)
+      go(rows.slice(0, index).reverse().find((candidate) => Number(candidate.dataset.depth) < depth))
+    }
+  }
+}
+
 function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onToggle, onOpenFile, drop, menu }) {
   const expanded = expandedPaths.has(entry.path)
   const [children, setChildren] = useState(null)
@@ -100,11 +128,12 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
   }, [entry.path])
 
   useEffect(() => {
-    if (expanded) load()
+    // Solo le cartelle si leggono: un file Markdown "espanso" mostra il suo originale, che è già in `entry.originals`.
+    if (expanded && entry.isDirectory) load()
   }, [expanded, refreshToken, load])
 
   const indent = { paddingLeft: 8 + depth * 14 }
-  const rowClass = 'flex w-full items-center gap-1.5 py-1 pr-2 text-left text-sm transition hover:bg-slate-800/70'
+  const rowClass = 'flex w-full items-center gap-1.5 py-1 pr-2 text-left text-sm outline-none transition hover:bg-slate-800/70 focus-visible:bg-slate-800 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent-400'
 
   if (!entry.isDirectory) {
     const active = entry.path === activePath
@@ -113,6 +142,9 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
       <div>
         <button
           type="button"
+          data-tree-row="file"
+          data-tree-path={entry.path}
+          data-depth={depth}
           style={indent}
           title={entry.path}
           draggable={menu.renaming !== entry.path}
@@ -150,6 +182,9 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
           <button
             key={original.path}
             type="button"
+            data-tree-row="file"
+            data-tree-path={original.path}
+            data-depth={depth + 1}
             style={{ paddingLeft: 8 + (depth + 1) * 14 }}
             title={`${original.path} · ${t('Original, read-only')}`}
             className={`${rowClass} ${original.path === activePath ? 'bg-slate-800 text-slate-50' : 'text-slate-500'}`}
@@ -172,6 +207,9 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
     <div>
       <button
         type="button"
+        data-tree-row="directory"
+        data-tree-path={entry.path}
+        data-depth={depth}
         style={indent}
         aria-expanded={expanded}
         title={entry.isProject ? t('Sub-project') : undefined}
@@ -211,6 +249,18 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   const [subSettings, setSubSettings] = useState(null)
 
   const [renaming, setRenaming] = useState(null)
+  const treeRef = useRef(null)
+
+  // Rida il focus alla riga di un percorso. L'albero si ridisegna (e le cartelle si rileggono) dopo una rinomina: si riprova per qualche fotogramma.
+  const focusRow = (target) => {
+    const same = (left, right) => left.replace(/[\\/]+/g, '/').toLowerCase() === right.replace(/[\\/]+/g, '/').toLowerCase()
+    let attempts = 20
+    const attempt = () => {
+      const row = [...(treeRef.current?.querySelectorAll('[data-tree-path]') || [])].find((item) => same(item.dataset.treePath, target))
+      if (row) { row.focus(); row.scrollIntoView({ block: 'nearest' }) } else if (attempts-- > 0) requestAnimationFrame(attempt)
+    }
+    requestAnimationFrame(attempt)
+  }
   // Nuova cartella o nuovo documento: { parent, type: 'directory' | 'file' } con il nome in corso di digitazione.
   const [creating, setCreating] = useState(null)
   // Cartella "corrente": l'ultima cliccata (o quella del file cliccato). I pulsanti Nuova cartella / Nuovo documento della barra creano lì; senza selezione, nella radice.
@@ -338,16 +388,20 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       if (event.key === 'F2') { event.preventDefault(); setRenaming(entry.path) }
       if (event.key === 'Delete') { event.preventDefault(); deleteEntry(entry) }
     },
-    cancelRename: () => setRenaming(null),
-    async commitRename(entry, newName) {
+    cancelRename(entry, { keepFocus } = {}) {
+      setRenaming(null)
+      if (keepFocus && entry) focusRow(entry.path)
+    },
+    async commitRename(entry, newName, { keepFocus } = {}) {
       setRenaming(null)
       const name = newName.trim()
-      if (!name || name === entry.name) return
+      if (!name || name === entry.name) { if (keepFocus) focusRow(entry.path); return }
       try {
         const destination = await electronAPI.renamePath({ path: entry.path, newName: name })
         onRenamed(entry.path, destination)
         setSelectedFolder(null)
         setLocalRefresh((value) => value + 1)
+        if (keepFocus) focusRow(destination)
       } catch (reason) {
         onStatus(t('Rename failed: {message}', { message: reason.message }))
       }
@@ -492,7 +546,9 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
         />
       )}
       <div
+        ref={treeRef}
         className={`min-h-0 flex-1 overflow-y-auto py-1 ${dropTarget === project ? 'bg-accent-500/10 ring-1 ring-inset ring-accent-400' : ''}`}
+        onKeyDown={navigateTree}
         onDragOver={(event) => drop.over(event, project)}
         onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDropTarget(null) }}
         onDrop={(event) => drop.drop(event, project)}
