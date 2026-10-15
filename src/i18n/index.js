@@ -42,9 +42,10 @@ function resolve(preference) {
 function loadPreference() {
   try {
     const saved = getPreference(STORAGE_KEY)
-    return SPECIAL.has(saved) || supported(saved) ? saved : DEFAULT_LANGUAGE
+    // Senza una scelta salvata vale la lingua del sistema (se supportata, altrimenti l'inglese).
+    return SPECIAL.has(saved) || supported(saved) ? saved : 'auto'
   } catch {
-    return DEFAULT_LANGUAGE
+    return 'auto'
   }
 }
 
@@ -90,7 +91,7 @@ function announce() {
 
 export function setLanguage(next) {
   const before = current
-  preference = SPECIAL.has(next) || supported(next) ? next : DEFAULT_LANGUAGE
+  preference = SPECIAL.has(next) || supported(next) ? next : 'auto'
   current = resolve(preference)
   setPreference(STORAGE_KEY, preference)
   announce()
