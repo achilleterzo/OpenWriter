@@ -4,7 +4,6 @@ const fs = require('node:fs/promises')
 const fsSync = require('node:fs')
 const path = require('node:path')
 const mammoth = require('mammoth')
-const pdfParse = require('pdf-parse')
 const { createApplicationMenu } = require('./menu.cjs')
 const { createAiProviders } = require('./ai-providers.cjs')
 const { createProjectFile } = require('./project-file.cjs')
@@ -17,6 +16,8 @@ const { createNotesStore } = require('./notes-store.cjs')
 const projectIcon = require('./project-icon.cjs')
 const { planImageMove, applyImageMove } = require('./document-images.cjs')
 const { writeFileAtomic } = require('./atomic-write.cjs')
+const { createFontsStore } = require('./fonts.cjs')
+const { parsePdf, MARKER } = require('./pdf-import.cjs')
 const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-links.cjs')
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
@@ -102,8 +103,13 @@ async function readDocument(filePath) {
   }
 
   if (extension === '.pdf') {
-    const document = await pdfParse(buffer)
-    return { filePath, content: textToHtml(document.text), contentType: 'html', format: 'pdf' }
+    const { text, images } = await parsePdf(buffer)
+    // Ogni immagine torna dove stava nella pagina, incorporata (data:): al salvataggio diventa un file in images/ (vedi externalizeImages).
+    let html = textToHtml(text)
+    images.forEach((image, index) => {
+      html = html.replace(`<p>${MARKER(index)}</p>`, `<img src="data:${image.mime};base64,${image.data.toString('base64')}" alt="">`)
+    })
+    return { filePath, content: html.replace(/\u0001IMG\d+\u0001/g, ''), contentType: 'html', format: 'pdf' }
   }
 
   return { filePath, content: buffer.toString('utf8'), contentType: 'markdown', format: 'markdown' }
@@ -1046,6 +1052,30 @@ ipcMain.handle('workspace:file-info', async (_event, target) => {
 })
 ipcMain.handle('workspace:reveal-path', (_event, target) => { shell.showItemInFolder(resolveInProject(target)) })
 ipcMain.handle('workspace:list-directory', (_event, directory) => listDirectory(directory))
+// Le immagini incorporate nel testo (data:, per esempio quelle di un PDF o di un DOCX aperto) diventano file nella cartella images/ accanto al documento:
+// il Markdown resta leggibile e le immagini seguono il documento. Il nome deriva dal contenuto, quindi salvare più volte non crea doppioni.
+const EMBEDDED_IMAGE = /!\[([^\]]*)\]\(\s*<?data:image\/(png|jpe?g|gif|webp|bmp);base64,([A-Za-z0-9+/=]+)>?\s*\)/g
+
+async function externalizeImages(markdown, markdownPath) {
+  const matches = [...markdown.matchAll(EMBEDDED_IMAGE)]
+  if (!matches.length) return markdown
+  const directory = path.join(path.dirname(markdownPath), 'images')
+  const stem = path.basename(markdownPath).replace(/\.[^.]*$/, '').replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '') || 'image'
+  const names = new Map()
+  for (const [, , type, data] of matches) {
+    const buffer = Buffer.from(data, 'base64')
+    const extension = type === 'jpeg' ? 'jpg' : type
+    const name = `${stem}-${require('node:crypto').createHash('sha1').update(buffer).digest('hex').slice(0, 8)}.${extension}`
+    if (!names.has(data)) {
+      await fs.mkdir(directory, { recursive: true })
+      const target = path.join(directory, name)
+      if (!fsSync.existsSync(target)) await fs.writeFile(target, buffer)
+      names.set(data, name)
+    }
+  }
+  return markdown.replace(EMBEDDED_IMAGE, (_all, alt, _type, data) => `![${alt}](images/${names.get(data)})`)
+}
+
 ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, saveAs, defaultName }) => {
   const targetPath = await chooseSavePath({
     filePath,
@@ -1056,6 +1086,7 @@ ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, sa
   })
   if (!targetPath) return null
   const markdownPath = /\.(md|markdown|mdown)$/i.test(targetPath) ? targetPath : `${targetPath}.md`
+  markdown = await externalizeImages(markdown, markdownPath)
   await fs.writeFile(markdownPath, markdown, 'utf8')
   // La cronologia non deve mai far fallire il salvataggio.
   try {
@@ -1118,12 +1149,28 @@ function loadLanguage() {
   try { setLocale(JSON.parse(fsSync.readFileSync(languageFilePath(), 'utf8')).locale) } catch { /* prima esecuzione: inglese */ }
 }
 
+// Modalità di visualizzazione dei documenti (la sceglie l'interfaccia): serve al menu Visualizza per mostrare la voce attiva.
+let viewMode = 'endless'
+
 function buildMenu() {
   createApplicationMenu((command) => {
-    if (['settings', 'open-project', 'about', 'check-updates'].includes(command)) mainWindow?.webContents.send('app:command', command)
+    if (['settings', 'open-project', 'about', 'check-updates', 'view-endless', 'view-pages'].includes(command)) mainWindow?.webContents.send('app:command', command)
     else mainWindow?.webContents.send('document:command', command)
-  })
+  }, { view: viewMode })
 }
+
+ipcMain.on('view:changed', (_event, mode) => {
+  if ((mode !== 'endless' && mode !== 'pages') || mode === viewMode) return
+  viewMode = mode
+  buildMenu()
+})
+
+// Caratteri scelti dal catalogo Google Fonts: scaricati una volta sola e salvati nei dati dell'app.
+const fontsStore = createFontsStore({ directory: path.join(app.getPath('userData'), 'fonts') })
+ipcMain.handle('fonts:catalog', () => fontsStore.catalog())
+ipcMain.handle('fonts:list', () => fontsStore.list())
+ipcMain.handle('fonts:install', (_event, family) => fontsStore.install(String(family)))
+ipcMain.handle('fonts:remove', (_event, family) => fontsStore.remove(family))
 
 // Preferenze dell'interfaccia (tema, lingua, layout…): un file nei dati dell'app, così non dipendono dall'indirizzo da cui si carica la pagina
 // (il localStorage del browser cambia tra sviluppo e app installata). Il renderer le legge all'avvio in modo sincrono, per non far lampeggiare il tema.
