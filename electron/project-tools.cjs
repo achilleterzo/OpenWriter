@@ -35,6 +35,8 @@ function createProjectTools({ getProjectPath, readDocument }) {
   function resolveInside(relativePath = '') {
     const project = getProjectPath()
     if (!project) throw new Error(t('No project open'))
+    // `@sigla/…` indica una cartella di riferimento (sola lettura): si legge con gli strumenti di quella cartella, mai come percorso del progetto.
+    if (String(relativePath || '').startsWith('@')) throw new Error(t('Reference folders are read-only and can only be listed and read'))
     const target = path.resolve(project, String(relativePath || '.'))
     const relative = path.relative(project, target)
     if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error(t('Path is outside the project'))

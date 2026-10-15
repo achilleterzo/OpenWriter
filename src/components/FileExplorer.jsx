@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderInput, FolderOpen, FolderPlus, FolderRoot, Image as ImageIcon, Link2, Lock, RefreshCw, Settings, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderInput, FolderOpen, FolderPlus, FolderRoot, Image as ImageIcon, Library, Link2, Lock, RefreshCw, Settings, X } from 'lucide-react'
 
 import { ContextMenuContext } from './ContextMenu.jsx'
 import ProjectIcon, { ProjectAvatar } from './ProjectIcon.jsx'
@@ -491,6 +491,40 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       onStatus(t('Could not update the link: {message}', { message: reason.message }))
     }
   }
+  // Cartelle di riferimento: stanno fuori dal progetto, l'assistente le legge (come @sigla/…) ma non le modifica; se spostate si ricollegano.
+  const [references, setReferences] = useState([])
+  useEffect(() => {
+    if (!project) { setReferences([]); return }
+    electronAPI.listReferences().then(setReferences).catch(() => setReferences([]))
+  }, [project, token])
+  const addReference = async () => {
+    try {
+      const updated = await electronAPI.addReference()
+      if (updated) { setReferences(updated); onStatus(t('Reference folder added')) }
+    } catch (reason) { onStatus(reason.message) }
+  }
+  const relinkReference = async (reference) => {
+    try {
+      const updated = await electronAPI.updateReference(reference.name)
+      if (updated) { setReferences(updated); onStatus(t('Reference updated')) }
+    } catch (reason) { onStatus(reason.message) }
+  }
+  const removeReference = async (reference) => {
+    try { setReferences(await electronAPI.removeReference(reference.name)) } catch (reason) { onStatus(reason.message) }
+  }
+  const openReferenceMenu = (event, reference) => {
+    event.preventDefault()
+    openMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        !reference.missing && { label: revealLabel, onClick: () => electronAPI.revealReference(reference.name).catch((reason) => onStatus(reason.message)) },
+        { label: t('Relink…'), onClick: () => relinkReference(reference) },
+        { separator: true },
+        { label: t('Remove reference'), danger: true, onClick: () => removeReference(reference) },
+      ].filter(Boolean),
+    })
+  }
   const openLinkMenu = (event, link) => {
     event.preventDefault()
     openMenu({
@@ -531,6 +565,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
         <button type="button" title={t('{project}\nClick to open the folder in the file manager', { project })} className="min-w-0 flex-1 truncate text-left text-xs font-semibold uppercase tracking-wider text-slate-300 hover:text-slate-50" onClick={() => electronAPI.openProjectFolder().catch((reason) => onStatus(reason.message))}><span className="flex items-center gap-2"><ProjectAvatar directory={project} name={name} active size={28} /><span className="truncate">{name}</span></span></button>
         <button type="button" aria-label={t('New folder…')} title={selectedFolder && selectedFolder !== project ? t('New folder in {folder}', { folder: selectedFolder.split(/[\\/]/).filter(Boolean).at(-1) }) : t('New folder…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => startCreate(creationTarget(), 'directory')}><FolderPlus size={14} /></button>
         <button type="button" aria-label={t('New document…')} title={selectedFolder && selectedFolder !== project ? t('New document in {folder}', { folder: selectedFolder.split(/[\\/]/).filter(Boolean).at(-1) }) : t('New document…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => startCreate(creationTarget(), 'file')}><FilePlus size={14} /></button>
+        <button type="button" aria-label={t('Add a reference folder…')} title={t('Add a reference folder…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={addReference}><Library size={14} /></button>
         <button type="button" aria-label={t('Move a project here…')} title={t('Move a project here…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => moveProjectIn(project)}><FolderInput size={14} /></button>
         <button type="button" aria-label={t('Refresh')} title={t('Refresh')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => setLocalRefresh((value) => value + 1)}><RefreshCw size={14} /></button>
         <button type="button" aria-label={t('Project settings')} title={t('Project settings')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => setSubSettings({ path: project, name })}><Settings size={14} /></button>
@@ -559,6 +594,23 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
         {entries.map((entry) => (
           <TreeNode key={entry.path} entry={entry} depth={0} activePath={activePath} refreshToken={token} expandedPaths={expandedPaths} onToggle={onToggle} onOpenFile={onOpenFile} drop={drop} menu={menu} />
         ))}
+        {references.length > 0 && (
+          <div className="mt-2 border-t border-slate-800 pt-1">
+            <h3 className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500" title={t('Folders outside the project, linked here as references: the assistant can read them (as @name/…) but never changes them.')}><Library size={12} /> {t('References')}</h3>
+            {references.map((reference) => (
+              <div key={reference.name} onContextMenu={(event) => openReferenceMenu(event, reference)} className={`group flex items-center pr-1 text-sm transition hover:bg-slate-800/70 ${reference.missing ? 'text-slate-600' : 'text-slate-400'}`}>
+                <button type="button" title={reference.missing ? `${reference.path} · ${t('Folder not found')}` : `${reference.path}\n${t('Click to open the folder in the file manager')}`} className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-3 text-left" onClick={() => (reference.missing ? relinkReference(reference) : electronAPI.revealReference(reference.name).catch((reason) => onStatus(reason.message)))}>
+                  <span className="w-3.5 shrink-0" />
+                  <Folder size={14} className={`shrink-0 ${reference.missing ? 'text-slate-600' : 'text-accent-400'}`} />
+                  <span className={`truncate ${reference.missing ? 'line-through' : ''}`}>@{reference.name}</span>
+                  <Lock size={11} className="shrink-0 text-slate-600" aria-label={t('Read-only for the assistant')} />
+                </button>
+                {reference.missing && <button type="button" aria-label={t('Relink…')} title={t('Relink…')} className="rounded p-1 text-amber-500 transition hover:bg-slate-700 hover:text-amber-300" onClick={() => relinkReference(reference)}><Link2 size={12} /></button>}
+                <button type="button" aria-label={t('Remove reference')} title={t('Remove reference (the folder is not touched)')} className="rounded p-1 text-slate-500 opacity-0 transition hover:bg-slate-700 hover:text-slate-50 group-hover:opacity-100 focus:opacity-100" onClick={() => removeReference(reference)}><X size={12} /></button>
+              </div>
+            ))}
+          </div>
+        )}
         {links.length > 0 && (
           <div className="mt-2 border-t border-slate-800 pt-1">
             <h3 className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500" title={t('Documents outside the project folder, linked here: they are opened and edited where they are, not copied.')}><Link2 size={12} /> {t('Linked documents')}</h3>
