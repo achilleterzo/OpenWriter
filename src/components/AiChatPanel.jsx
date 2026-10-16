@@ -928,6 +928,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       setAiScore: (tab, data) => toolBridge.setAiScore(tab, data),
       onProjectCreated: (created) => { handoff = created },
       onNotesChanged: () => toolBridge.onNotesChanged(),
+      onBookmarksChanged: () => toolBridge.onBookmarksChanged(),
       onFilesChanged: () => toolBridge.onFilesChanged(),
       onMemoryChanged: () => toolBridge.onMemoryChanged(),
       onPathChanged: (change) => toolBridge.onPathChanged(change),

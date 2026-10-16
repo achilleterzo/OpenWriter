@@ -2,6 +2,7 @@ import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { DOMSerializer, Fragment } from '@tiptap/pm/model'
+import { alignBlocks, diffText } from './inlineDiff.js'
 
 /**
  * Modifiche dell'assistente "in sosta". Le modifiche dirette restano applicate al documento, ma ognuna è segnata come da rivedere:
@@ -185,7 +186,129 @@ export function rejectAll(editor) {
   editor.view.dispatch(tr.setMeta(pendingKey, { clear: true }))
 }
 
-function widget(view, change, labels) {
+// ---- Differenze fini: si mostra solo ciò che è davvero cambiato dentro un paragrafo, non l'intero paragrafo sostituito. ----
+// I blocchi di testo (paragrafi, titoli, voci di elenco, celle…) vecchi e nuovi si abbinano per somiglianza; per quelli abbinati si confrontano le parole.
+// Nel documento le parole nuove sono evidenziate, nel blocco "prima" quelle tolte sono barrate e il resto è lasciato com'è.
+const ATOM_SELECTOR = '[data-html-inline], [data-math-inline], [data-footnote-ref], img'
+const TEXTBLOCK_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, h7, pre'
+
+// Testo di un blocco di testo: solo i nodi di testo (i nodi come a capo o immagini non contano), con la posizione di ogni pezzo.
+function blockText(node) {
+  const pieces = []
+  let text = ''
+  node.descendants((child, pos) => {
+    if (child.isText) { pieces.push({ pos, start: text.length, length: child.text.length }); text += child.text }
+    return true
+  })
+  return { text, pieces }
+}
+
+function textblocksIn(fragmentOrDoc, from, to) {
+  const list = []
+  const visit = (node, pos) => {
+    if (node.isTextblock) { const { text, pieces } = blockText(node); list.push({ node, pos, type: node.type.name, text, pieces }); return false }
+    return true
+  }
+  if (from === undefined) fragmentOrDoc.descendants(visit)
+  else fragmentOrDoc.nodesBetween(from, to, visit)
+  return list
+}
+
+const hasTextblock = (node) => { if (node.isTextblock) return true; let found = false; node.descendants((child) => { if (child.isTextblock) found = true; return !found }); return found }
+
+// Intervallo di caratteri [da, a) di un blocco → intervalli di posizioni nel documento (un testo può essere diviso in più nodi).
+function toPositions(block, from, to, base) {
+  const out = []
+  for (const piece of block.pieces) {
+    const start = Math.max(from, piece.start)
+    const end = Math.min(to, piece.start + piece.length)
+    if (start < end) out.push([base + block.pos + 1 + piece.pos + (start - piece.start), base + block.pos + 1 + piece.pos + (end - piece.start)])
+  }
+  return out
+}
+
+const analysisCache = new WeakMap()
+
+// Piano di visualizzazione di una modifica, o null se conviene mostrare tutto com'era (nessun blocco abbinabile, o solo struttura cambiata).
+function analyzeChange(doc, change) {
+  const content = doc.slice(change.from, change.to).content
+  const cached = analysisCache.get(change.old)
+  if (cached && cached.content.eq(content)) return cached.plan
+  const plan = buildPlan(doc, change)
+  analysisCache.set(change.old, { content, plan })
+  return plan
+}
+
+function buildPlan(doc, change) {
+  const olds = textblocksIn(change.old)
+  const news = textblocksIn(doc, change.from, change.to)
+  if (!olds.length && !news.length) return null
+  const map = alignBlocks(olds.map(({ text, type }) => ({ text, type })), news.map(({ text, type }) => ({ text, type })))
+  const base = -change.from
+  const decorations = []
+  const oldState = olds.map(() => ({ state: 'removed' }))
+  let marked = false
+  let allIdentical = true
+  news.forEach((block, index) => {
+    const matched = map[index]
+    const at = block.pos + base
+    if (matched === -1) {
+      // Un paragrafo vuoto nuovo (es. quello che l'editor aggiunge in fondo dopo un elenco) non è una modifica da mostrare.
+      if (!block.text) return
+      decorations.push({ from: at, to: at + block.node.nodeSize, node: true, class: 'ow-pending-new' })
+      marked = true
+      allIdentical = false
+      return
+    }
+    const before = olds[matched]
+    if (before.node.eq(block.node)) { oldState[matched] = { state: 'same' }; return }
+    allIdentical = false
+    marked = true
+    decorations.push({ from: at, to: at + block.node.nodeSize, node: true, class: 'ow-pending-touched' })
+    // Stesso testo ma formato diverso: si segna tutto il testo; altrimenti solo le parole cambiate.
+    const changes = before.text === block.text ? { removed: before.text ? [[0, before.text.length]] : [], added: block.text ? [[0, block.text.length]] : [] } : diffText(before.text, block.text)
+    oldState[matched] = { state: 'changed', removed: changes.removed }
+    for (const [from, to] of changes.added) for (const [start, end] of toPositions(block, from, to, base)) decorations.push({ from: start, to: end, node: false, class: 'ow-pending-added' })
+  })
+  // Blocchi senza testo (linee orizzontali, immagini…) che prima non c'erano.
+  const oldTop = []
+  change.old.forEach((node) => oldTop.push(node))
+  doc.nodesBetween(change.from, change.to, (node, pos) => {
+    if (pos < change.from || pos + node.nodeSize > change.to || hasTextblock(node)) return pos < change.from ? true : false
+    if (!oldTop.some((candidate) => candidate.eq(node))) { decorations.push({ from: pos + base, to: pos + base + node.nodeSize, node: true, class: 'ow-pending-new' }); marked = true; allIdentical = false }
+    return false
+  })
+  if (oldState.some((entry) => entry.state !== 'same')) marked = true
+  // Solo la struttura è cambiata (es. da elenco puntato a numerato): meglio mostrare tutto come prima.
+  const shape = (nodes) => nodes.map((node) => node.type.name).join(',')
+  const newTop = []
+  doc.slice(change.from, change.to).content.forEach((node) => newTop.push(node))
+  if (!marked || (allIdentical && oldState.every((entry) => entry.state === 'same') && shape(oldTop) !== shape(newTop))) return null
+  const signature = oldState.map((entry) => (entry.state === 'changed' ? `c${entry.removed.map((range) => range.join('-')).join('.')}` : entry.state[0])).join('|')
+  return { decorations, oldState, signature, oldCount: olds.length }
+}
+
+// Segna nel DOM del blocco "prima" le parole tolte (intervalli di caratteri sul testo, senza i nodi come a capo o immagini).
+function wrapRanges(element, ranges) {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, { acceptNode: (node) => (node.parentElement?.closest(ATOM_SELECTOR) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) })
+  const nodes = []
+  let offset = 0
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) { nodes.push({ node, start: offset }); offset += node.nodeValue.length }
+  for (const { node, start } of nodes.reverse()) {
+    const end = start + node.nodeValue.length
+    const pieces = ranges.map(([from, to]) => [Math.max(from, start) - start, Math.min(to, end) - start]).filter(([from, to]) => from < to).sort((x, y) => y[0] - x[0])
+    for (const [from, to] of pieces) {
+      if (to < node.nodeValue.length) node.splitText(to)
+      const middle = from > 0 ? node.splitText(from) : node
+      const span = document.createElement('span')
+      span.className = 'ow-pending-removed'
+      middle.parentNode.insertBefore(span, middle)
+      span.append(middle)
+    }
+  }
+}
+
+function widget(view, change, labels, plan) {
   const root = document.createElement('div')
   root.className = 'ow-pending-widget'
   root.contentEditable = 'false'
@@ -220,6 +343,18 @@ function widget(view, change, labels) {
     const old = document.createElement('div')
     old.className = 'ow-pending-old'
     old.append(DOMSerializer.fromSchema(view.state.schema).serializeFragment(change.old))
+    const blocks = plan ? [...old.querySelectorAll(TEXTBLOCK_SELECTOR)] : []
+    if (plan && blocks.length === plan.oldCount) {
+      // Il blocco "prima" mostra solo ciò che è cambiato: le parole tolte barrate, i paragrafi invariati attenuati, quelli tolti del tutto barrati.
+      blocks.forEach((element, index) => {
+        const entry = plan.oldState[index]
+        if (entry.state === 'same') element.classList.add('ow-pending-same')
+        else if (entry.state === 'removed') element.classList.add('ow-pending-removed-block')
+        else wrapRanges(element, entry.removed)
+      })
+    } else {
+      old.classList.add('ow-pending-old--all')
+    }
     root.append(old)
   }
   return root
@@ -266,10 +401,20 @@ export const PendingChanges = Extension.create({
             if (!changes.length) return DecorationSet.empty
             const decorations = []
             for (const change of changes) {
-              state.doc.forEach((node, offset) => {
-                if (offset >= change.from && offset + node.nodeSize <= change.to) decorations.push(Decoration.node(offset, offset + node.nodeSize, { class: 'ow-pending-new' }))
-              })
-              decorations.push(Decoration.widget(change.from, (view) => widget(view, change, labels), { side: -1, key: `${change.id}:${change.old.size}`, ignoreSelection: true, stopEvent: () => true }))
+              let plan = null
+              try { plan = analyzeChange(state.doc, change) } catch { plan = null }
+              if (plan) {
+                for (const item of plan.decorations) {
+                  const from = change.from + item.from
+                  const to = change.from + item.to
+                  decorations.push(item.node ? Decoration.node(from, to, { class: item.class }) : Decoration.inline(from, to, { class: item.class }))
+                }
+              } else {
+                state.doc.forEach((node, offset) => {
+                  if (offset >= change.from && offset + node.nodeSize <= change.to) decorations.push(Decoration.node(offset, offset + node.nodeSize, { class: 'ow-pending-new' }))
+                })
+              }
+              decorations.push(Decoration.widget(change.from, (view) => widget(view, change, labels, plan), { side: -1, key: `${change.id}:${change.old.size}:${plan ? plan.signature : 'all'}`, ignoreSelection: true, stopEvent: () => true }))
             }
             return DecorationSet.create(state.doc, decorations)
           },
