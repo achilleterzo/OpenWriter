@@ -22,8 +22,14 @@ function createApplicationMenu(sendCommand, state = {}) {
         { type: 'separator' },
         { label: t('Print…'), accelerator: 'CmdOrCtrl+P', click: command('print') },
         { type: 'separator' },
-        { label: t('Export DOCX…'), click: command('export-docx') },
-        { label: t('Export PDF…'), click: command('export-pdf') },
+        {
+          label: t('Export'),
+          submenu: [
+            { label: t('Word document (.docx)…'), click: command('export-docx') },
+            { label: t('PDF document (.pdf)…'), click: command('export-pdf') },
+            { label: t('Markdown with embedded images (.md)…'), click: command('export-markdown-embedded') },
+          ],
+        },
         { type: 'separator' },
         { label: t('Settings…'), accelerator: 'CmdOrCtrl+,', click: command('settings') },
         { type: 'separator' },
