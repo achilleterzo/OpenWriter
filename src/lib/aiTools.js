@@ -24,6 +24,10 @@ export const TOOL_DEFINITIONS = [
   { group: 'notes', name: 'set_ai_score', required: ['score', 'confidence'], description: 'Records the result of an AI-likelihood check of a document (the active one, or the one given): it is shown in the document toolbar. score = how likely the text is to have been written by an AI model rather than by a person. It is only an indication from the style and structure of the text, so be cautious: formal, technical, heavily edited or non-native-speaker writing is often wrongly taken for AI text, and a text shorter than about 150 words cannot be judged reliably (say so with low confidence). Avoid extreme scores (below 10 or above 90) unless the evidence is overwhelming. Read the text first and call this once.', parameters: { score: { type: 'integer', description: '0 = certainly written by a person, 100 = certainly written by an AI' }, confidence: 'low | medium | high', rationale: 'optional: the main signals behind the score, 2-4 short sentences, in the language of the user', path: 'optional: document (default: the active one)' } },
   { group: 'notes', name: 'update_note', required: ['id'], description: "Revises a note written by the assistant (not the user's notes) that is still open or resolved: changes its text or proposed correction, or reopens or resolves it. Use it when the user asks to reconsider, deepen or fix the notes. It cannot accept or reject: that is the user's choice. To answer a note written by the user, add a new note with add_note.", parameters: { id: 'note identifier (given by list_notes)', body: 'optional: new text of the note', replacement: 'optional: new proposed correction (a comment becomes a suggestion)', status: 'optional: open (reopens) | resolved (resolves, e.g. when the issue no longer applies; allowed on any note)', resolution: 'optional, with status resolved: why the note is closed without being applied (e.g. already fixed, the passage is gone, a deliberate choice); other notes and the user read it later', quote: 'optional: EXACT current text of the document to re-anchor the note to, when the passage it referred to was edited (allowed on any note; the document must be open)', path: 'optional: document of the note (default: the active one)' } },
   { group: 'notes', name: 'list_notes', required: [], description: 'Lists the notes with their status (open, accepted, rejected, resolved). Use it to remember what was already proposed, accepted or rejected. A closed note may carry a [reason: …] explaining why it was not applied: respect it and do not raise the same point again.', parameters: { path: 'optional: document (default: the active one)', status: 'optional: open | accepted | rejected | resolved | all (default: all)', all_documents: 'optional: true to include every document of the project' } },
+  { group: 'notes', name: 'list_bookmarks', required: [], description: 'Lists the bookmarks of a document: named anchors the user (or you) set at points of the text. Each has a name (used in links as file.md#name), an optional label, an optional note and a flag: a FLAGGED bookmark is a point the user wants to bring to your attention, and its note is a remark or instruction for you. Use it when the user mentions flagged points/bookmarks, or before working on a document that may have them.', parameters: { path: 'optional: document (default: the active one)', all_documents: 'optional: true to list the bookmarks of every document of the project', only_flagged: 'optional: true to list only the bookmarks flagged for you' } },
+  { group: 'notes', name: 'add_bookmark', required: ['quote'], description: 'Adds a bookmark: a named anchor at a point of the document, so that it can be linked as [text](path/to/file.md#name) from any document. "quote" is a short EXACT passage at that point (e.g. a heading or the first words of a paragraph); the bookmark marks its start. Use it to create link targets, or to mark a point for the user. The result gives the link form.', parameters: { quote: 'short exact text at the point to bookmark; it must appear only once', name: 'optional: name for links (lowercase letters, digits, hyphens; derived from the label if omitted)', label: 'optional: short title shown in the bookmarks list', note: 'optional: remark about the point', flagged: 'optional: true to flag it for the user\'s attention', path: 'optional: document (default: the active one)' } },
+  { group: 'notes', name: 'update_bookmark', required: ['name'], description: 'Changes a bookmark: its name, label, note, flag, or the passage it is anchored to (use "quote" to re-anchor it after the text moved).', parameters: { name: 'current name of the bookmark (or its id)', new_name: 'optional: new name (links using the old name stop working)', label: 'optional', note: 'optional (empty string removes it)', flagged: 'optional: true or false', quote: 'optional: new exact passage to anchor to', path: 'optional: document (default: the active one)' } },
+  { group: 'notes', name: 'remove_bookmark', required: ['name'], description: 'Removes a bookmark of a document (links that use its name stop working). Only the bookmark is removed, never the text.', parameters: { name: 'name of the bookmark (or its id)', path: 'optional: document (default: the active one)' } },
   { group: 'memory', name: 'remember', required: ['text'], description: 'Saves in the project memory an important piece of information that will be needed in later conversations: a decision, a term or naming choice, a style rule, a fact about the project or the audience. Write it as a short, self-contained statement. Link the files it applies to. Do not store trivia or the content of documents.', parameters: { text: 'the information to remember, short and self-contained', title: 'optional: a short label', files: { type: 'array', description: 'optional: project paths of the files the information applies to', items: { type: 'string' } } } },
   { group: 'memory', name: 'update_memory', required: ['id'], description: 'Changes a memory entry that YOU wrote (not the user\'s entries): its text, label or linked files. Use it to correct or refine instead of adding a duplicate.', parameters: { id: 'entry id (from recall or the memory list)', text: 'optional: new text', title: 'optional: new label', files: { type: 'array', description: 'optional: the new complete list of linked file paths', items: { type: 'string' } } } },
   { group: 'memory', name: 'forget', required: ['id'], description: 'Deletes a memory entry that YOU wrote and that is no longer true or useful. Entries written by the user cannot be deleted by you.', parameters: { id: 'entry id' } },
@@ -33,7 +37,7 @@ export const TOOL_DEFINITIONS = [
   { group: 'edit', name: 'open_document', required: ['path'], description: 'Opens an existing project document (.md, .txt, .docx, .pdf) in a tab, so that it can be edited with replace_text, insert_text or replace_document. A document that is not open cannot be edited: open it first.', parameters: { path: 'path of the document, relative to the project root' } },
   { group: 'edit', name: 'replace_document', required: ['content'], description: 'Replaces the WHOLE content of the open document with the given Markdown (a full rewrite). The user can undo it with Ctrl+Z and a version of the previous text is archived; the document is saved automatically when you finish your work. For small changes prefer replace_text.', parameters: { content: 'the complete new text of the document, in Markdown', allow_shrink: { type: 'boolean', description: 'optional: true only if the new text is meant to be much shorter than the current one' }, path: 'optional: document (default: the active one)' } },
   { group: 'edit', name: 'replace_text', required: ['find', 'replace'], description: 'Replaces a passage of the open document. The user can undo the change with Ctrl+Z; the document is saved automatically when you finish your work (a version of the previous text is archived).', parameters: { find: 'EXACT text to replace, as shown by read_file (plain text or Markdown source, e.g. a whole link [text](url)); it must appear only once', replace: 'new text, empty to delete; may contain Markdown', path: 'optional: document (default: the active one)' } },
-  { group: 'edit', name: 'insert_text', required: ['text', 'position'], description: 'Inserts text into the open document, in an undoable way.', parameters: { text: 'text to insert; may contain Markdown', position: 'after | before | start | end', anchor: 'only for after/before: EXACT text next to which to insert, as shown by read_file (plain text or Markdown source); it must appear only once', path: 'optional: document (default: the active one)' } },
+  { group: 'edit', name: 'insert_text', required: ['text'], description: 'Inserts text into the open document, in an undoable way.', parameters: { text: 'text to insert; may contain Markdown', position: 'optional (default: end): after | before | start | end', anchor: 'only for after/before: EXACT text next to which to insert, as shown by read_file (plain text or Markdown source); it must appear only once', path: 'optional: document (default: the active one)' } },
   { group: 'web', name: 'browser_tabs', required: [], description: 'Lists the browser tabs of the app (including those opened by the user) with their current number, address and title.', parameters: {} },
   { group: 'web', name: 'browser_read', required: [], description: 'Reads the CURRENT content of a browser tab (even if the user opened or moved it): text and links. It does not change page.', parameters: { tab: 'optional: tab number or id (default: the foreground one or the last used)' } },
   { group: 'web', name: 'web_open', required: ['url'], description: 'Opens an http(s) address in a browser tab and returns its text and links.', parameters: { url: 'full address', tab: 'optional: number or id of the tab to navigate (default: the foreground one)', new_tab: 'optional: true to open it in a new tab' } },
@@ -110,6 +114,7 @@ export function toolsPrompt(enabled, { documentPath, native = false, maxSteps = 
   const createHint = enabled.create && !enabled.loose ? 'Before creating a document, or when the user names a document without saying where it is, look at the project structure with list_directory: if a document with that name (or the one the user means) already exists, even in a subfolder, work on that one (open_document, then edit) instead of creating a new file, and do not guess a folder: if the place is unclear, ask with ask_choice. When the user asks you to write a new document, or it is needed, create it with create_file (inside a suitable folder, created with create_directory if useful) instead of pasting the whole text in the chat; then tell the user where it is. Never overwrite existing files. If you made a mistake (a duplicate, a wrong name or folder), fix it: put the content in the right document, then remove or move the wrong file with delete_file or move_file.' : ''
   const editHint = enabled.edit ? `${enabled.loose ? 'Change the documents open in tabs' : 'To modify an existing document that is not open, first open it with open_document; then change it'} with replace_text or insert_text (small changes) or replace_document (full rewrite). Do not say that the files are read-only: you edit through these tools. When the user asks you to change, fix or rewrite a document, make the change with the tools instead of only describing it.` : ''
   const memoryHint = enabled.memory ? 'The project memory (listed in the conversation) holds lasting information saved by the user or by you: take it into account. Save new important information with remember when you learn it (a decision, a term, a style rule, a fact about the project), linking the files it applies to; refine your own entries with update_memory instead of duplicating them. Keep entries few and short.' : ''
+  const bookmarksHint = enabled.notes ? 'The user can set bookmarks in documents (named anchors, linked as file.md#name) and flag some to point things out to you: when the user mentions flagged points, or when you start working on a document, look at list_bookmarks (only_flagged=true) — a flagged bookmark\'s note is a remark or instruction for you. To create a link target use add_bookmark, then link with [text](relative/path.md#name).' : ''
   const notesHint = enabled.notes ? "If the user asks to review or reconsider the notes: read them with list_notes, update YOUR still-open notes with update_note (text and proposed correction) and answer the user's notes by adding new ones with add_note. Accepting or rejecting a suggestion is always up to the user. When reviewing, add few, meaningful notes, all in ONE add_note call (\"notes\"), and give each correction as the complete rewritten passage in \"replacement\". If the user asks you to fix or rewrite the text, edit it directly with replace_text instead of leaving notes. Notes you have dealt with must not stay open: replace_text closes the open notes on the passage it replaces, and for any other note you have addressed (for example after replace_document or a different edit) call update_note with status \"resolved\"." : ''
   const webHint = enabled.web ? 'To know what the user is looking at in the browser use browser_tabs and then browser_read on the tab concerned; to search or open pages use web_search and web_open, choosing the tab with the tab parameter. To follow a link of a page use browser_follow_link (link number or text). To find again a page you already opened in this project use browser_history.' : ''
   const visionHint = enabled.vision ? 'You can look at images and screenshots with view_image, screenshot_document and screenshot_browser: use them when the visual look matters (layout, charts, images in pages). Images arrive as attachments: describe only what you really see.' : ''
@@ -124,6 +129,7 @@ export function toolsPrompt(enabled, { documentPath, native = false, maxSteps = 
       editHint,
       memoryHint,
       notesHint,
+      bookmarksHint,
       webHint,
       visionHint,
       askHint,
@@ -143,6 +149,7 @@ export function toolsPrompt(enabled, { documentPath, native = false, maxSteps = 
     editHint,
     memoryHint,
     notesHint,
+    bookmarksHint,
     webHint,
     visionHint,
     askHint,
@@ -254,6 +261,10 @@ export function describeCall(name, args = {}) {
     case 'read_file': return t('Reading {path}', { path: short(args.path) })
     case 'add_note': return t('Adding a note on “{quote}”', { quote: short(args.quote, 40) })
     case 'list_notes': return t('Checking the notes')
+    case 'list_bookmarks': return t('Checking the bookmarks')
+    case 'add_bookmark': return t('Adding a bookmark on “{quote}”', { quote: short(args.quote, 40) })
+    case 'update_bookmark': return t('Updating bookmark {name}', { name: short(args.name, 30) })
+    case 'remove_bookmark': return t('Removing bookmark {name}', { name: short(args.name, 30) })
     case 'update_note': return t('Revising a note')
     case 'replace_text': return t('Editing “{text}”', { text: short(args.find, 40) })
     case 'insert_text': return t('Inserting text')
@@ -456,6 +467,15 @@ export function createToolRunner(context) {
     return trackEdit(editor, () => replaceRangeWithMarkdown(editor, from, to, text(content)))
   }
 
+  // Percorso di un documento relativo al progetto (come lo si scrive nei link).
+  const relativeTo = (absolute) => { const root = String(project || '').replace(/\\/g, '/').replace(/\/+$/, ''); const value = String(absolute).replace(/\\/g, '/'); return root && value.toLowerCase().startsWith(`${root.toLowerCase()}/`) ? value.slice(root.length + 1) : value }
+  async function findBookmark(tab, wanted) {
+    const key = text(wanted).trim().replace(/^#/, '').toLowerCase()
+    const found = (await api.listBookmarks(tab.filePath)).find((item) => item.id === wanted || item.name.toLowerCase() === key)
+    if (!found) throw new Error(`Bookmark "${text(wanted)}" not found in this document: use list_bookmarks`)
+    return found
+  }
+
   const formatNote = (note, path) => {
     const where = path ? `${path} · ` : ''
     const proposal = note.kind === 'suggestion' ? ` → proposal: “${note.replacement}”` : ''
@@ -651,6 +671,65 @@ export function createToolRunner(context) {
       }
       context.onNotesChanged()
       return `${results.join('\n')}\nThe user will see the notes highlighted and can accept, reject or resolve them.`
+    },
+
+    async list_bookmarks(args) {
+      needProject()
+      const flaggedOnly = args.only_flagged === true || args.only_flagged === 'true'
+      const show = (bookmark, where) => `- #${bookmark.name}${bookmark.flagged ? ' [FLAGGED for you]' : ''}${bookmark.label ? ` “${bookmark.label}”` : ''} in ${where}: “${bookmark.quote.slice(0, 100)}”${bookmark.note ? ` — note: ${bookmark.note}` : ''} (by ${bookmark.author}; link: ${where}#${bookmark.name})`
+      const lines = []
+      if (args.all_documents === true || args.all_documents === 'true') {
+        for (const { path, bookmarks } of await api.listAllBookmarks()) lines.push(...bookmarks.filter((item) => !flaggedOnly || item.flagged).map((item) => show(item, path)))
+      } else {
+        const { tab } = context.getDocument(args.path)
+        if (!tab.filePath) throw new Error('The document is not saved in the project: it has no bookmarks')
+        lines.push(...(await api.listBookmarks(tab.filePath)).filter((item) => !flaggedOnly || item.flagged).map((item) => show(item, relativeTo(tab.filePath))))
+      }
+      return lines.length ? lines.join('\n') : (flaggedOnly ? 'No bookmark is flagged for you.' : 'No bookmarks.')
+    },
+
+    async add_bookmark(args) {
+      needProject()
+      const { tab, editor } = context.getDocument(args.path)
+      if (!tab.filePath) throw new Error('The document is not saved in the project: ask the user to save it before adding bookmarks')
+      const { index, hit } = locateUnique(editor, text(args.quote), 'The quote')
+      const quote = index.text.slice(hit.index, hit.index + hit.length)
+      const bookmark = await api.addBookmark({
+        filePath: tab.filePath,
+        bookmark: { quote, ...anchorContext(index, hit), name: text(args.name), label: text(args.label), note: text(args.note), flagged: isTrue(args.flagged), author: 'ai' },
+      })
+      context.onBookmarksChanged?.()
+      return `Bookmark "${bookmark.name}" added on “${quote.slice(0, 80)}”. Link to it as [text](${relativeTo(tab.filePath)}#${bookmark.name}) (the path is relative to the document that contains the link).`
+    },
+
+    async update_bookmark(args) {
+      needProject()
+      const { tab, editor } = context.getDocument(args.path)
+      if (!tab.filePath) throw new Error('The document is not saved in the project: it has no bookmarks')
+      const found = await findBookmark(tab, args.name)
+      const changes = {}
+      if (args.new_name !== undefined) changes.name = text(args.new_name)
+      if (args.label !== undefined) changes.label = text(args.label)
+      if (args.note !== undefined) changes.note = text(args.note)
+      if (args.flagged !== undefined) changes.flagged = isTrue(args.flagged)
+      if (args.quote !== undefined && text(args.quote).trim()) {
+        const { index, hit } = locateUnique(editor, text(args.quote), 'The quote')
+        Object.assign(changes, { quote: index.text.slice(hit.index, hit.index + hit.length), ...anchorContext(index, hit) })
+      }
+      if (!Object.keys(changes).length) throw new Error('Nothing to change: pass new_name, label, note, flagged or quote')
+      const updated = await api.updateBookmark({ filePath: tab.filePath, id: found.id, changes })
+      context.onBookmarksChanged?.()
+      return `Bookmark "${updated.name}" updated${updated.name !== found.name ? ` (renamed from "${found.name}": links using the old name no longer work)` : ''}.`
+    },
+
+    async remove_bookmark(args) {
+      needProject()
+      const { tab } = context.getDocument(args.path)
+      if (!tab.filePath) throw new Error('The document is not saved in the project: it has no bookmarks')
+      const found = await findBookmark(tab, args.name)
+      await api.deleteBookmark({ filePath: tab.filePath, id: found.id })
+      context.onBookmarksChanged?.()
+      return `Bookmark "${found.name}" removed (the text is untouched). Links that used it no longer work.`
     },
 
     async list_notes(args) {
@@ -1018,9 +1097,28 @@ export function createToolRunner(context) {
     },
   }
 
+  // Nomi con cui i modelli sbagliano spesso un parametro (es. "replace_text", come il nome dello strumento, al posto di "replace"): si accettano,
+  // altrimenti il parametro risulterebbe mancante.
+  const PARAMETER_ALIASES = {
+    replace_text: { replace: ['replace_text', 'replacement', 'replace_with', 'new_text', 'new_string'], find: ['old_text', 'old_string', 'search'] },
+  }
+
+  // Un parametro obbligatorio assente è un errore, non un valore vuoto: prima `replace` mancante in replace_text cancellava il passaggio in silenzio
+  // (il documento perdeva testo e lo strumento rispondeva "Replaced the passage"). Una stringa vuota esplicita resta valida (per cancellare).
   return async function run(name, args) {
     const tool = TOOL_DEFINITIONS.find((item) => item.name === name)
     if (!tool || !toolAvailable(tool, context.enabled)) throw new Error(`Tool not available: ${name}`)
-    return tools[name](args || {})
+    const given = { ...(args && typeof args === 'object' ? args : {}) }
+    for (const [parameter, aliases] of Object.entries(PARAMETER_ALIASES[name] || {})) {
+      if (given[parameter] !== undefined && given[parameter] !== null) continue
+      const alias = aliases.find((item) => given[item] !== undefined && given[item] !== null)
+      if (alias) given[parameter] = given[alias]
+    }
+    const missing = (tool.required || []).filter((parameter) => given[parameter] === undefined || given[parameter] === null)
+    if (missing.length) {
+      const known = Object.keys(tool.parameters || {}).join(', ')
+      throw new Error(`Missing required parameter${missing.length > 1 ? 's' : ''} for ${name}: ${missing.map((parameter) => `"${parameter}"`).join(', ')}. Nothing was changed. The parameters of ${name} are: ${known || '(none)'}.${missing.includes('replace') ? ' To delete the passage pass "replace" as an empty string.' : ''}`)
+    }
+    return tools[name](given)
   }
 }

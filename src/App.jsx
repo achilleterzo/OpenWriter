@@ -10,6 +10,7 @@ import DocumentPane from './components/DocumentPane.jsx'
 import FileExplorer from './components/FileExplorer.jsx'
 import HistoryPanel from './components/HistoryPanel.jsx'
 import NotesPanel from './components/NotesPanel.jsx'
+import BookmarksPanel from './components/BookmarksPanel.jsx'
 import ProjectsPanel from './components/ProjectsPanel.jsx'
 import MemoryPanel from './components/MemoryPanel.jsx'
 import AboutDialog from './components/AboutDialog.jsx'
@@ -21,11 +22,14 @@ import SettingsScreen from './components/SettingsScreen.jsx'
 import TabBar from './components/TabBar.jsx'
 import useDocumentFileCommands from './hooks/useDocumentFileCommands.js'
 import { setAnnotations } from './lib/annotationExtension.js'
+import { setBookmarks } from './lib/bookmarkExtension.js'
+import { findFragmentTarget } from './lib/bookmarkLinks.js'
 import { foldText, noteIsShown } from './lib/anchoring.js'
 import { relativeToProject } from './lib/aiTools.js'
 import { PANELS, clampWidth, fitLayout, loadLayout, maxWidthFor, saveLayout } from './lib/layout.js'
 import { AFTER_LANGUAGE_RELOAD_KEY, t } from './i18n/index.js'
 import { setProjectEditor, updateAppearance } from './appearance.js'
+import { getUpdateSchedule, scheduleOf, subscribeUpdateSchedule } from './lib/updateSchedule.js'
 
 const electronAPI = window.electronAPI
 const SAVE_DELAY_MS = 500
@@ -148,6 +152,10 @@ export default function App() {
   const [settingsVersion, setSettingsVersion] = useState(0)
   const [notes, setNotes] = useState([])
   const [notesVersion, setNotesVersion] = useState(0)
+  // Segnalibri del documento di contesto (ancore con nome: link `file#nome`, punti da far notare all'assistente).
+  const [bookmarks, setBookmarksState] = useState([])
+  const [bookmarksVersion, setBookmarksVersion] = useState(0)
+  const [activeBookmarkId, setActiveBookmarkId] = useState(null)
   const [findRequest, setFindRequest] = useState({ nonce: 0, replace: false })
   const [contextMenu, setContextMenu] = useState(null)
   const [layout, setLayout] = useState(loadLayout)
@@ -360,15 +368,24 @@ export default function App() {
     setAppVersion(version)
     const release = await electronAPI.getLatestRelease(silent)
     const newer = release?.version && compareVersions(release.version, version) > 0
-    setUpdateRelease(newer ? release : null)
+    // Una release già segnalata resta lo stesso oggetto: i controlli periodici non rimostrano l'avviso ogni volta.
+    setUpdateRelease((previous) => (newer ? (previous?.version === release.version ? previous : release) : null))
     return Boolean(newer)
   }, [])
 
+  // Controllo automatico secondo l'impostazione (Impostazioni → Informazioni): mai, all'avvio, o all'avvio e poi a intervalli.
+  const [updateSchedule, setUpdateScheduleState] = useState(getUpdateSchedule)
+  useEffect(() => subscribeUpdateSchedule(setUpdateScheduleState), [])
   useEffect(() => {
-    if (!electronAPI) return
+    if (!electronAPI) return undefined
     electronAPI.getAppVersion().then(setAppVersion).catch(() => {})
+    if (updateSchedule === 'never') return undefined
     checkForUpdate(true).catch(() => {})
-  }, [checkForUpdate])
+    const { interval } = scheduleOf(updateSchedule)
+    if (!interval) return undefined
+    const timer = setInterval(() => { checkForUpdate(true).catch(() => {}) }, interval)
+    return () => clearInterval(timer)
+  }, [checkForUpdate, updateSchedule])
 
   useEffect(() => {
     if (!updateRelease) return undefined
@@ -386,6 +403,13 @@ export default function App() {
       if (command === 'view-endless' || command === 'view-pages') updateAppearance({ view: command.slice(5) })
     })
   }, [chooseProject])
+
+  // L'albero dei file si aggiorna quando la cartella del progetto cambia per mano di altri programmi (file incollati, creati, spostati, eliminati).
+  useEffect(() => {
+    if (!electronAPI || !project) return undefined
+    electronAPI.watchWorkspace().catch(() => {})
+    return electronAPI.onWorkspaceChanged(() => setExplorerRefresh((value) => value + 1))
+  }, [project])
 
   // Carattere dell'editor specifico del progetto aperto, se le sue impostazioni ne indicano uno.
   useEffect(() => {
@@ -760,6 +784,7 @@ export default function App() {
     },
     // Quando l'assistente aggiunge o rivede note, si apre la scheda Note per mostrarle.
     onNotesChanged: () => { setNotesVersion((value) => value + 1); setSideTab('notes') },
+    onBookmarksChanged: () => { setBookmarksVersion((value) => value + 1); setSideTab('bookmarks') },
     // Testo attuale (Markdown) di un documento aperto, per il contesto della chat; null se l'editor non è pronto.
     documentFilePath(id) {
       return latest.current.tabs.find((tab) => tab.id === id)?.filePath || null
@@ -810,6 +835,19 @@ export default function App() {
     return () => { cancelled = true }
   }, [workspaceRoot, contextTab?.filePath, notesVersion])
 
+  // Segnalibri del documento di contesto: letti dal disco e mostrati nell'editor (segno e sottolineatura).
+  useEffect(() => {
+    const path = contextTab?.filePath
+    if (!workspaceRoot || !path) { setBookmarksState([]); return undefined }
+    let cancelled = false
+    electronAPI.listBookmarks(path).then((list) => { if (!cancelled) setBookmarksState(list) }).catch(() => { if (!cancelled) setBookmarksState([]) })
+    return () => { cancelled = true }
+  }, [workspaceRoot, contextTab?.filePath, bookmarksVersion])
+
+  useEffect(() => {
+    for (const tab of tabs) if (isDocument(tab)) setBookmarks(editors[tab.id], tab.id === contextTab?.id ? bookmarks : [], activeBookmarkId)
+  }, [bookmarks, activeBookmarkId, editors, tabs, contextTab?.id])
+
   // Una nota che si chiude (risolta, accettata o rifiutata, anche dall'assistente) smette di essere "selezionata":
   // altrimenti resterebbe in elenco e nel testo anche con la vista "Aperte".
   const noteStatuses = useRef(new Map())
@@ -845,6 +883,11 @@ export default function App() {
     }
   }, [tabs, editors])
 
+  const selectBookmark = useCallback((id) => {
+    setActiveBookmarkId(id)
+    setSideTab('bookmarks')
+  }, [])
+
   const selectNote = useCallback((id) => {
     setActiveNoteId(id)
     setSideTab('notes')
@@ -855,8 +898,35 @@ export default function App() {
   const openFileRef = useRef(null)
 
   // Ctrl+clic su un collegamento del documento: file locale (si apre in una scheda), indirizzo web (nel browser di sistema) o ancora.
+  // Va al punto di un documento indicato da `#nome`: un segnalibro, o un titolo con quel nome. `filePath` vuoto = il documento in primo piano.
+  // Se il documento si sta ancora aprendo, aspetta che l'editor sia pronto (fino a 4 secondi).
+  async function goToFragment(filePath, fragment) {
+    if (!fragment) return
+    const deadline = Date.now() + 4000
+    for (;;) {
+      const { tabs: currentTabs, editors: currentEditors, activeId: currentActive } = latest.current
+      const tab = filePath
+        ? currentTabs.find((item) => isLive(item) && (samePath(item.filePath, filePath) || samePath(item.sourcePath, filePath)))
+        : currentTabs.find((item) => item.id === currentActive && isLive(item))
+      const editor = tab && currentEditors[tab.id]
+      if (editor && !editor.isDestroyed) {
+        const list = tab.filePath ? await electronAPI.listBookmarks(tab.filePath).catch(() => []) : []
+        const found = findFragmentTarget(editor, list, fragment)
+        if (!found) { setStatus(t('Nothing named "{name}" in this document', { name: fragment })); return }
+        setActiveId(tab.id)
+        const match = list.find((item) => item.name.toLowerCase() === fragment.toLowerCase())
+        if (match) setActiveBookmarkId(match.id)
+        editor.chain().focus().setTextSelection({ from: found.from, to: found.to }).scrollIntoView().run()
+        return
+      }
+      if (Date.now() > deadline) return
+      await sleep(100)
+    }
+  }
+
   function openLink(target) {
-    if (target.kind === 'file') openFromExplorer(target.path)
+    if (target.kind === 'anchor') goToFragment(null, target.fragment)
+    else if (target.kind === 'file') openFromExplorer(target.path).then(() => goToFragment(target.path, target.fragment))
     else if (target.kind === 'external') electronAPI.openLink(target.url)
     else if (target.kind === 'unresolved') setStatus(t('Save the document first to follow relative links'))
   }
@@ -954,6 +1024,9 @@ export default function App() {
             {sideTab === 'notes' && (editors[contextTab?.id]
               ? <NotesPanel noteView={noteView} onNoteViewChange={(view) => { setNoteView(view); setActiveNoteId(null) }} search={noteSearch} onSearchChange={setNoteSearch} tab={contextTab} editor={editors[contextTab.id]} project={workspaceRoot} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} />
               : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>)}
+            {sideTab === 'bookmarks' && (editors[contextTab?.id]
+              ? <BookmarksPanel tab={contextTab} editor={editors[contextTab.id]} project={workspaceRoot} bookmarks={bookmarks} activeId={activeBookmarkId} onSelect={setActiveBookmarkId} onChanged={() => setBookmarksVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} onOpenBookmark={(path, name) => openLink({ kind: 'file', path, fragment: name })} />
+              : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>)}
             {sideTab === 'memory' && <MemoryPanel project={workspaceRoot} memoryVersion={memoryVersion} activePath={contextTab?.filePath ? relativeToProject(project, contextTab.filePath) : null} onOpenFile={(relative) => openFromExplorer(`${project}/${relative}`)} onStatus={setStatus} />}
             {sideTab === 'history' && (
               <HistoryPanel tab={contextTab} editor={editors[contextTab?.id]} project={workspaceRoot} historyVersion={historyVersion} onChanged={() => setHistoryVersion((value) => value + 1)} onStatus={setStatus} />
@@ -967,7 +1040,7 @@ export default function App() {
               ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab.id} onStatus={setStatus} onInteract={workspace.promoteTab} />
               : tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
-              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} />))}
+              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} />))}
           </section>
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>

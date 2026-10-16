@@ -5,6 +5,14 @@ const preferenceValues = ipcRenderer.sendSync('preferences:load') || {}
 
 contextBridge.exposeInMainWorld('electronAPI', {
   preferences: { values: preferenceValues, set: (key, value) => ipcRenderer.send('preferences:set', key, value) },
+  copyFilesToClipboard: (request) => ipcRenderer.invoke('clipboard:copy-files', request),
+  pasteFilesFromClipboard: (request) => ipcRenderer.invoke('clipboard:paste-files', request),
+  watchWorkspace: () => ipcRenderer.invoke('workspace:watch'),
+  onWorkspaceChanged: (callback) => {
+    const listener = () => callback()
+    ipcRenderer.on('workspace:changed', listener)
+    return () => ipcRenderer.removeListener('workspace:changed', listener)
+  },
   setViewMode: (mode) => ipcRenderer.send('view:changed', mode),
   fonts: {
     catalog: () => ipcRenderer.invoke('fonts:catalog'),
@@ -58,6 +66,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addNote: (request) => ipcRenderer.invoke('notes:add', request),
   updateNote: (request) => ipcRenderer.invoke('notes:update', request),
   deleteNote: (request) => ipcRenderer.invoke('notes:delete', request),
+  listBookmarks: (filePath) => ipcRenderer.invoke('bookmarks:list', filePath),
+  listAllBookmarks: () => ipcRenderer.invoke('bookmarks:list-all'),
+  addBookmark: (request) => ipcRenderer.invoke('bookmarks:add', request),
+  updateBookmark: (request) => ipcRenderer.invoke('bookmarks:update', request),
+  deleteBookmark: (request) => ipcRenderer.invoke('bookmarks:delete', request),
   fetchImage: (url) => ipcRenderer.invoke('images:fetch', url),
   readImageFile: (path) => ipcRenderer.invoke('images:read-file', path),
   captureRect: (rect) => ipcRenderer.invoke('images:capture-page', rect),
@@ -122,6 +135,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   chooseProject: () => ipcRenderer.invoke('workspace:choose-project'),
   listDirectory: (directory) => ipcRenderer.invoke('workspace:list-directory', directory),
   saveMarkdown: (payload) => ipcRenderer.invoke('document:save-markdown', payload),
+  exportMarkdownEmbedded: (request) => ipcRenderer.invoke('document:export-markdown-embedded', request),
   exportDocx: (html) => ipcRenderer.invoke('document:export-docx', { html }),
   printDocument: (html) => ipcRenderer.invoke('document:print', { html }),
   exportPdf: (html) => ipcRenderer.invoke('document:export-pdf', { html }),

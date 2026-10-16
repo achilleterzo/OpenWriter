@@ -21,6 +21,9 @@ const { parsePdf, MARKER } = require('./pdf-import.cjs')
 const { createBrowserHistory } = require('./browser-history.cjs')
 const { createReferencesStore } = require('./project-references.cjs')
 const projectPack = require('./project-pack.cjs')
+const { createBookmarksStore } = require('./bookmarks-store.cjs')
+const { embedImages } = require('./markdown-embed.cjs')
+const fileClipboard = require('./file-clipboard.cjs')
 const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-links.cjs')
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
@@ -49,6 +52,8 @@ const browserHistory = createBrowserHistory({ getProjectPath: storePath })
 const agentBrowserHistory = createBrowserHistory({ getProjectPath: storePath, fileName: 'browser-history-agent.json' })
 const historyFor = (agent) => (agent ? agentBrowserHistory : browserHistory)
 const notesStore = createNotesStore({ getProjectPath: storePath, getMainPath: mainDirectory })
+// Segnalibri: ancore con nome nei documenti (link `file#nome`, punti da far notare all'assistente).
+const bookmarksStore = createBookmarksStore({ getProjectPath: storePath, getMainPath: mainDirectory })
 // Documenti esterni collegati al progetto aperto (senza copiarli).
 const linksStore = createLinksStore({ getProjectPath: () => projectPath })
 // Cartelle di riferimento (fuori dal progetto, solo lettura per l'assistente).
@@ -265,7 +270,13 @@ async function renamePath({ path: target, newName }) {
   if (destination === source) return source
   const caseOnlyChange = destination.toLowerCase() === source.toLowerCase()
   if (!caseOnlyChange && fsSync.existsSync(destination)) throw new Error(t('An item with this name already exists'))
+  // Gli originali (DOCX/PDF con lo stesso nome) prendono il nuovo nome insieme al documento Markdown.
+  const companions = !isDirectory && path.extname(destination).toLowerCase() === '.md' ? originalsOf(source) : []
+  const newStem = path.basename(destination, path.extname(destination))
+  const companionTargets = companions.map((item) => path.join(path.dirname(item), `${newStem}${path.extname(item)}`))
+  companionTargets.forEach((target, index) => { if (target.toLowerCase() !== companions[index].toLowerCase() && fsSync.existsSync(target)) throw new Error(t('An item with this name already exists')) })
   await fs.rename(source, destination)
+  for (let index = 0; index < companions.length; index += 1) if (companionTargets[index] !== companions[index]) await moveFile(companions[index], companionTargets[index])
   moveArtifacts(source, destination)
   return destination
 }
@@ -275,7 +286,30 @@ async function renamePath({ path: target, newName }) {
 function moveArtifacts(source, destination) {
   try { projectFile.moveHistory(source, destination) } catch (error) { console.error('Cronologia non spostata:', error) }
   try { notesStore.move(source, destination) } catch (error) { console.error('Note non spostate:', error) }
+  try { bookmarksStore.move(source, destination) } catch (error) { console.error('Segnalibri non spostati:', error) }
   try { memoryStore.relocate(source, destination) } catch (error) { console.error('Memoria non aggiornata:', error) }
+}
+
+// Gli originali (DOCX/PDF con lo stesso nome) che l'albero mostra sotto un documento Markdown: lo seguono quando si sposta, si rinomina, si copia o si trascina.
+function originalsOf(markdownPath) {
+  if (path.extname(markdownPath).toLowerCase() !== '.md') return []
+  const directory = path.dirname(markdownPath)
+  const stem = path.basename(markdownPath, path.extname(markdownPath)).toLowerCase()
+  try {
+    return fsSync.readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && convertibleExtensions.includes(path.extname(entry.name).toLowerCase()) && path.basename(entry.name, path.extname(entry.name)).toLowerCase() === stem)
+      .map((entry) => path.join(directory, entry.name))
+  } catch { return [] }
+}
+
+async function moveFile(from, to) {
+  try {
+    await fs.rename(from, to)
+  } catch (error) {
+    if (error.code !== 'EXDEV') throw error
+    await fs.copyFile(from, to, fsSync.constants.COPYFILE_EXCL)
+    await fs.rm(from)
+  }
 }
 
 // Spostamento col trascinamento nell'explorer: l'elemento va dentro `toDirectory` mantenendo il nome.
@@ -290,7 +324,12 @@ async function moveIntoDirectory({ from, toDirectory }) {
   if (fsSync.existsSync(destination)) throw new Error(t('An item with this name already exists'))
   // Le immagini accanto al documento (images/) lo seguono; se nella destinazione ce n'è una diversa con lo stesso nome, lo spostamento non parte.
   const imagePlan = planImageMove(source, destination)
+  // Gli originali (DOCX/PDF) vanno con il documento: si controlla prima che nella destinazione non ci siano file con lo stesso nome.
+  const companions = originalsOf(source)
+  const companionTargets = companions.map((item) => path.join(directory, path.basename(item)))
+  if (companionTargets.some((item) => fsSync.existsSync(item))) throw new Error(t('An item with this name already exists'))
   await fs.rename(source, destination)
+  for (let index = 0; index < companions.length; index += 1) await moveFile(companions[index], companionTargets[index])
   moveArtifacts(source, destination)
   applyImageMove(imagePlan)
   return destination
@@ -838,6 +877,11 @@ ipcMain.handle('notes:list-all', () => notesStore.listAll())
 ipcMain.handle('notes:add', (_event, { filePath, note }) => notesStore.add(filePath, note))
 ipcMain.handle('notes:update', (_event, { filePath, id, changes }) => notesStore.update(filePath, id, changes))
 ipcMain.handle('notes:delete', (_event, { filePath, id }) => notesStore.remove(filePath, id))
+ipcMain.handle('bookmarks:list', (_event, filePath) => bookmarksStore.list(filePath))
+ipcMain.handle('bookmarks:list-all', () => bookmarksStore.listAll())
+ipcMain.handle('bookmarks:add', (_event, { filePath, bookmark }) => bookmarksStore.add(filePath, bookmark))
+ipcMain.handle('bookmarks:update', (_event, { filePath, id, changes }) => bookmarksStore.update(filePath, id, changes))
+ipcMain.handle('bookmarks:delete', (_event, { filePath, id }) => bookmarksStore.remove(filePath, id))
 ipcMain.handle('chat:list', () => chatStore.list())
 ipcMain.handle('chat:get', (_event, id) => chatStore.get(id))
 ipcMain.handle('chat:create', (_event, conversation) => chatStore.create(conversation || {}))
@@ -1153,7 +1197,9 @@ ipcMain.handle('projects:reveal', (_event, directory) => {
 // così si può rilasciare in un'altra applicazione o nel file manager. Solo percorsi del progetto o collegati.
 ipcMain.on('workspace:start-drag', (event, targets) => {
   try {
-    const files = (Array.isArray(targets) ? targets : [targets]).slice(0, 50).map((item) => (linksStore.has(String(item)) ? path.resolve(String(item)) : resolveInProject(String(item)))).filter((item) => fsSync.existsSync(item))
+    const chosen = (Array.isArray(targets) ? targets : [targets]).slice(0, 50).map((item) => (linksStore.has(String(item)) ? path.resolve(String(item)) : resolveInProject(String(item)))).filter((item) => fsSync.existsSync(item))
+    // Un documento Markdown porta con sé il suo originale (DOCX/PDF).
+    const files = [...new Set(chosen.flatMap((item) => [item, ...originalsOf(item)]))]
     if (!files.length) return
     const icon = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'icon.png')).resize({ width: 32, height: 32 })
     event.sender.startDrag(files.length > 1 ? { files, icon } : { file: files[0], icon })
@@ -1225,6 +1271,19 @@ ipcMain.handle('document:export-docx', async (_event, { html }) => {
   const document = await htmlToDocx(`<html><body>${html}</body></html>`, null, { title: t('New document') })
   await fs.writeFile(docxPath, document)
   return docxPath
+})
+// Markdown con le immagini incorporate (data: URI): un solo file .md, senza la cartella images/ né uno zip. Il documento originale non cambia.
+ipcMain.handle('document:export-markdown-embedded', async (_event, { markdown, documentPath, name } = {}) => {
+  const base = String(name || '').replace(/\.[^.]*$/, '').replace(/[\\/:*?"<>|\r\n]+/g, ' ').trim() || t('New document')
+  const targetPath = await chooseSavePath({
+    defaultPath: documentPath ? path.join(path.dirname(documentPath), `${base} (embedded).md`) : `${base} (embedded).md`,
+    filters: [markdownFilter],
+  })
+  if (!targetPath) return null
+  const markdownPath = /\.(md|markdown|mdown)$/i.test(targetPath) ? targetPath : `${targetPath}.md`
+  const result = embedImages(String(markdown || ''), documentPath ? String(documentPath) : null)
+  await fs.writeFile(markdownPath, result.markdown, 'utf8')
+  return { path: markdownPath, embedded: result.embedded, missing: result.missing.length, tooLarge: result.tooLarge.length, remote: result.remote }
 })
 ipcMain.handle('document:print', (_event, { html }) => printDocument(String(html || '')))
 ipcMain.handle('document:export-pdf', async (_event, { html }) => {
@@ -1326,6 +1385,94 @@ ipcMain.on('preferences:set', (_event, key, value) => {
   preferencesTimer = setTimeout(flushPreferences, 200)
 })
 app.on('before-quit', flushPreferences)
+
+// Appunti di file con il sistema: copia/taglia dall'albero e incolla nel file manager o in altri programmi, e viceversa (vedi file-clipboard.cjs).
+const CLIPBOARD_IGNORED = new Set(['.ow', '.git', 'node_modules'])
+ipcMain.handle('clipboard:copy-files', async (_event, { paths, cut } = {}) => {
+  const resolved = (Array.isArray(paths) ? paths : [paths]).map((item) => resolveInProject(String(item)))
+  if (!resolved.length || resolved.includes(path.resolve(projectPath))) throw new Error(t('The project folder cannot be renamed from here'))
+  // Un documento Markdown porta con sé il suo originale (DOCX/PDF): negli appunti vanno insieme.
+  const withOriginals = [...new Set(resolved.flatMap((item) => [item, ...originalsOf(item)]))]
+  await fileClipboard.write(withOriginals, cut ? 'cut' : 'copy')
+  return resolved.length
+})
+// Incolla gli appunti di file nella cartella indicata. Quel che viene dal progetto e si è tagliato si sposta (cronologia, note e memoria lo seguono);
+// il resto si copia: un "taglia" fatto in un altro programma lascia l'originale dov'è (non si cancella mai nulla fuori dal progetto).
+ipcMain.handle('clipboard:paste-files', async (_event, { targetDirectory } = {}) => {
+  const directory = resolveInProject(targetDirectory)
+  if (!(await fs.stat(directory).then((stat) => stat.isDirectory(), () => false))) throw new Error(t('The destination is not a folder'))
+  const clip = await fileClipboard.read()
+  const result = { empty: !clip, copied: [], moved: [], skipped: 0, externalCut: false }
+  if (!clip) return result
+  const listed = clip.paths.map((item) => path.resolve(item))
+  // Un originale (DOCX/PDF) elencato insieme al suo documento Markdown segue il documento: non si tratta a parte.
+  const followsMarkdown = (item) => convertibleExtensions.includes(path.extname(item).toLowerCase()) && listed.some((other) => other !== item && path.extname(other).toLowerCase() === '.md' && originalsOf(other).includes(item))
+  for (const given of clip.paths.slice(0, 200)) {
+    try {
+      const source = path.resolve(given)
+      if (followsMarkdown(source)) continue
+      const stats = await fs.stat(source)
+      const inside = !path.relative(projectPath, source).startsWith('..') && !path.isAbsolute(path.relative(projectPath, source)) && source !== path.resolve(projectPath)
+      if (inside && clip.cut) {
+        const companions = originalsOf(source)
+        const to = await moveIntoDirectory({ from: source, toDirectory: directory })
+        if (to !== source) {
+          result.moved.push({ from: source, to })
+          for (const item of companions) result.moved.push({ from: item, to: path.join(directory, path.basename(item)) })
+        }
+        continue
+      }
+      if (clip.cut) result.externalCut = true
+      if (stats.isDirectory()) {
+        if (directory === source || directory.startsWith(source + path.sep) || CLIPBOARD_IGNORED.has(path.basename(source))) { result.skipped += 1; continue }
+        const destination = await uniqueDestination(directory, path.basename(source))
+        await fs.cp(source, destination, { recursive: true, errorOnExist: true, filter: (item) => !CLIPBOARD_IGNORED.has(path.basename(item)) })
+        result.copied.push(destination)
+      } else if (listedExtensions.includes(path.extname(source).toLowerCase())) {
+        const destination = await uniqueDestination(directory, path.basename(source))
+        await fs.copyFile(source, destination, fsSync.constants.COPYFILE_EXCL)
+        result.copied.push(destination)
+        // Gli originali (DOCX/PDF) si copiano con il nuovo nome del documento.
+        const newStem = path.basename(destination, path.extname(destination))
+        for (const item of originalsOf(source)) {
+          const target = path.join(directory, `${newStem}${path.extname(item)}`)
+          if (!fsSync.existsSync(target)) await fs.copyFile(item, target, fsSync.constants.COPYFILE_EXCL)
+        }
+      } else {
+        result.skipped += 1
+      }
+    } catch {
+      result.skipped += 1
+    }
+  }
+  return result
+})
+
+// Cambiamenti nella cartella del progetto fatti da fuori (file incollati, creati, spostati o eliminati con altri programmi): l'albero si aggiorna da solo.
+let workspaceWatcher = null
+let workspaceWatchTimer = null
+function stopWorkspaceWatch() {
+  clearTimeout(workspaceWatchTimer)
+  try { workspaceWatcher?.close() } catch { /* già chiuso */ }
+  workspaceWatcher = null
+}
+ipcMain.handle('workspace:watch', () => {
+  stopWorkspaceWatch()
+  if (!projectPath) return false
+  try {
+    workspaceWatcher = fsSync.watch(projectPath, { recursive: true }, (_event, name) => {
+      if (name && String(name).split(/[\\/]/).some((part) => CLIPBOARD_IGNORED.has(part))) return
+      clearTimeout(workspaceWatchTimer)
+      workspaceWatchTimer = setTimeout(() => mainWindow?.webContents.send('workspace:changed'), 400)
+    })
+    workspaceWatcher.on('error', () => stopWorkspaceWatch())
+    return true
+  } catch {
+    // La sorveglianza non è disponibile (es. cartella di rete): resta il pulsante "Aggiorna".
+    return false
+  }
+})
+app.on('will-quit', stopWorkspaceWatch)
 
 // Il browser integrato mantiene i login dopo un riavvio. I cookie con scadenza li tiene già la partizione persistente; quelli "di sessione"
 // (senza scadenza: molti siti li usano per il login) Chromium li butta alla chiusura, quindi si rendono persistenti, con una scadenza di 30 giorni.

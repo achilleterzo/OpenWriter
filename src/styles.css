@@ -253,8 +253,33 @@ body {
   border-left: 3px solid rgb(var(--rose-400));
   background: rgb(var(--rose-400) / 0.12);
   padding: 0.25rem 0 0.25rem 0.75rem;
+  color: rgb(var(--slate-300));
+}
+
+/* Senza un confronto per parole (struttura cambiata, nulla da abbinare) il blocco "prima" è tutto barrato. */
+.document-editor .tiptap .ow-pending-old--all {
   text-decoration: line-through;
   color: rgb(var(--slate-400));
+}
+
+/* Confronto per parole: nel "prima" solo le parole tolte sono barrate; nel documento solo quelle nuove sono evidenziate. */
+.document-editor .tiptap .ow-pending-removed {
+  border-radius: 0.125rem;
+  background: rgb(var(--rose-400) / 0.3);
+  text-decoration: line-through;
+}
+.document-editor .tiptap .ow-pending-removed-block {
+  color: rgb(var(--slate-400));
+  text-decoration: line-through;
+}
+.document-editor .tiptap .ow-pending-same { opacity: 0.5; }
+.document-editor .tiptap .ow-pending-touched {
+  border-left: 3px solid rgb(var(--emerald-400) / 0.6);
+  padding-left: 0.75rem;
+}
+.document-editor .tiptap .ow-pending-added {
+  border-radius: 0.125rem;
+  background: rgb(var(--emerald-400) / 0.28);
 }
 
 .document-editor .tiptap .ow-pending-old > :last-child { margin-bottom: 0; }
@@ -515,3 +540,40 @@ body {
 .document-editor .tiptap blockquote[data-alert='WARNING']::before { content: 'Warning'; }
 .document-editor .tiptap blockquote[data-alert='CAUTION'] { --alert: var(--rose-400); }
 .document-editor .tiptap blockquote[data-alert='CAUTION']::before { content: 'Caution'; }
+
+/* Linea orizzontale: il reset di Tailwind le lascia un bordo grigio chiaro e nessun margine (invisibile sul tema chiaro, attaccata al testo su quello scuro).
+   Ha un'altezza propria, così si vede, si può selezionare con un clic e ha respiro sopra e sotto. */
+.document-editor .tiptap hr {
+  position: relative;
+  height: 1.5rem;
+  margin: 0 0 1rem;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+.document-editor .tiptap hr::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  border-top: 1px solid rgb(var(--slate-500));
+}
+.document-editor .tiptap hr.ProseMirror-selectednode::before {
+  border-top: 2px solid rgb(var(--accent-400));
+}
+
+/* Segnalibri: un segno all'inizio del punto e una sottolineatura a puntini sul testo ancorato; in ambra se contrassegnati per l'assistente. */
+.document-editor .tiptap .ow-bookmark-marker {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 0.15em;
+  color: rgb(var(--accent-400));
+  vertical-align: -0.1em;
+  cursor: pointer;
+  user-select: none;
+}
+.document-editor .tiptap .ow-bookmark-marker-flagged { color: rgb(var(--amber-400)); }
+.document-editor .tiptap .ow-bookmark-range { border-bottom: 1px dotted rgb(var(--accent-400)); }
+.document-editor .tiptap .ow-bookmark-range.ow-bookmark-flagged { border-bottom-color: rgb(var(--amber-400)); }
+.document-editor .tiptap .ow-bookmark-range.ow-bookmark-active { background: rgb(var(--accent-400) / 0.15); }
