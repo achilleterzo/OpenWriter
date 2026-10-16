@@ -87,14 +87,14 @@ function CreateRow({ depth, menu }) {
 
 // Frecce nell'albero (come in un file manager): su/giù tra le righe visibili, Home/Fine agli estremi; destra apre una cartella (o scende nel suo contenuto),
 // sinistra la chiude (o torna alla cartella che contiene la riga). Invio apre il file: è già il clic del pulsante.
-function navigateTree(event) {
+function navigateTree(event, onMoved) {
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
   const row = event.target.closest?.('[data-tree-row]')
   // Il campo di testo di rinomina o creazione tiene le sue frecce.
   if (!row || event.target !== row) return
   const rows = [...event.currentTarget.querySelectorAll('[data-tree-row]')]
   const index = rows.indexOf(row)
-  const go = (target) => { if (target) { event.preventDefault(); target.focus(); target.scrollIntoView({ block: 'nearest' }) } }
+  const go = (target) => { if (target) { event.preventDefault(); target.focus(); target.scrollIntoView({ block: 'nearest' }); onMoved?.(target) } }
   const isFolder = row.dataset.treeRow === 'directory'
   const expanded = row.getAttribute('aria-expanded') === 'true'
   if (event.key === 'ArrowDown') go(rows[index + 1])
@@ -632,7 +632,11 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       <div
         ref={treeRef}
         className={`min-h-0 flex-1 overflow-y-auto py-1 ${dropTarget === project ? 'bg-accent-500/10 ring-1 ring-inset ring-accent-400' : ''}`}
-        onKeyDown={navigateTree}
+        onKeyDown={(event) => navigateTree(event, (row) => {
+          // Con un'immagine aperta, passare con le frecce su un'altra immagine la mostra nella stessa scheda (anteprima), senza togliere il focus all'albero.
+          const target = row.dataset.treePath
+          if (target && row.dataset.treeRow === 'file' && isImageFile(target) && isImageFile(activePath)) onOpenFile(target, { preview: true })
+        })}
         onDragOver={(event) => drop.over(event, project)}
         onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDropTarget(null) }}
         onDrop={(event) => drop.drop(event, project)}
