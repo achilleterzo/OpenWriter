@@ -30,6 +30,16 @@ export default function useDocumentFileCommands({ activeTab, getEditor, workspac
           if (await electronAPI.exportDocx(editor.getHTML())) onStatusChange(t('DOCX exported'))
         }
 
+        if (command === 'export-markdown-embedded') {
+          const result = await electronAPI.exportMarkdownEmbedded({ markdown: editor.getMarkdown(), documentPath: activeTab.filePath || activeTab.sourcePath || null, name: activeTab.title })
+          if (result) {
+            const problems = result.missing + result.tooLarge
+            onStatusChange(problems
+              ? t('Markdown exported: {count} images embedded, {problems} could not be embedded (missing or too large)', { count: result.embedded, problems })
+              : t('Markdown exported: {count} images embedded', { count: result.embedded }))
+          }
+        }
+
         if (command === 'print') {
           await electronAPI.printDocument(editor.getHTML())
         }

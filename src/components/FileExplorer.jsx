@@ -376,6 +376,10 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
           entry.isProject && { label: t('Make standalone project…'), onClick: () => moveSubprojectOut(entry) },
           entry.isDirectory && { label: t('Move a project here…'), onClick: () => moveProjectIn(entry.path) },
           entry.isDirectory && { separator: true },
+          { label: t('Copy'), hint: 'Ctrl+C', onClick: () => copyToClipboard(entry, false) },
+          { label: t('Cut'), hint: 'Ctrl+X', onClick: () => copyToClipboard(entry, true) },
+          { label: t('Paste'), hint: 'Ctrl+V', onClick: () => pasteFromClipboard(entry.isDirectory ? entry.path : parentOf(entry.path)) },
+          { separator: true },
           { label: t('Rename'), hint: 'F2', onClick: () => setRenaming(entry.path) },
           { label: t('Delete'), hint: t('Del'), danger: true, onClick: () => deleteEntry(entry) },
           { separator: true },
@@ -385,6 +389,12 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     },
     key(event, entry) {
       if (renaming) return
+      // Ctrl+C / Ctrl+X / Ctrl+V: appunti di file del sistema (si incolla anche nel file manager o in altri programmi, e viceversa).
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.target === event.currentTarget) {
+        const shortcut = event.key.toLowerCase()
+        if (shortcut === 'c' || shortcut === 'x') { event.preventDefault(); copyToClipboard(entry, shortcut === 'x'); return }
+        if (shortcut === 'v') { event.preventDefault(); pasteFromClipboard(entry.isDirectory ? entry.path : parentOf(entry.path)); return }
+      }
       if (event.key === 'F2') { event.preventDefault(); setRenaming(entry.path) }
       if (event.key === 'Delete') { event.preventDefault(); deleteEntry(entry) }
     },
@@ -399,6 +409,9 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       try {
         const destination = await electronAPI.renamePath({ path: entry.path, newName: name })
         onRenamed(entry.path, destination)
+        // Gli originali (DOCX/PDF) mostrati sotto il documento prendono il nuovo nome con lui.
+        const newStem = destination.replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '')
+        for (const original of entry.originals || []) onRenamed(original.path, `${parentOf(original.path)}${original.path.slice(parentOf(original.path).length, original.path.length - original.name.length)}${newStem}${original.name.replace(/^.*(\.[^.]*)$/, '$1')}`)
         setSelectedFolder(null)
         setLocalRefresh((value) => value + 1)
         if (keepFocus) focusRow(destination)
@@ -406,6 +419,34 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
         onStatus(t('Rename failed: {message}', { message: reason.message }))
       }
     },
+  }
+
+  // Appunti di file del sistema: copiati o tagliati qui si incollano nel file manager o in altri programmi; quelli copiati altrove si incollano qui.
+  const copyToClipboard = async (entry, cut) => {
+    try {
+      await electronAPI.copyFilesToClipboard({ paths: [entry.path], cut })
+      onStatus(cut ? t('Cut: {name}', { name: entry.name }) : t('Copied: {name}', { name: entry.name }))
+    } catch (reason) {
+      onStatus(reason.message)
+    }
+  }
+  const pasteFromClipboard = async (directory) => {
+    try {
+      const result = await electronAPI.pasteFilesFromClipboard({ targetDirectory: directory })
+      if (result.empty) { onStatus(t('The clipboard has no files')); return }
+      for (const move of result.moved) onRenamed(move.from, move.to)
+      setSelectedFolder(null)
+      setLocalRefresh((value) => value + 1)
+      const parts = []
+      if (result.moved.length) parts.push(t('{count} moved', { count: result.moved.length }))
+      if (result.copied.length) parts.push(t('{count} copied', { count: result.copied.length }))
+      if (result.skipped) parts.push(t('{count} skipped (not supported or not usable here)', { count: result.skipped }))
+      if (result.externalCut && result.copied.length) parts.push(t('the originals were left where they are'))
+      onStatus(parts.join(' · ') || t('Nothing was pasted'))
+      if (result.copied.length === 1 && !result.moved.length) focusRow(result.copied[0])
+    } catch (reason) {
+      onStatus(reason.message)
+    }
   }
 
   // Trascinamento dei file. In uscita il file è trascinato dal sistema (si può rilasciare in un'altra applicazione o nel file manager,
@@ -438,11 +479,19 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       // Tutto ciò che viene dal progetto stesso si sposta (cronologia, note e memoria lo seguono, anche per un sotto-progetto).
       if (paths.every((item) => isInsideProject(item, project))) {
         let moved = 0
-        for (const from of paths) {
+        // Un originale (DOCX/PDF) trascinato insieme al suo Markdown viaggia con lui: lo sposta il processo principale, qui si aggiornano solo le schede aperte.
+        const stem = (item) => item.replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '').toLowerCase()
+        const isOriginalOfListed = (item) => /\.(docx|pdf)$/i.test(item) && paths.some((other) => other !== item && /\.md$/i.test(other) && parentOf(other) === parentOf(item) && stem(other) === stem(item))
+        const originals = paths.filter(isOriginalOfListed)
+        for (const from of paths.filter((item) => !isOriginalOfListed(item))) {
           if (parentOf(from) === directory || from === directory) continue
           try {
             const destination = await electronAPI.moveIntoDirectory({ from, toDirectory: directory })
-            if (destination !== from) { onRenamed(from, destination); moved += 1 }
+            if (destination !== from) {
+              onRenamed(from, destination)
+              moved += 1
+              for (const original of originals.filter((item) => parentOf(item) === parentOf(from) && stem(item) === stem(from))) onRenamed(original, `${parentOf(destination)}${original.slice(parentOf(original).length)}`)
+            }
           } catch (reason) {
             onStatus(t('Move failed: {message}', { message: reason.message }))
           }

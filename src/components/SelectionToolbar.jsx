@@ -70,13 +70,14 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
         link: current.isActive('link'),
         image: current.isActive('image'),
         href: current.getAttributes('link').href || '',
+        imageHref: current.isActive('image') ? current.getAttributes('image').href || '' : '',
         empty: current.state.selection.empty,
         bold: current.isActive('bold'),
         italic: current.isActive('italic'),
         strike: current.isActive('strike'),
         code: current.isActive('code'),
       }
-      : { link: false, image: false, href: '', empty: true, bold: false, italic: false, strike: false, code: false }),
+      : { link: false, image: false, href: '', imageHref: '', empty: true, bold: false, italic: false, strike: false, code: false }),
   })
   const settled = useSettledSelection(editor)
   // In modifica: { mode: 'link' | 'selection' | 'create', range, originalText, text, url } oppure, per un'immagine, { mode: 'image', range, alt, title }.
@@ -92,7 +93,7 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
     const { doc, selection } = editor.state
     if (editor.isActive('image')) {
       const attributes = editor.getAttributes('image')
-      setEditing({ mode: 'image', range: { from: selection.from, to: selection.to }, alt: attributes.alt || '', title: attributes.title || '' })
+      setEditing({ mode: 'image', range: { from: selection.from, to: selection.to }, alt: attributes.alt || '', title: attributes.title || '', url: attributes.href || '' })
     } else if (editor.isActive('link')) {
       const range = linkRange()
       const text = doc.textBetween(range.from, range.to)
@@ -141,7 +142,9 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
       // Nel Markdown il testo alternativo sta tra [ ] e il titolo tra virgolette, su una riga: si ripuliscono i caratteri che romperebbero la sintassi.
       const alt = editing.alt.replace(/\s+/g, ' ').replace(/\[/g, '(').replace(/\]/g, ')').trim()
       const title = editing.title.replace(/\s+/g, ' ').replace(/"/g, "'").trim()
-      chain.setNodeSelection(editing.range.from).updateAttributes('image', { alt, title: title || null }).run()
+      // Indirizzo a cui porta l'immagine (facoltativo, vuoto = nessun link): nel Markdown diventa [![alt](src)](indirizzo).
+      const current = editor.getAttributes('image')
+      chain.setNodeSelection(editing.range.from).updateAttributes('image', { alt, title: title || null, href: url || null, linkTitle: url ? current.linkTitle || null : null }).run()
     } else if (editing.mode === 'link') {
       const text = editing.text.trim()
       if (!url) chain.setTextSelection(editing.range).unsetLink().run()
@@ -166,7 +169,7 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
 
   let content
   if (editing?.mode === 'image') {
-    // Titolo su una riga, poi il testo alternativo in un'area di testo (di solito è una frase intera). Invio applica; la barra si allarga in altezza.
+    // Indirizzo del link, titolo su una riga, poi il testo alternativo in un'area di testo (di solito è una frase intera). Invio applica; la barra si allarga in altezza.
     const onAltKeyDown = (event) => {
       if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); apply() } else onKeyDown(event)
     }
@@ -175,16 +178,24 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
         <div className="flex items-center gap-1">
           <input
             ref={urlRef}
-            value={editing.title}
-            aria-label={t('Title (tooltip)')}
-            placeholder={t('Title (tooltip)')}
+            value={editing.url}
+            aria-label={t('Link address')}
+            placeholder={t('Link address (optional): where the image leads')}
             className={`${fieldClass} flex-1`}
-            onChange={(event) => setEditing({ ...editing, title: event.target.value })}
+            onChange={(event) => setEditing({ ...editing, url: event.target.value })}
             onKeyDown={onKeyDown}
           />
           <FloatingButton label={t('Apply')} onClick={apply}><Check size={15} /></FloatingButton>
           <FloatingButton label={t('Cancel')} onClick={finish}><X size={15} /></FloatingButton>
         </div>
+        <input
+          value={editing.title}
+          aria-label={t('Title (tooltip)')}
+          placeholder={t('Title (tooltip)')}
+          className={`${fieldClass} w-full`}
+          onChange={(event) => setEditing({ ...editing, title: event.target.value })}
+          onKeyDown={onKeyDown}
+        />
         <textarea
           value={editing.alt}
           rows={4}
@@ -226,7 +237,9 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
     // Un'immagine selezionata: gli strumenti del testo non servono; si può sceglierne un'altra o toglierla.
     content = (
       <>
-        <FloatingButton label={t('Edit description')} onClick={startEdit}><Pencil size={14} /></FloatingButton>
+        <FloatingButton label={t('Edit description and link')} onClick={startEdit}><Pencil size={14} /></FloatingButton>
+        <FloatingButton label={state.imageHref ? t('Edit the image link') : t('Link the image…')} onClick={startEdit}><LinkIcon size={14} /></FloatingButton>
+        {state.imageHref && <FloatingButton label={t('Open link')} onClick={() => onOpenLink?.(resolveDocumentLink(state.imageHref, documentPath))}><ExternalLink size={14} /></FloatingButton>}
         <FloatingButton label={t('Choose another image…')} onClick={onReplaceImage}><ImageIcon size={14} /></FloatingButton>
         <FloatingButton label={t('Remove image')} danger onClick={() => editor.chain().focus().deleteSelection().run()}><Trash2 size={14} /></FloatingButton>
       </>
