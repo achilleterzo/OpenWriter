@@ -1,4 +1,8 @@
 import {
+  AlignCenter,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
   BetweenHorizontalEnd,
   BetweenVerticalEnd,
   Bold,
@@ -25,6 +29,7 @@ import {
 } from 'lucide-react'
 import { useEditorState } from '@tiptap/react'
 import { ToolbarButton, ToolbarDivider, ToolbarGroup } from './ToolbarButton.jsx'
+import ToolbarMenu from './ToolbarMenu.jsx'
 import { t } from '../i18n/index.js'
 import { useState } from 'react'
 
@@ -64,9 +69,28 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onL
       blockquote: currentEditor.isActive('blockquote'),
       codeBlock: currentEditor.isActive('codeBlock'),
       table: currentEditor.isActive('table'),
+      align: currentEditor.getAttributes('paragraph').align || currentEditor.getAttributes('heading').align || 'left',
     }),
   })
   const headingLevel = active.headingLevel
+  const alignItems = [
+    { value: 'left', label: t('Left aligned'), icon: <AlignLeft size={17} />, hint: 'Ctrl+Shift+L' },
+    { value: 'center', label: t('Centered'), icon: <AlignCenter size={17} />, hint: 'Ctrl+Shift+E' },
+    { value: 'right', label: t('Right aligned'), icon: <AlignRight size={17} />, hint: 'Ctrl+Shift+R' },
+    { value: 'justify', label: t('Justified'), icon: <AlignJustify size={17} />, hint: 'Ctrl+Shift+J' },
+  ]
+  const listItems = [
+    { value: 'bullet', label: t('Bulleted list'), icon: <List size={17} /> },
+    { value: 'ordered', label: t('Numbered list'), icon: <ListOrdered size={17} /> },
+    { value: 'task', label: t('Task list'), icon: <ListChecks size={17} /> },
+  ]
+  const currentList = active.bulletList ? 'bullet' : active.orderedList ? 'ordered' : active.taskList ? 'task' : 'none'
+  // Cambiare tipo converte la lista in cui ci si trova.
+  const toggleList = { bullet: () => editor.chain().focus().toggleBulletList().run(), ordered: () => editor.chain().focus().toggleOrderedList().run(), task: () => editor.chain().focus().toggleTaskList().run() }
+  const changeList = (value) => {
+    // Sceglierne di nuovo il tipo attuale toglie l'elenco.
+    toggleList[value]()
+  }
   const currentBlock = headingLevel ? `h${headingLevel}` : 'paragraph'
 
   const saveButton = (
@@ -109,6 +133,15 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onL
         </select>
       </ToolbarGroup>
       <ToolbarGroup>
+        <ToolbarMenu
+          label={t('Text alignment')}
+          icon={(alignItems.find((item) => item.value === active.align) || alignItems[0]).icon}
+          items={alignItems}
+          value={active.align}
+          onSelect={(align) => editor.chain().focus().setTextAlign(align).run()}
+        />
+      </ToolbarGroup>
+      <ToolbarGroup>
         <ToolbarButton label={t('Bold')} active={active.bold} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={17} /></ToolbarButton>
         <ToolbarButton label={t('Italic')} active={active.italic} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={17} /></ToolbarButton>
         <ToolbarButton label={t('Strikethrough')} active={active.strike} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={17} /></ToolbarButton>
@@ -117,9 +150,14 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onL
         <ToolbarButton label={t('Insert image…')} onClick={onImage}><ImageIcon size={17} /></ToolbarButton>
       </ToolbarGroup>
       <ToolbarGroup>
-        <ToolbarButton label={t('Bulleted list')} active={active.bulletList} onClick={() => editor.chain().focus().toggleBulletList().run()}><List size={17} /></ToolbarButton>
-        <ToolbarButton label={t('Numbered list')} active={active.orderedList} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered size={17} /></ToolbarButton>
-        <ToolbarButton label={t('Task list')} active={active.taskList} onClick={() => editor.chain().focus().toggleTaskList().run()}><ListChecks size={17} /></ToolbarButton>
+        <ToolbarMenu
+          label={t('List type')}
+          icon={(listItems.find((item) => item.value === currentList) || listItems[0]).icon}
+          items={listItems}
+          value={currentList}
+          active={currentList !== 'none'}
+          onSelect={changeList}
+        />
         <ToolbarButton label={t('Quote')} active={active.blockquote} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote size={17} /></ToolbarButton>
         <ToolbarButton label={t('Code block')} active={active.codeBlock} onClick={() => editor.chain().focus().toggleCodeBlock().run()}><Code2 size={17} /></ToolbarButton>
         <ToolbarButton label={t('Horizontal rule')} onClick={() => editor.chain().focus().setHorizontalRule().run()}><Minus size={17} /></ToolbarButton>

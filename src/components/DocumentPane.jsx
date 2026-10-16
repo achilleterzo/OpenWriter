@@ -3,16 +3,19 @@ import { FileText } from 'lucide-react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { Markdown } from '@tiptap/markdown'
 import Code from '@tiptap/extension-code'
-import Heading from '@tiptap/extension-heading'
+import { AlignedBlocks, AlignedHeading, AlignedParagraph, TextAlign } from '../lib/textAlignExtension.js'
 import StarterKit from '@tiptap/starter-kit'
 import DocumentToolbar from './DocumentToolbar.jsx'
 import FindBar from './FindBar.jsx'
 import { Annotations } from '../lib/annotationExtension.js'
+import { Bookmarks } from '../lib/bookmarkExtension.js'
 import { Search } from '../lib/searchExtension.js'
 import { KeepSelection } from '../lib/keepSelectionExtension.js'
 import { DocumentImage, markdownDestination } from '../lib/imageExtension.js'
 import { MathBlock, MathInline } from '../lib/mathExtensions.js'
 import { AlertBlockquote } from '../lib/alertExtension.js'
+import { MarkdownItalic, SafeMarks } from '../lib/markExtensions.js'
+import { SmartDashes } from '../lib/smartDashesExtension.js'
 import { PendingChanges, acceptAll, getPending, pendingKey, rejectAll, restorePending } from '../lib/pendingChangesExtension.js'
 import { useEditorState } from '@tiptap/react'
 import Link from '@tiptap/extension-link'
@@ -58,7 +61,7 @@ const DocumentLink = Link.configure({ openOnClick: false }).extend({
   },
 })
 
-function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onPendingRestored, onPendingChange, onNoteSelect, onStatus, onOpenLink, onSave }) {
+function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onPendingRestored, onPendingChange, onNoteSelect, onBookmarkSelect, onStatus, onOpenLink, onSave }) {
   // Vista sorgente: il Markdown grezzo del documento in un campo di testo. È solo un modo di lavorare o copiare il testo:
   // note, assistente e ricerca restano sull'editor visuale, che si aggiorna man mano che si scrive.
   const [sourceOpen, setSourceOpen] = useState(false)
@@ -112,9 +115,10 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
       handleClick(view, pos, event) {
         if (!(event.ctrlKey || event.metaKey)) return false
         const anchor = event.target?.closest?.('a[href]')
-        if (!anchor) return false
+        const target = anchor?.getAttribute('href') || event.target?.closest?.('img[data-href]')?.getAttribute('data-href')
+        if (!target) return false
         event.preventDefault()
-        onOpenLink?.(resolveDocumentLink(anchor.getAttribute('href'), context.current.documentPath))
+        onOpenLink?.(resolveDocumentLink(target, context.current.documentPath))
         return true
       },
       handlePaste(view, event) {
@@ -138,13 +142,17 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
     },
     extensions: [
       DocumentImage.configure({ allowBase64: true, resolveSource: (src) => displaySource(src, context.current.documentPath) }),
-      StarterKit.configure({ heading: false, code: false, link: false, listItem: false, blockquote: false }),
+      StarterKit.configure({ heading: false, code: false, link: false, listItem: false, blockquote: false, paragraph: false, italic: false }),
+      MarkdownItalic,
+      AlignedParagraph,
+      TextAlign,
+      AlignedBlocks,
       AlertBlockquote,
       MarkdownListItem,
       DocumentLink,
       // Un link può racchiudere codice in linea ([`file.md`](url)): nello schema predefinito il codice esclude ogni altro marchio e il Markdown non sarebbe valido.
       Code.extend({ excludes: 'bold italic strike' }),
-      Heading.configure({ levels: [1, 2, 3, 4, 5, 6, 7] }),
+      AlignedHeading.configure({ levels: [1, 2, 3, 4, 5, 6, 7] }),
       TaskList,
       TaskItem.configure({ nested: true }),
       // Tabelle GFM: senza queste estensioni le righe con "|" sparivano all'apertura (e quindi anche dal file al salvataggio).
@@ -160,7 +168,10 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
       MathBlock,
       FootnoteDefinition,
       Markdown,
+      SafeMarks,
+      SmartDashes,
       Annotations.configure({ onSelect: (id) => onNoteSelect?.(id) }),
+      Bookmarks.configure({ onSelect: (id) => onBookmarkSelect?.(id) }),
       Search,
       KeepSelection,
       PendingChanges.configure({ labels: { caption: t('Edited by the assistant'), accept: t('Accept'), reject: t('Reject') } }),
