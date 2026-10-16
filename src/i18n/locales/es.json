@@ -1028,5 +1028,10 @@
   "The bookmark must be anchored to some text": "El marcador debe estar anclado a algún texto",
   "Too many bookmarks in this document": "Demasiados marcadores en este documento",
   "Bookmark not found": "Marcador no encontrado",
-  "Note": "Nota"
+  "Note": "Nota",
+  "Zoom in": "Acercar",
+  "Zoom out": "Alejar",
+  "Previous image": "Imagen anterior",
+  "Next image": "Imagen siguiente",
+  "Image {position} of {count}": "Imagen {position} de {count}"
 }

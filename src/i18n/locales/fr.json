@@ -1028,5 +1028,10 @@
   "The bookmark must be anchored to some text": "Le signet doit être ancré à du texte",
   "Too many bookmarks in this document": "Trop de signets dans ce document",
   "Bookmark not found": "Signet introuvable",
-  "Note": "Note"
+  "Note": "Note",
+  "Zoom in": "Zoom avant",
+  "Zoom out": "Zoom arrière",
+  "Previous image": "Image précédente",
+  "Next image": "Image suivante",
+  "Image {position} of {count}": "Image {position} sur {count}"
 }

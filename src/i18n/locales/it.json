@@ -1028,5 +1028,10 @@
   "The bookmark must be anchored to some text": "Il segnalibro deve essere ancorato a del testo",
   "Too many bookmarks in this document": "Troppi segnalibri in questo documento",
   "Bookmark not found": "Segnalibro non trovato",
-  "Note": "Nota"
+  "Note": "Nota",
+  "Zoom in": "Ingrandisci",
+  "Zoom out": "Riduci",
+  "Previous image": "Immagine precedente",
+  "Next image": "Immagine successiva",
+  "Image {position} of {count}": "Immagine {position} di {count}"
 }

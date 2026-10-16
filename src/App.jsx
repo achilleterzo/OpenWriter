@@ -596,6 +596,10 @@ export default function App() {
       setAssistantOpen(true)
       setChatRequest({ id: Date.now(), text: t('Check how likely this document is to have been written by an AI rather than by a person, and record the result with the set_ai_score tool. Read the whole text first. Judge only from its style and structure, and be cautious: it is only an indication.') })
     },
+    // Nella scheda di un'immagine si passa a un'altra immagine (frecce, pulsanti ai lati): la scheda resta la stessa.
+    changeImage(id, imagePath) {
+      setTabs((current) => current.map((tab) => (tab.id === id && tab.kind === 'image' ? { ...tab, imagePath, title: baseName(imagePath) } : tab)))
+    },
     // Apre un'immagine del progetto in una scheda di visualizzazione (sola lettura); `preview` e `permanent` come per i documenti.
     openImage(imagePath, { preview = false, permanent = false } = {}) {
       const existing = latest.current.tabs.find((tab) => tab.kind === 'image' && samePath(tab.imagePath, imagePath))
@@ -1037,7 +1041,7 @@ export default function App() {
           <TabBar tabs={tabs} onPromote={workspace.promoteTab} unsavedCount={unsavedTabs(tabs).length} onSaveAll={saveAllTabs} activeId={activeTab.id} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
             {tabs.map((tab) => (tab.kind === 'image'
-              ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab.id} onStatus={setStatus} onInteract={workspace.promoteTab} />
+              ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab.id} onStatus={setStatus} onInteract={workspace.promoteTab} onNavigate={workspace.changeImage} />
               : tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
               : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} />))}

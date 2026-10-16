@@ -1028,5 +1028,10 @@
   "The bookmark must be anchored to some text": "Das Lesezeichen muss an einen Text gebunden sein",
   "Too many bookmarks in this document": "Zu viele Lesezeichen in diesem Dokument",
   "Bookmark not found": "Lesezeichen nicht gefunden",
-  "Note": "Notiz"
+  "Note": "Notiz",
+  "Zoom in": "Vergrößern",
+  "Zoom out": "Verkleinern",
+  "Previous image": "Vorheriges Bild",
+  "Next image": "Nächstes Bild",
+  "Image {position} of {count}": "Bild {position} von {count}"
 }
