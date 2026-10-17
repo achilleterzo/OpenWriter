@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
- * Server MCP di OpenWriter (stdio, sola lettura).
+ * Server MCP di OpenWriter (stdio).
  *
  * Mette a disposizione degli agenti esterni (Claude Code, Codex, OpenCode, client integrati negli IDE…) ciò che i soli file non mostrano:
  * contesto e istruzioni del progetto, skill, note, segnalibri, memoria, oltre a elenco, lettura e ricerca dei documenti.
- * Non scrive nulla: le modifiche restano del client dell'agente. Non dipende da Electron, quindi funziona anche con l'app chiusa.
+ * Non modifica mai i documenti. Può però aggiungere note, correzioni proposte (note con testo sostitutivo) e segnalibri, che l'utente rivede
+ * in OpenWriter e accetta o rifiuta: è il modo di "mettere mano" alla documentazione senza saltare la revisione. Con `--read-only` questi
+ * strumenti non esistono. Non dipende da Electron, quindi funziona anche con l'app chiusa.
  *
  * Il progetto è, in ordine: `--project <cartella>` (o OPENWRITER_PROJECT); la `.ow` più vicina risalendo dalla cartella in cui parte l'agente;
  * il progetto aperto nell'app (workspace.json nei dati dell'app, riletto a ogni chiamata). `--data <cartella>` indica i dati dell'app.
@@ -22,6 +24,7 @@ const { createMemoryStore } = require('./memory-store.cjs')
 const { createSkillsStore } = require('./skills-store.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
 const { findOwners } = require('./project-owner.cjs')
+const { analyzeMarkdown, markdownToPlain } = require('./markdown-plain.cjs')
 
 const SERVER_VERSION = '1.0.0'
 const SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
@@ -29,6 +32,9 @@ const SEARCH_EXTENSIONS = /\.(md|markdown|mdown|txt)$/i
 const SKIPPED_NAMES = new Set(['.ow', '.git', 'node_modules'])
 const MAX_SEARCH_RESULTS = 50
 const MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024
+const DOCUMENT_EXTENSIONS = /\.(md|markdown|mdown|txt|docx|pdf)$/i
+const TREE_DEFAULT_ENTRIES = 1000
+const TREE_MAX_ENTRIES = 5000
 
 const log = (...parts) => process.stderr.write(`[openwriter-mcp] ${parts.join(' ')}\n`)
 
@@ -37,6 +43,7 @@ function parseArguments(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index]
     if (flag === '--project' || flag === '--data') result[flag.slice(2)] = argv[(index += 1)]
+    else if (flag === '--read-only') result.readOnly = true
     else if (flag.startsWith('--project=')) result.project = flag.slice('--project='.length)
     else if (flag.startsWith('--data=')) result.data = flag.slice('--data='.length)
   }
@@ -180,8 +187,75 @@ const TOOLS = [
     },
   },
   {
+    name: 'read_project',
+    description: 'The whole project in ONE call: every folder and file, recursively, as an indented tree (folders end with "/", sub-projects are marked, files show size and last-modified date). Use it instead of listing folder after folder. Hidden folders, .ow, .git and node_modules are left out. Large projects are cut at maxEntries (the answer says so): then narrow it with "path" or "documentsOnly", or lower "maxDepth".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'folder relative to the project root (default: the whole project)' },
+        maxDepth: { type: 'integer', minimum: 1, maximum: 30, description: 'how many folder levels to descend (default 12)' },
+        documentsOnly: { type: 'boolean', description: 'only documents (.md, .markdown, .txt, .docx, .pdf), and the folders that contain them' },
+        maxEntries: { type: 'integer', minimum: 1, maximum: TREE_MAX_ENTRIES, description: `maximum number of entries (default ${TREE_DEFAULT_ENTRIES})` },
+      },
+      additionalProperties: false,
+    },
+    run({ path: folder, maxDepth, documentsOnly, maxEntries }) {
+      const project = projectPath()
+      const start = folder && folder !== '.' ? documentPath(folder) : project
+      const depthLimit = Math.min(30, Math.max(1, Number(maxDepth) || 12))
+      const limit = Math.min(TREE_MAX_ENTRIES, Math.max(1, Number(maxEntries) || TREE_DEFAULT_ENTRIES))
+      const onlyDocuments = isTrue(documentsOnly)
+      const lines = []
+      let files = 0
+      let folders = 0
+      let cut = false
+      let visited = 0
+      const describe = (stats) => `${stats.size < 1024 ? `${stats.size} B` : stats.size < 1048576 ? `${Math.round(stats.size / 1024)} KB` : `${(stats.size / 1048576).toFixed(1)} MB`}, ${new Date(stats.mtimeMs).toISOString().slice(0, 10)}`
+
+      // Restituisce le righe di una cartella (senza aggiungerle) per poter omettere le cartelle senza documenti con documentsOnly.
+      const walk = (directory, depth) => {
+        let entries = []
+        try { entries = fs.readdirSync(directory, { withFileTypes: true }) } catch { return [] }
+        entries = entries.filter((entry) => !SKIPPED_NAMES.has(entry.name) && !entry.name.startsWith('.'))
+        entries.sort((left, right) => Number(right.isDirectory()) - Number(left.isDirectory()) || left.name.localeCompare(right.name, 'it', { sensitivity: 'base' }))
+        const out = []
+        for (const entry of entries) {
+          visited += 1
+          if (visited > TREE_MAX_ENTRIES * 4) break
+          const full = path.join(directory, entry.name)
+          const indent = '  '.repeat(depth)
+          if (entry.isDirectory()) {
+            const marker = isDirectory(path.join(full, '.ow')) ? ' [sub-project]' : ''
+            const inner = depth + 1 < depthLimit ? walk(full, depth + 1) : [{ line: `${'  '.repeat(depth + 1)}…`, file: false, note: true, content: true }]
+            const hasContent = inner.some((item) => item.file || item.content)
+            if (onlyDocuments && !hasContent) continue
+            out.push({ line: `${indent}${entry.name}/${marker}`, file: false }, ...inner)
+          } else {
+            if (onlyDocuments && !DOCUMENT_EXTENSIONS.test(entry.name)) continue
+            let detail = ''
+            try { detail = ` (${describe(fs.statSync(full))})` } catch { /* file sparito nel frattempo */ }
+            out.push({ line: `${indent}${entry.name}${detail}`, file: true })
+          }
+        }
+        return out
+      }
+
+      for (const item of walk(start, 0)) {
+        if (lines.length >= limit) { cut = true; break }
+        lines.push(item.line)
+        if (item.file) files += 1
+        else if (!item.note) folders += 1
+      }
+      const where = relativeTo(project, start)
+      return [
+        `${where === '.' ? path.basename(project) : where}/  — ${folders} folders, ${files} files${onlyDocuments ? ' (documents only)' : ''}${cut ? `, CUT at ${limit} entries: narrow it with "path" or "documentsOnly"` : ''}`,
+        ...lines.map((line) => `  ${line}`),
+      ].join('\n')
+    },
+  },
+  {
     name: 'list_documents',
-    description: 'Lists a folder of the project (default: the root), folders first. Entries carry size and last-modified time; folders that are sub-projects are flagged.',
+    description: 'Lists ONE folder of the project (default: the root), folders first, with sizes and times as numbers; folders that are sub-projects are flagged. To see the whole project use read_project instead of calling this folder after folder.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'folder relative to the project root (default ".")' }, sort: { type: 'string', enum: ['name', 'date'], description: '"date" lists the most recently modified first' } }, additionalProperties: false },
     run: ({ path: folder, sort }) => projectTools.listDirectory(folder || '.', { sort: sort === 'date' ? 'date' : 'name' }),
   },
@@ -255,7 +329,237 @@ const TOOLS = [
   },
 ]
 
-const INSTRUCTIONS = 'Read-only access to an OpenWriter project (a local Markdown workspace): call project_info first, then get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never edits anything: edit the files with your own tools.'
+// ---- Scritture: sempre revisionabili. Non toccano mai il testo dei documenti: note, correzioni proposte (note con testo sostitutivo) e segnalibri.
+
+const MAX_QUOTE = 2000
+const MAX_BOOKMARK_QUOTE = 400
+const MAX_NOTE_BODY = 4000
+const MAX_BATCH = 20
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const text = (value) => String(value ?? '')
+const isTrue = (value) => value === true || value === 'true'
+
+// Documento Markdown e il suo testo piano (quello a cui si ancorano le note).
+function loadMarkdown(value) {
+  if (!text(value).trim()) throw new Error('Missing parameter "document"')
+  const file = documentPath(value)
+  if (!/\.(md|markdown|mdown)$/i.test(file)) throw new Error('Notes, suggestions and bookmarks can only be added to Markdown documents (.md)')
+  let markdown
+  try { markdown = fs.readFileSync(file, 'utf8') } catch { throw new Error(`Document not found: ${value}`) }
+  return { file, ...analyzeMarkdown(markdown) }
+}
+
+// Occorrenze della citazione nel testo piano: esatte, poi tollerando spazi e a capo (come l'editor).
+function findAll(plain, quote) {
+  const needle = text(quote)
+  if (!needle.trim()) return []
+  const hits = []
+  for (let index = plain.indexOf(needle); index !== -1; index = plain.indexOf(needle, index + needle.length)) hits.push({ index, length: needle.length })
+  if (hits.length) return hits
+  const pattern = needle.trim().split(/\s+/).map(escapeRegExp).join('\\s+')
+  for (const match of plain.matchAll(new RegExp(pattern, 'g'))) hits.push({ index: match.index, length: match[0].length })
+  return hits
+}
+
+// La citazione deve comparire una sola volta nel testo piano; si provano anche le varianti senza i simboli del Markdown (come quando la si copia da read_document).
+function locateHit(plain, quote, label = 'The quote') {
+  const raw = text(quote)
+  const unescaped = raw.replace(/\\([\\`*_{}[\]()#+\-.!|>~])/g, '$1')
+  let hits = []
+  // Anche la citazione copiata da read_document, con i simboli del Markdown (link, grassetto, elenchi…), ridotta a testo piano.
+  for (const variant of [raw, unescaped, unescaped.replace(/(\*\*|__|`)/g, ''), markdownToPlain(raw)]) {
+    hits = variant.trim() ? findAll(plain, variant) : []
+    if (hits.length) break
+  }
+  if (!hits.length) throw new Error(`${label} not found in the document. Give the text as plain words, without Markdown markers (no **, #, list dashes or link syntax), copied exactly and within one paragraph or heading.`)
+  if (hits.length > 1) throw new Error(`${label} appears ${hits.length} times: use a longer, unique passage.`)
+  return hits[0]
+}
+
+// Citazione, e il contesto che la distingue, da salvare con la nota o il segnalibro.
+function locateUnique(plain, quote, label) {
+  const hit = locateHit(plain, quote, label)
+  return {
+    quote: plain.slice(hit.index, hit.index + hit.length),
+    prefix: plain.slice(Math.max(0, hit.index - 40), hit.index),
+    suffix: plain.slice(hit.index + hit.length, hit.index + hit.length + 40),
+  }
+}
+
+function checkLength(value, limit, label) {
+  if (text(value).length > limit) throw new Error(`${label} is too long (${text(value).length} characters, at most ${limit}): split it into several parts.`)
+}
+
+function addOneNote(document, plain, item) {
+  if (!text(item.body).trim()) throw new Error('Missing parameter "body"')
+  checkLength(item.body, MAX_NOTE_BODY, 'The note')
+  checkLength(item.quote, MAX_QUOTE, 'The quote')
+  const anchor = locateUnique(plain, item.quote)
+  const hasReplacement = item.replacement !== undefined && item.replacement !== null
+  if (hasReplacement) {
+    checkLength(item.replacement, MAX_NOTE_BODY, 'The replacement')
+    if (text(item.replacement) === anchor.quote) throw new Error('The replacement is identical to the quote: there is nothing to correct')
+  }
+  const note = notesStore.add(document, { kind: hasReplacement ? 'suggestion' : 'comment', ...anchor, body: text(item.body), replacement: hasReplacement ? text(item.replacement) : null, author: 'ai' })
+  return `Note ${note.id} added (${note.kind}) on “${anchor.quote.slice(0, 80)}”.`
+}
+
+const WRITE_TOOLS = [
+  {
+    name: 'add_note',
+    description: 'Adds a note to a Markdown document of the project, anchored to a passage. The user sees it highlighted in OpenWriter and decides. Without "replacement" it is a remark (also the way to record a doubt, a TODO or a development note about the document). To PROPOSE A CHANGE to the text, give "replacement": it is a suggestion that the user can accept (the passage is replaced) or reject. "quote" is the passage as plain words (no Markdown markers), unique in the document and within one paragraph or heading; for a suggestion it must be the WHOLE passage to replace and "replacement" the COMPLETE new passage, in Markdown (with its syntax: # for headings, - for lists), ready to apply. A passage that spans several blocks (a heading and what follows, a whole list) is quoted with its blocks on separate lines and must start and end at block boundaries; do not quote a part of a list. Several notes can go in one call with "notes" (up to 20). The document file itself is never modified.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        document: { type: 'string', description: 'document path relative to the project root' },
+        quote: { type: 'string', description: 'plain text of the passage to anchor to (at most 2000 characters)' },
+        body: { type: 'string', description: 'the note: what you observe, or why you propose the change' },
+        replacement: { type: 'string', description: 'optional, makes it a suggestion: the complete Markdown that replaces the quote' },
+        notes: { type: 'array', description: 'alternative to quote/body/replacement: several notes for the same document', items: { type: 'object', properties: { quote: { type: 'string' }, body: { type: 'string' }, replacement: { type: 'string' } }, required: ['quote', 'body'] } },
+      },
+      required: ['document'],
+      additionalProperties: false,
+    },
+    run(args) {
+      const { file, plain } = loadMarkdown(args.document)
+      const items = Array.isArray(args.notes) && args.notes.length ? args.notes : [args]
+      if (items.length > MAX_BATCH) throw new Error(`Too many notes in one call (at most ${MAX_BATCH})`)
+      const results = items.map((item, position) => {
+        try { return addOneNote(file, plain, item) } catch (error) {
+          if (items.length === 1) throw error
+          return `Note ${position + 1} NOT added: ${error.message}`
+        }
+      })
+      return `${results.join('\n')}\nThe user reviews them in OpenWriter (Notes panel) and can accept, reject or resolve them.`
+    },
+  },
+  {
+    name: 'suggest_insertion',
+    description: 'Proposes adding new content after a paragraph or a heading (for example a new paragraph or section in a development document). It creates a suggestion that the user can accept or reject. "after" is any words from that paragraph or heading, unique in the document: the whole block is the anchor and keeps its formatting. It does not work inside lists, quotes, tables or code blocks (anchor on the paragraph or heading next to them, or use add_note with a "replacement" covering the whole passage). To change existing text use add_note with "replacement".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        document: { type: 'string', description: 'document path relative to the project root' },
+        after: { type: 'string', description: 'words from the paragraph or heading after which the content goes (unique in the document)' },
+        markdown: { type: 'string', description: 'the Markdown to insert after the anchor passage' },
+        body: { type: 'string', description: 'why this should be added' },
+      },
+      required: ['document', 'after', 'markdown', 'body'],
+      additionalProperties: false,
+    },
+    run({ document, after, markdown, body }) {
+      const { file, plain, blocks } = loadMarkdown(document)
+      if (!text(markdown).trim()) throw new Error('Missing parameter "markdown"')
+      const { index } = locateHit(plain, after, 'The anchor passage')
+      const block = blocks.find((item) => index >= item.start && index < item.end)
+      if (!block) throw new Error('The anchor passage was not found as a block of the document')
+      if (block.type !== 'paragraph' && block.type !== 'heading') throw new Error(`The anchor is inside a ${block.type} block: anchor on the paragraph or heading next to it, or use add_note with a "replacement" covering the whole passage`)
+      // L'ancora è l'intero blocco e la sostituzione lo riscrive com'era (col suo Markdown: titolo, grassetti, link) seguito dal testo nuovo.
+      return addOneNote(file, plain, { quote: plain.slice(block.start, block.end), body, replacement: `${block.raw}\n\n${text(markdown).trim()}` })
+    },
+  },
+  {
+    name: 'update_note',
+    description: 'Revises a note written by the assistant (not the user\'s notes): its text or proposed replacement, or reopens/resolves it. Resolving is allowed on any note (give "resolution": why it is closed without being applied). It cannot accept or reject: that is the user\'s choice. To answer a note of the user, add a new note.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        document: { type: 'string', description: 'document path relative to the project root' },
+        id: { type: 'string', description: 'note id, as listed by list_notes' },
+        body: { type: 'string' },
+        replacement: { type: 'string', description: 'new proposed replacement (a remark becomes a suggestion)' },
+        status: { type: 'string', enum: ['open', 'resolved'] },
+        resolution: { type: 'string', description: 'with status "resolved": why' },
+        quote: { type: 'string', description: 'plain text the note should now be anchored to, when the passage was edited' },
+      },
+      required: ['document', 'id'],
+      additionalProperties: false,
+    },
+    run({ document, id, body, replacement, status, resolution, quote }) {
+      const { file, plain } = loadMarkdown(document)
+      const note = notesStore.list(file).find((item) => item.id === id)
+      if (!note) throw new Error('Note not found')
+      const changes = {}
+      if (body !== undefined || replacement !== undefined) {
+        if (note.author !== 'ai') throw new Error('That note was written by the user: you can resolve it or answer with a new note, not rewrite it')
+        if (body !== undefined) { checkLength(body, MAX_NOTE_BODY, 'The note'); changes.body = text(body) }
+        if (replacement !== undefined) { checkLength(replacement, MAX_NOTE_BODY, 'The replacement'); changes.replacement = text(replacement); changes.kind = 'suggestion' }
+      }
+      if (status !== undefined) {
+        if (status !== 'open' && status !== 'resolved') throw new Error('status must be "open" or "resolved": accepting or rejecting is the user\'s choice')
+        changes.status = status
+        if (resolution !== undefined) changes.resolution = text(resolution)
+      }
+      if (quote !== undefined && text(quote).trim()) { checkLength(quote, MAX_QUOTE, 'The quote'); Object.assign(changes, locateUnique(plain, quote)) }
+      if (!Object.keys(changes).length) throw new Error('Nothing to change: pass body, replacement, status, resolution or quote')
+      const updated = notesStore.update(file, id, changes)
+      return `Note ${updated.id} updated (${updated.kind}, ${updated.status}).`
+    },
+  },
+  {
+    name: 'add_bookmark',
+    description: 'Adds a bookmark: a named anchor at a point of a Markdown document, which can be linked from any document as [text](path/to/file.md#name), or used to mark a point for the user (flagged bookmarks catch their attention, with a note saying why). "quote" is a short passage of plain words at that point (a heading or the first words of a paragraph), unique in the document.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        document: { type: 'string', description: 'document path relative to the project root' },
+        quote: { type: 'string', description: 'short plain text at the point (at most 400 characters)' },
+        name: { type: 'string', description: 'optional name for links (lowercase letters, digits, hyphens; derived from the label if omitted)' },
+        label: { type: 'string', description: 'optional short title shown in the bookmarks list' },
+        note: { type: 'string', description: 'optional remark about the point' },
+        flagged: { type: 'boolean', description: 'flag it for the user\'s attention' },
+      },
+      required: ['document', 'quote'],
+      additionalProperties: false,
+    },
+    run({ document, quote, name, label, note, flagged }) {
+      const { file, plain } = loadMarkdown(document)
+      checkLength(quote, MAX_BOOKMARK_QUOTE, 'The quote')
+      const anchor = locateUnique(plain, quote)
+      const bookmark = bookmarksStore.add(file, { ...anchor, name: text(name), label: text(label), note: text(note), flagged: isTrue(flagged), author: 'ai' })
+      return `Bookmark "${bookmark.name}" added on “${anchor.quote.slice(0, 80)}”. Link to it as [text](${relativeTo(projectPath(), file)}#${bookmark.name}) (the path is relative to the project root: adjust it to the document that contains the link).`
+    },
+  },
+  {
+    name: 'update_bookmark',
+    description: 'Changes a bookmark (by its name): label, note, flag, new name (links using the old name stop working) or the passage it is anchored to.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        document: { type: 'string', description: 'document path relative to the project root' },
+        name: { type: 'string', description: 'current name of the bookmark' },
+        newName: { type: 'string' },
+        label: { type: 'string' },
+        note: { type: 'string' },
+        flagged: { type: 'boolean' },
+        quote: { type: 'string', description: 'plain text to re-anchor the bookmark to, when its passage was edited' },
+      },
+      required: ['document', 'name'],
+      additionalProperties: false,
+    },
+    run({ document, name, newName, label, note, flagged, quote }) {
+      const { file, plain } = loadMarkdown(document)
+      const found = bookmarksStore.list(file).find((item) => item.name === name)
+      if (!found) throw new Error(`Bookmark not found: ${name}`)
+      const changes = {}
+      if (newName !== undefined) changes.name = text(newName)
+      if (label !== undefined) changes.label = text(label)
+      if (note !== undefined) changes.note = text(note)
+      if (flagged !== undefined) changes.flagged = isTrue(flagged)
+      if (quote !== undefined && text(quote).trim()) { checkLength(quote, MAX_BOOKMARK_QUOTE, 'The quote'); Object.assign(changes, locateUnique(plain, quote)) }
+      if (!Object.keys(changes).length) throw new Error('Nothing to change: pass newName, label, note, flagged or quote')
+      const updated = bookmarksStore.update(file, found.id, changes)
+      return `Bookmark "${updated.name}" updated.`
+    },
+  },
+]
+
+const READ_ONLY = args.readOnly === true || /^(1|true)$/i.test(process.env.OPENWRITER_READ_ONLY || '')
+const ACTIVE_TOOLS = READ_ONLY ? TOOLS : [...TOOLS, ...WRITE_TOOLS]
+
+const INSTRUCTIONS = READ_ONLY
+  ? 'Read-only access to an OpenWriter project (a local Markdown workspace): call project_info first, then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never edits anything: edit the files with your own tools.'
+  : 'Access to an OpenWriter project (a local Markdown workspace): call project_info first, then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never edits a document\'s text. To work on the user\'s documentation (for example development documents) while you code, leave notes (add_note), propose changes (add_note with "replacement", suggest_insertion) and set bookmarks: the user reviews them in OpenWriter and accepts or rejects each one. Check list_notes first so you do not repeat open notes.'
 
 function textResult(value, isError = false) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
@@ -276,9 +580,9 @@ async function handle(message) {
     case 'ping':
       return {}
     case 'tools/list':
-      return { tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } })) }
+      return { tools: ACTIVE_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema, annotations: { readOnlyHint: !WRITE_TOOLS.some((tool) => tool.name === name), destructiveHint: false, idempotentHint: !WRITE_TOOLS.some((tool) => tool.name === name), openWorldHint: false } })) }
     case 'tools/call': {
-      const tool = TOOLS.find((item) => item.name === message.params?.name)
+      const tool = ACTIVE_TOOLS.find((item) => item.name === message.params?.name)
       if (!tool) throw Object.assign(new Error(`Unknown tool: ${message.params?.name}`), { code: -32602 })
       try {
         return textResult(await tool.run(message.params?.arguments || {}))
@@ -295,19 +599,26 @@ async function handle(message) {
 const send = (payload) => process.stdout.write(`${JSON.stringify(payload)}\n`)
 
 const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })
+let inFlight = 0
+let closed = false
+const finishIfIdle = () => { if (closed && inFlight === 0) process.exit(0) }
 lines.on('line', async (line) => {
   if (!line.trim()) return
   let message
   try { message = JSON.parse(line) } catch { send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); return }
   // Le notifiche (nessun id: es. notifications/initialized) non hanno risposta.
   if (message.id === undefined || message.id === null) return
+  inFlight += 1
   try {
     send({ jsonrpc: '2.0', id: message.id, result: await handle(message) })
   } catch (error) {
     send({ jsonrpc: '2.0', id: message.id, error: { code: error.code || -32603, message: error.message || 'Internal error' } })
+  } finally {
+    inFlight -= 1
+    finishIfIdle()
   }
 })
-// Il client chiude stdin quando ha finito: il processo termina.
-lines.on('close', () => process.exit(0))
+// Il client chiude stdin quando ha finito: il processo termina dopo aver risposto alle richieste ancora in corso.
+lines.on('close', () => { closed = true; finishIfIdle() })
 process.on('uncaughtException', (error) => log('uncaught:', error.stack || error.message))
 log(`started (data: ${dataDirectory})`)
