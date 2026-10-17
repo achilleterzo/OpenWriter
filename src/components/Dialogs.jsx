@@ -25,6 +25,7 @@ function DialogBox({ dialog, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(dialog.kind === 'prompt' || dialog.kind === 'choice' ? null : false) }}>
       <form role="dialog" aria-modal="true" aria-label={dialog.message} className="grid w-full max-w-sm gap-3 rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-200 shadow-xl" onSubmit={(event) => { event.preventDefault(); accept() }}>
         <p className="break-words">{dialog.message}</p>
+        {dialog.detail && <p className="whitespace-pre-line break-words text-xs text-slate-400">{dialog.detail}</p>}
         {dialog.kind === 'prompt' && (
           <input autoFocus value={value} className="w-full rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-slate-100 outline-none focus:border-accent-400" onChange={(event) => setValue(event.target.value)} />
         )}
@@ -69,6 +70,15 @@ export function DialogProvider({ children }) {
     // Il focus torna dove era (l'editor, il campo di testo…).
     setTimeout(() => returnFocus.current?.focus?.(), 0)
   }, [])
+
+  // Conferme chieste dal processo principale (eliminare, spostare…): stessa finestra delle altre, la risposta torna indietro.
+  useEffect(() => {
+    const electronAPI = window.electronAPI
+    if (!electronAPI?.onDialogAsk) return undefined
+    return electronAPI.onDialogAsk(({ id, message, detail, confirmLabel, danger }) => {
+      open({ kind: 'confirm', message, detail, confirmLabel, danger }).then((answer) => electronAPI.answerDialog(id, answer === true))
+    })
+  }, [open])
 
   const api = useMemo(() => ({
     confirm: (message, options = {}) => open({ kind: 'confirm', message, ...options }),

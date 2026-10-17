@@ -167,18 +167,58 @@ function moveSessions(from, to) {
   }
   const sessions = readSessions()
   if (!Object.keys(sessions).length) return
-  fsSync.writeFileSync(sessionsFilePath(), JSON.stringify(walk(sessions), null, 2))
+  writeFileAtomic(sessionsFilePath(), JSON.stringify(walk(sessions), null, 2))
 }
 
-function loadSession() {
-  return readSessions()[sessionKey()] || null
+// Diario degli arresti (crash.log nei dati dell'app): quando la finestra resta vuota senza nulla in console, qui si legge perché.
+function logCrash(message) {
+  try { fsSync.appendFileSync(path.join(app.getPath('userData'), 'crash.log'), `${new Date().toISOString()} ${message}\n`) } catch { /* il diario non deve mai creare problemi */ }
+}
+
+app.on('child-process-gone', (_event, details) => logCrash(`processo ${details.type} terminato: ${details.reason} (codice ${details.exitCode})`))
+
+// Segno "avvio in corso": messo quando la sessione viene letta, tolto al primo salvataggio (l'interfaccia è partita). Se alla lettura successiva c'è ancora,
+// l'avvio precedente non è arrivato in fondo: si riparte senza le bozze enormi (immagini incorporate), che finiscono in recovered-drafts/ invece di andare perse.
+const startupMarkerPath = () => path.join(app.getPath('userData'), 'startup-pending')
+const HEAVY_DRAFT_CHARS = 2_000_000
+
+function setAsideHeavyDrafts(session) {
+  const kept = []
+  for (const tab of session.tabs || []) {
+    if (typeof tab.markdown === 'string' && tab.markdown.length > HEAVY_DRAFT_CHARS) {
+      const directory = path.join(app.getPath('userData'), 'recovered-drafts')
+      fsSync.mkdirSync(directory, { recursive: true })
+      const name = String(tab.title || 'draft').replace(/\.[^.]*$/, '').replace(/[\\/:*?"<>|\r\n]+/g, ' ').trim() || 'draft'
+      const file = path.join(directory, `${name} (${new Date().toISOString().replace(/[:.]/g, '-')}).md`)
+      fsSync.writeFileSync(file, tab.markdown, 'utf8')
+      logCrash(`avvio interrotto: la bozza "${tab.title}" (${tab.markdown.length} caratteri) non è stata riaperta, salvata in ${file}`)
+      continue
+    }
+    kept.push(tab)
+  }
+  if (kept.length === (session.tabs || []).length) return session
+  return { ...session, tabs: kept, activeId: kept.some((tab) => tab.id === session.activeId) ? session.activeId : kept[0]?.id }
+}
+
+function loadSession({ startup = false } = {}) {
+  const session = readSessions()[sessionKey()] || null
+  if (!startup) return session
+  let interrupted = false
+  try {
+    interrupted = fsSync.existsSync(startupMarkerPath())
+    fsSync.writeFileSync(startupMarkerPath(), String(Date.now()))
+  } catch { /* senza segno si riparte normalmente */ }
+  if (!interrupted || !session) return session
+  try { return setAsideHeavyDrafts(session) } catch (error) { logCrash(`bozze non messe da parte: ${error.message}`); return session }
 }
 
 function saveSession(session) {
+  try { fsSync.rmSync(startupMarkerPath(), { force: true }) } catch { /* innocuo */ }
   const sessions = readSessions()
   sessions[sessionKey()] = session
   fsSync.mkdirSync(app.getPath('userData'), { recursive: true })
-  fsSync.writeFileSync(sessionsFilePath(), JSON.stringify(sessions))
+  // Scrittura atomica: con bozze grandi (immagini incorporate) un arresto a metà lascerebbe il file troncato e, alla riapertura, tutte le sessioni perse.
+  writeFileAtomic(sessionsFilePath(), JSON.stringify(sessions))
   return true
 }
 
@@ -335,21 +375,36 @@ async function moveIntoDirectory({ from, toDirectory }) {
   return destination
 }
 
+// Conferma nella finestra interna dell'app (la stessa delle altre conferme), non in una finestra di sistema: la domanda va al renderer, che risponde.
+const pendingQuestions = new Map()
+let questionCounter = 0
+function confirmInApp({ message, detail = '', confirmLabel, danger = false }) {
+  if (!mainWindow || mainWindow.isDestroyed()) return Promise.resolve(false)
+  return new Promise((resolve) => {
+    questionCounter += 1
+    pendingQuestions.set(questionCounter, resolve)
+    mainWindow.webContents.send('dialog:ask', { id: questionCounter, message, detail, confirmLabel, danger })
+  })
+}
+ipcMain.on('dialog:answer', (_event, id, answer) => {
+  const resolve = pendingQuestions.get(id)
+  pendingQuestions.delete(id)
+  resolve?.(answer === true)
+})
+
 async function deletePath(target) {
   const source = resolveInProject(target)
   if (source === projectPath) throw new Error(t('The project folder cannot be deleted from here'))
   const isDirectory = (await fs.stat(source)).isDirectory()
-  const { response } = await dialog.showMessageBox(mainWindow, {
-    type: 'warning',
-    buttons: [t('Move to the trash'), t('Cancel')],
-    defaultId: 1,
-    cancelId: 1,
+  const confirmed = await confirmInApp({
     message: t('Delete "{basename}"?', { basename: path.basename(source) }),
     detail: isDirectory
       ? t('The folder and all its contents will be moved to the trash.') + (fsSync.existsSync(path.join(source, projectFile.directoryName)) ? ` ${t('It is a sub-project: its history, notes and settings go with it.')}` : '')
       : t('The file will be moved to the trash.'),
+    confirmLabel: t('Move to the trash'),
+    danger: true,
   })
-  if (response !== 0) return false
+  if (!confirmed) return false
   await shell.trashItem(source)
   return true
 }
@@ -556,6 +611,21 @@ function createWindow() {
   })
 
   applySpellcheck()
+  // Se il processo dell'interfaccia muore la finestra resta vuota e la console non dice nulla: si registra il motivo e si riprova a ricaricare (al massimo due volte).
+  let reloads = 0
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logCrash(`render-process-gone: ${details.reason} (codice ${details.exitCode})`)
+    // Domande in attesa di risposta: la pagina che le avrebbe mostrate non c'è più.
+    for (const resolve of pendingQuestions.values()) resolve(false)
+    pendingQuestions.clear()
+    if (details.reason !== 'clean-exit' && reloads < 2 && !mainWindow.isDestroyed()) {
+      reloads += 1
+      setTimeout(() => { if (!mainWindow.isDestroyed()) mainWindow.webContents.reload() }, 500)
+    }
+  })
+  mainWindow.webContents.on('unresponsive', () => logCrash('la finestra non risponde'))
+  mainWindow.webContents.on('responsive', () => logCrash('la finestra risponde di nuovo'))
+  mainWindow.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => { if (isMainFrame) logCrash(`caricamento non riuscito: ${description} (${code}) ${url}`) })
   mainWindow.webContents.on('context-menu', (_event, params) => sendEditContextMenu(mainWindow.webContents, params))
 
   if (windowState.maximized) mainWindow.maximize()
@@ -601,7 +671,15 @@ ipcMain.handle('document:open-path', async (_event, filePath, { original = false
   return { ...document, convertTo: markdownPath }
 })
 ipcMain.handle('document:reopen', (_event, filePath) => readSessionDocument(filePath))
-ipcMain.handle('session:load', () => loadSession())
+// Server MCP per gli agenti esterni (vedi mcp-server.cjs): installato si avvia con il programma stesso (ELECTRON_RUN_AS_NODE), in sviluppo con Node.js.
+ipcMain.handle('mcp:get-config', () => {
+  const server = path.join(__dirname, 'mcp-server.cjs')
+  const args = [server, '--data', app.getPath('userData')]
+  return app.isPackaged
+    ? { packaged: true, command: process.execPath, args, env: { ELECTRON_RUN_AS_NODE: '1' } }
+    : { packaged: false, command: 'node', args, env: {} }
+})
+ipcMain.handle('session:load', () => loadSession({ startup: true }))
 ipcMain.handle('session:save', (_event, session) => saveSession(session))
 ipcMain.on('session:save-sync', (event, session) => {
   try { saveSession(session) } catch (error) { console.error(error) }
@@ -930,18 +1008,15 @@ ipcMain.handle('tools:create-project', async (_event, { name, documents } = {}) 
   if (!folderName || /[\\/:*?"<>|]/.test(folderName) || folderName === '.' || folderName === '..') throw new Error(t('Invalid name'))
   const linked = checkedPaths(null, documents)
   const listed = linked.map((file) => `• ${file}`).join('\n')
-  const { response } = await dialog.showMessageBox(mainWindow, {
-    type: 'question',
-    buttons: [t('Choose the folder…'), t('Cancel')],
-    defaultId: 0,
-    cancelId: 1,
+  const confirmed = await confirmInApp({
     message: t('The assistant wants to create the project "{name}"', { name: folderName }),
     detail: [
       linked.length ? `${t('These documents will be linked to it, not copied: any change goes to the original files, where they are now.')}\n${listed}` : t('No documents will be linked.'),
       t('The app will open the new project and the conversation will continue there.'),
     ].join('\n\n'),
+    confirmLabel: t('Choose the folder…'),
   })
-  if (response !== 0) return null
+  if (!confirmed) return null
   const picked = await dialog.showOpenDialog(mainWindow, { title: t('Choose where to create the project'), defaultPath: app.getPath('documents'), properties: ['openDirectory', 'createDirectory'] })
   if (picked.canceled || !picked.filePaths[0]) return null
   const target = path.join(picked.filePaths[0], folderName)
@@ -1111,15 +1186,12 @@ ipcMain.handle('workspace:move-subproject-out', async (_event, subproject) => {
   const source = resolveInProject(subproject)
   if (source === projectPath) throw new Error(t('The project folder cannot be renamed from here'))
   if (!fsSync.existsSync(path.join(source, projectFile.directoryName))) throw new Error(t('This folder is not a sub-project'))
-  const { response } = await dialog.showMessageBox(mainWindow, {
-    type: 'question',
-    buttons: [t('Choose the destination…'), t('Cancel')],
-    defaultId: 0,
-    cancelId: 1,
+  const confirmed = await confirmInApp({
     message: t('Make the sub-project "{name}" a standalone project?', { name: path.basename(source) }),
     detail: t('The folder is moved out of this project to the place you choose, with its history, notes and memory. It will no longer inherit the instructions of this project.'),
+    confirmLabel: t('Choose the destination…'),
   })
-  if (response !== 0) return null
+  if (!confirmed) return null
   const picked = await dialog.showOpenDialog(mainWindow, { title: t('Choose where to move the project'), defaultPath: path.dirname(projectPath), properties: ['openDirectory', 'createDirectory'] })
   if (picked.canceled || !picked.filePaths[0]) return null
   const parent = path.resolve(picked.filePaths[0])
@@ -1145,15 +1217,12 @@ ipcMain.handle('workspace:move-project-in', async (_event, directory) => {
   if (isInsideOf(projectPath, source)) throw new Error(t('This folder is already inside the open project'))
   const target = path.join(destination, path.basename(source))
   if (fsSync.existsSync(target)) throw new Error(t('An item with this name already exists'))
-  const { response } = await dialog.showMessageBox(mainWindow, {
-    type: 'question',
-    buttons: [t('Move'), t('Cancel')],
-    defaultId: 0,
-    cancelId: 1,
+  const confirmed = await confirmInApp({
     message: t('Move the project "{name}" into this project?', { name: path.basename(source) }),
     detail: t('The folder is moved (not copied) to {destination} and becomes a sub-project, with its history, notes and memory. It will inherit the instructions of this project, unless you change it in its settings.', { destination }),
+    confirmLabel: t('Move'),
   })
-  if (response !== 0) return null
+  if (!confirmed) return null
   await moveDirectory(source, target)
   try { setInheritance(target, true) } catch (error) { console.error('Eredità non aggiornata:', error) }
   projectsStore.remove(source)
@@ -1164,15 +1233,12 @@ ipcMain.handle('workspace:move-project-in', async (_event, directory) => {
 ipcMain.handle('workspace:move-project', async (_event, directory) => {
   const source = path.resolve(String(directory || ''))
   if (!(await fs.stat(source).then((stat) => stat.isDirectory(), () => false))) throw new Error(t('The project folder no longer exists'))
-  const { response } = await dialog.showMessageBox(mainWindow, {
-    type: 'question',
-    buttons: [t('Choose the destination…'), t('Cancel')],
-    defaultId: 0,
-    cancelId: 1,
+  const confirmed = await confirmInApp({
     message: t('Move the project "{name}"?', { name: path.basename(source) }),
     detail: t('The whole folder is moved to the place you choose, with its history, notes and memory.'),
+    confirmLabel: t('Choose the destination…'),
   })
-  if (response !== 0) return null
+  if (!confirmed) return null
   const picked = await dialog.showOpenDialog(mainWindow, { title: t('Choose where to move the project'), defaultPath: path.dirname(source), properties: ['openDirectory', 'createDirectory'] })
   if (picked.canceled || !picked.filePaths[0]) return null
   const parent = path.resolve(picked.filePaths[0])

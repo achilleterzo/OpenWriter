@@ -45,6 +45,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('edit:context-menu', listener)
     return () => ipcRenderer.removeListener('edit:context-menu', listener)
   },
+  // Conferme chieste dal processo principale: si mostrano nella finestra interna e si risponde con answerDialog.
+  onDialogAsk: (callback) => {
+    const listener = (_event, question) => callback(question)
+    ipcRenderer.on('dialog:ask', listener)
+    return () => ipcRenderer.removeListener('dialog:ask', listener)
+  },
+  answerDialog: (id, answer) => ipcRenderer.send('dialog:answer', id, answer),
+  // Comando e argomenti per avviare il server MCP (sola lettura) da un client di agenti.
+  getMcpConfig: () => ipcRenderer.invoke('mcp:get-config'),
   renamePath: (request) => ipcRenderer.invoke('workspace:rename-path', request),
   deletePath: (target) => ipcRenderer.invoke('workspace:delete-path', target),
   openProjectFolder: () => ipcRenderer.invoke('workspace:open-project-folder'),
