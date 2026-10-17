@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getMarkRange } from '@tiptap/core'
 import { useEditorState } from '@tiptap/react'
-import { Bold, Check, Code, ExternalLink, Image as ImageIcon, Italic, Link as LinkIcon, Pencil, Strikethrough, Trash2, Unlink, X } from 'lucide-react'
+import { Asterisk, Bold, Check, Code, ExternalLink, Image as ImageIcon, Italic, Link as LinkIcon, Pencil, Strikethrough, Trash2, Unlink, X } from 'lucide-react'
 import FloatingToolbar, { FloatingButton, FloatingDivider } from './FloatingToolbar.jsx'
 import { resolveDocumentLink } from '../lib/imagePaths.js'
 import { t } from '../i18n/index.js'
@@ -80,7 +80,7 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
       : { link: false, image: false, href: '', imageHref: '', empty: true, bold: false, italic: false, strike: false, code: false }),
   })
   const settled = useSettledSelection(editor)
-  // In modifica: { mode: 'link' | 'selection' | 'create', range, originalText, text, url } oppure, per un'immagine, { mode: 'image', range, alt, title }.
+  // In modifica: { mode: 'link' | 'selection' | 'create', range, originalText, text, url } oppure, per un'immagine, { mode: 'image', range, alt, title } (descrizione) o { mode: 'imageLink', range, url } (collegamento).
   const [editing, setEditing] = useState(null)
   const urlRef = useRef(null)
 
@@ -92,8 +92,8 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
   function startEdit() {
     const { doc, selection } = editor.state
     if (editor.isActive('image')) {
-      const attributes = editor.getAttributes('image')
-      setEditing({ mode: 'image', range: { from: selection.from, to: selection.to }, alt: attributes.alt || '', title: attributes.title || '', url: attributes.href || '' })
+      // Il collegamento di un'immagine si imposta come quello del testo (stesso pulsante, stessa scorciatoia); descrizione e titolo hanno la loro modifica.
+      setEditing({ mode: 'imageLink', range: { from: selection.from, to: selection.to }, url: editor.getAttributes('image').href || '' })
     } else if (editor.isActive('link')) {
       const range = linkRange()
       const text = doc.textBetween(range.from, range.to)
@@ -103,6 +103,12 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
     } else {
       setEditing({ mode: 'create', range: { from: selection.from, to: selection.to }, originalText: '', text: '', url: '' })
     }
+  }
+
+  function startImageDetails() {
+    const { selection } = editor.state
+    const attributes = editor.getAttributes('image')
+    setEditing({ mode: 'image', range: { from: selection.from, to: selection.to }, alt: attributes.alt || '', title: attributes.title || '' })
   }
 
   // Richiesta dall'esterno (Ctrl+K o pulsante della barra): la richiesta iniziale (0) non fa nulla.
@@ -142,9 +148,11 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
       // Nel Markdown il testo alternativo sta tra [ ] e il titolo tra virgolette, su una riga: si ripuliscono i caratteri che romperebbero la sintassi.
       const alt = editing.alt.replace(/\s+/g, ' ').replace(/\[/g, '(').replace(/\]/g, ')').trim()
       const title = editing.title.replace(/\s+/g, ' ').replace(/"/g, "'").trim()
-      // Indirizzo a cui porta l'immagine (facoltativo, vuoto = nessun link): nel Markdown diventa [![alt](src)](indirizzo).
+      chain.setNodeSelection(editing.range.from).updateAttributes('image', { alt, title: title || null }).run()
+    } else if (editing.mode === 'imageLink') {
+      // Indirizzo a cui porta l'immagine (vuoto = nessun collegamento): nel Markdown diventa [![alt](src)](indirizzo).
       const current = editor.getAttributes('image')
-      chain.setNodeSelection(editing.range.from).updateAttributes('image', { alt, title: title || null, href: url || null, linkTitle: url ? current.linkTitle || null : null }).run()
+      chain.setNodeSelection(editing.range.from).updateAttributes('image', { href: url || null, linkTitle: url ? current.linkTitle || null : null }).run()
     } else if (editing.mode === 'link') {
       const text = editing.text.trim()
       if (!url) chain.setTextSelection(editing.range).unsetLink().run()
@@ -162,6 +170,10 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
     editor.chain().focus().setTextSelection(linkRange()).unsetLink().run()
   }
 
+  function removeImageLink() {
+    editor.chain().focus().updateAttributes('image', { href: null, linkTitle: null }).run()
+  }
+
   function onKeyDown(event) {
     if (event.key === 'Enter') { event.preventDefault(); apply() }
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish() }
@@ -169,34 +181,14 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
 
   let content
   if (editing?.mode === 'image') {
-    // Indirizzo del link, titolo su una riga, poi il testo alternativo in un'area di testo (di solito è una frase intera). Invio applica; la barra si allarga in altezza.
+    // Testo alternativo in un'area di testo (di solito è una frase intera), poi il titolo su una riga. Invio applica; la barra si allarga in altezza.
     const onAltKeyDown = (event) => {
       if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); apply() } else onKeyDown(event)
     }
     content = (
       <div className="grid w-80 gap-1.5 p-0.5">
-        <div className="flex items-center gap-1">
-          <input
-            ref={urlRef}
-            value={editing.url}
-            aria-label={t('Link address')}
-            placeholder={t('Link address (optional): where the image leads')}
-            className={`${fieldClass} flex-1`}
-            onChange={(event) => setEditing({ ...editing, url: event.target.value })}
-            onKeyDown={onKeyDown}
-          />
-          <FloatingButton label={t('Apply')} onClick={apply}><Check size={15} /></FloatingButton>
-          <FloatingButton label={t('Cancel')} onClick={finish}><X size={15} /></FloatingButton>
-        </div>
-        <input
-          value={editing.title}
-          aria-label={t('Title (tooltip)')}
-          placeholder={t('Title (tooltip)')}
-          className={`${fieldClass} w-full`}
-          onChange={(event) => setEditing({ ...editing, title: event.target.value })}
-          onKeyDown={onKeyDown}
-        />
         <textarea
+          ref={urlRef}
           value={editing.alt}
           rows={4}
           aria-label={t('Alternative text')}
@@ -205,12 +197,24 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
           onChange={(event) => setEditing({ ...editing, alt: event.target.value })}
           onKeyDown={onAltKeyDown}
         />
+        <div className="flex items-center gap-1">
+          <input
+            value={editing.title}
+            aria-label={t('Title (tooltip)')}
+            placeholder={t('Title (tooltip)')}
+            className={`${fieldClass} flex-1`}
+            onChange={(event) => setEditing({ ...editing, title: event.target.value })}
+            onKeyDown={onKeyDown}
+          />
+          <FloatingButton label={t('Apply')} onClick={apply}><Check size={15} /></FloatingButton>
+          <FloatingButton label={t('Cancel')} onClick={finish}><X size={15} /></FloatingButton>
+        </div>
       </div>
     )
   } else if (editing) {
     content = (
       <>
-        {editing.mode !== 'selection' && (
+        {editing.mode !== 'selection' && editing.mode !== 'imageLink' && (
           <input
             value={editing.text}
             aria-label={t('Link text')}
@@ -237,9 +241,19 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
     // Un'immagine selezionata: gli strumenti del testo non servono; si può sceglierne un'altra o toglierla.
     content = (
       <>
-        <FloatingButton label={t('Edit description and link')} onClick={startEdit}><Pencil size={14} /></FloatingButton>
-        <FloatingButton label={state.imageHref ? t('Edit the image link') : t('Link the image…')} onClick={startEdit}><LinkIcon size={14} /></FloatingButton>
-        {state.imageHref && <FloatingButton label={t('Open link')} onClick={() => onOpenLink?.(resolveDocumentLink(state.imageHref, documentPath))}><ExternalLink size={14} /></FloatingButton>}
+        <FloatingButton label={t('Edit description and title')} onClick={startImageDetails}><Pencil size={14} /></FloatingButton>
+        <FloatingDivider />
+        {state.imageHref
+          ? (
+            <>
+              <span className="flex max-w-52 items-center gap-1.5 truncate px-1.5 text-xs text-slate-300" title={state.imageHref}><LinkIcon size={13} className="shrink-0 text-accent-400" /><span className="truncate">{state.imageHref}</span></span>
+              <FloatingButton label={t('Edit link')} onClick={startEdit}><Pencil size={14} /></FloatingButton>
+              <FloatingButton label={t('Open link')} onClick={() => onOpenLink?.(resolveDocumentLink(state.imageHref, documentPath))}><ExternalLink size={14} /></FloatingButton>
+              <FloatingButton label={t('Remove link')} danger onClick={removeImageLink}><Unlink size={14} /></FloatingButton>
+            </>
+          )
+          : <FloatingButton label={t('Add link (Ctrl+K)')} onClick={startEdit}><LinkIcon size={14} /></FloatingButton>}
+        <FloatingDivider />
         <FloatingButton label={t('Choose another image…')} onClick={onReplaceImage}><ImageIcon size={14} /></FloatingButton>
         <FloatingButton label={t('Remove image')} danger onClick={() => editor.chain().focus().deleteSelection().run()}><Trash2 size={14} /></FloatingButton>
       </>
@@ -251,6 +265,7 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
         <FloatingButton label={t('Italic')} active={state.italic} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={14} /></FloatingButton>
         <FloatingButton label={t('Strikethrough')} active={state.strike} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough size={14} /></FloatingButton>
         <FloatingButton label={t('Inline code')} active={state.code} onClick={() => editor.chain().focus().toggleCode().run()}><Code size={14} /></FloatingButton>
+        <FloatingButton label={t('Insert footnote')} onClick={() => editor.chain().focus().insertFootnote().run()}><Asterisk size={14} /></FloatingButton>
         <FloatingDivider />
       </>
     )

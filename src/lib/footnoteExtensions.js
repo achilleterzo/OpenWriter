@@ -1,4 +1,5 @@
 import { Node } from '@tiptap/core'
+import { TextSelection } from '@tiptap/pm/state'
 
 /**
  * Note a piè di pagina del Markdown esteso: il richiamo `[^id]` nel testo e la definizione `[^id]: testo` (anche su più righe rientrate).
@@ -20,6 +21,41 @@ export const FootnoteRef = Node.create({
   },
   parseHTML() { return [{ tag: 'sup[data-footnote-ref]' }] },
   renderHTML({ node }) { return ['sup', { 'data-footnote-ref': node.attrs.label, class: 'ow-footnote-ref' }, node.attrs.label] },
+
+  addCommands() {
+    return {
+      // Inserisce un richiamo dopo la selezione e la sua definizione `[^n]: ` dopo le altre (o in fondo al documento), con il cursore pronto a scriverla.
+      insertFootnote: () => ({ state, tr, dispatch }) => {
+        const { schema, selection, doc } = state
+        const refType = schema.nodes.footnoteRef
+        const definitionType = schema.nodes.footnoteDefinition
+        if (!refType || !definitionType) return false
+        // Nei blocchi di testo grezzo (codice, definizioni) un richiamo non può stare.
+        if (selection.$to.parent.type.spec.code) return false
+        if (!dispatch) return true
+
+        // Etichetta: il primo numero libero tra quelli già usati da richiami e definizioni.
+        const used = new Set()
+        doc.descendants((node) => {
+          if (node.type === refType) used.add(node.attrs.label)
+          else if (node.type === definitionType) { const found = /^\[\^([^\]\s]+)\]:/.exec(node.textContent); if (found) used.add(found[1]) }
+        })
+        let label = 1
+        while (used.has(String(label))) label += 1
+
+        let after = doc.content.size
+        doc.forEach((node, offset) => { if (node.type === definitionType) after = offset + node.nodeSize })
+        const prefix = `[^${label}]: `
+        tr.insert(selection.to, refType.create({ label: String(label) }))
+        // Il richiamo, se sta prima del punto scelto, lo sposta di una posizione.
+        const position = selection.to <= after ? after + 1 : after
+        tr.insert(position, definitionType.create(null, schema.text(prefix)))
+        tr.setSelection(TextSelection.create(tr.doc, position + 1 + prefix.length))
+        dispatch(tr.scrollIntoView())
+        return true
+      },
+    }
+  },
 
   markdownTokenName: 'footnoteRef',
   markdownTokenizer: {

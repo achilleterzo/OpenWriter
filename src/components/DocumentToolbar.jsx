@@ -3,6 +3,7 @@ import {
   AlignJustify,
   AlignLeft,
   AlignRight,
+  Asterisk,
   BetweenHorizontalEnd,
   BetweenVerticalEnd,
   Bold,
@@ -148,6 +149,7 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onL
         <ToolbarButton label={t('Inline code')} active={active.code} onClick={() => editor.chain().focus().toggleCode().run()}><Code2 size={17} /></ToolbarButton>
         <ToolbarButton label={t('Link (Ctrl+K)')} active={active.link} onClick={onLink}><LinkIcon size={17} /></ToolbarButton>
         <ToolbarButton label={t('Insert image…')} onClick={onImage}><ImageIcon size={17} /></ToolbarButton>
+        <ToolbarButton label={t('Insert footnote')} onClick={() => editor.chain().focus().insertFootnote().run()}><Asterisk size={17} /></ToolbarButton>
       </ToolbarGroup>
       <ToolbarGroup>
         <ToolbarMenu
