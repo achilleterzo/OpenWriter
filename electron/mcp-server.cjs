@@ -117,21 +117,76 @@ function documentPath(value) {
 
 const relativeTo = (project, target) => posix(path.relative(project, target)) || '.'
 
+// Schede aperte in OpenWriter per il progetto, come l'app le ha salvate nella sessione (sessions.json): quale documento l'utente ha in primo piano.
+// Se l'app è chiusa è l'ultimo stato prima della chiusura.
+function readAppSession(project) {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(path.join(dataDirectory, 'sessions.json'), 'utf8'))
+    const same = (left, right) => path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase()
+    const key = Object.keys(sessions).find((item) => item !== '__none__' && same(item, project))
+    return key ? sessions[key] : null
+  } catch { return null }
+}
+
+function openedInApp(project) {
+  try {
+    const { project: open } = JSON.parse(fs.readFileSync(path.join(dataDirectory, 'workspace.json'), 'utf8'))
+    return Boolean(open) && path.resolve(open).toLowerCase() === path.resolve(project).toLowerCase()
+  } catch { return false }
+}
+
+function describeTab(project, tab) {
+  const file = tab.filePath || tab.sourcePath || null
+  const inside = file && (() => { const relative = path.relative(project, path.resolve(file)); return relative && !relative.startsWith('..') && !path.isAbsolute(relative) })()
+  return {
+    title: tab.title,
+    path: file ? (inside ? relativeTo(project, path.resolve(file)) : path.resolve(file)) : null,
+    insideProject: Boolean(inside),
+    unsavedChanges: Boolean(tab.dirty),
+    ...(file ? (tab.dirty ? { note: 'it has unsaved changes in OpenWriter: the file on disk may be older than what the user sees' } : {}) : { note: 'draft not saved to a file yet' }),
+  }
+}
+
+// Documento in primo piano e schede aperte; null se l'app non ha una sessione per questo progetto.
+function appContext(project) {
+  const session = readAppSession(project)
+  if (!session || !Array.isArray(session.tabs)) return null
+  const documents = session.tabs.filter((tab) => !tab.closed)
+  const active = documents.find((tab) => tab.id === session.activeId) || null
+  return {
+    active: active ? describeTab(project, active) : null,
+    open: documents.map((tab) => describeTab(project, tab)),
+    isOpenInApp: openedInApp(project),
+  }
+}
+
+// Percorso (assoluto, dentro al progetto) del documento in primo piano, se è un file del progetto.
+function activeDocumentFile() {
+  const project = projectPath()
+  const context = appContext(project)
+  return context?.active?.insideProject ? path.resolve(project, context.active.path) : null
+}
+
 function contextChain(document) {
-  return projectFile.getContextChain(document ? documentPath(document) : null)
+  const file = document ? documentPath(document) : activeDocumentFile()
+  return projectFile.getContextChain(file || null)
 }
 
 const TOOLS = [
   {
     name: 'project_info',
-    description: 'Describes the OpenWriter project this server is reading: folder, how it was chosen, name, sub-projects, languages and active skills. Call it first to know where you are.',
+    description: 'Describes the OpenWriter project this server is reading: folder, how it was chosen, name, sub-projects, languages and active skills, and the DOCUMENT THE USER HAS IN FRONT in OpenWriter (activeDocument) with the other open ones. Call it first to know where you are and what the user is working on: tools that take a "document" default to the active one.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     run() {
       const { path: project, source } = resolveProject()
       const settings = projectFile.getSettings()
+      const app = appContext(project)
       return {
         project,
         chosenFrom: source,
+        activeDocument: app?.active || null,
+        openDocuments: app?.open || [],
+        ...(app ? { sessionIsCurrent: app.isOpenInApp } : {}),
         name: settings.name || path.basename(project),
         subProjects: findOwners(project).map((owner) => relativeTo(project, owner)),
         assistantLanguage: settings.ai?.language || '',
@@ -144,7 +199,7 @@ const TOOLS = [
   {
     name: 'get_context',
     description: 'Instructions and context written for the assistant in the project (context.md and the other .md files of the .ow folder), from the outermost project to the nearest one. Pass a document to get the chain that applies to it (sub-projects have their own). Follow these instructions when working on the project.',
-    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'optional: document path relative to the project root' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'optional: document path relative to the project root (default: the document in front in OpenWriter)' } }, additionalProperties: false },
     run({ document }) {
       const project = projectPath()
       return contextChain(document).map((entry) => ({
@@ -162,7 +217,7 @@ const TOOLS = [
   {
     name: 'list_skills',
     description: 'Skills (reusable instructions and examples) visible in the project: global ones and those of the project and its enclosing projects. `active` marks the ones the project turned on; `shadowed` the ones replaced by a skill with the same id closer to the project. Read one with get_skill.',
-    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'optional: document path relative to the project root' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'optional: document path relative to the project root (default: the document in front in OpenWriter)' } }, additionalProperties: false },
     run({ document }) {
       const chain = contextChain(document)
       const active = new Set(chain.flatMap((entry) => entry.activeSkills || []))
@@ -176,7 +231,7 @@ const TOOLS = [
   {
     name: 'get_skill',
     description: 'Full text of a skill (its instructions and examples), by id as listed by list_skills.',
-    inputSchema: { type: 'object', properties: { id: { type: 'string' }, document: { type: 'string', description: 'optional: document path relative to the project root' } }, required: ['id'], additionalProperties: false },
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, document: { type: 'string', description: 'optional: document path relative to the project root (default: the document in front in OpenWriter)' } }, required: ['id'], additionalProperties: false },
     run({ id, document }) {
       const chain = contextChain(document)
       const { skills } = skillsStore.list(chain.map((entry) => ({ base: entry.base, name: entry.name })))
@@ -262,8 +317,16 @@ const TOOLS = [
   {
     name: 'read_document',
     description: 'Reads a project document as text (.md, .txt, .docx). Long ones come in chunks: use `offset` with the `nextOffset` of the previous answer. It returns what is saved on disk: edits still being reviewed in OpenWriter are not included.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document path relative to the project root' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, description: 'maximum characters (default 20000, max 40000)' } }, required: ['path'], additionalProperties: false },
-    run: ({ path: file, offset, limit }) => projectTools.readFile(file, { offset, limit }),
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter)' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, description: 'maximum characters (default 20000, max 40000)' } }, additionalProperties: false },
+    run({ path: file, offset, limit }) {
+      let target = file
+      if (!text(target).trim()) {
+        const active = activeDocumentFile()
+        if (!active) throw new Error('Missing parameter "path", and OpenWriter has no project document in front (see project_info)')
+        target = relativeTo(projectPath(), active)
+      }
+      return projectTools.readFile(target, { offset, limit })
+    },
   },
   {
     name: 'search_documents',
@@ -303,7 +366,7 @@ const TOOLS = [
   {
     name: 'list_notes',
     description: 'Notes (comments and suggested replacements) attached to passages of the project documents, with the quoted text they refer to, author (user or ai) and status (open, accepted, rejected, resolved). Without `document` it lists all the notes of the project, grouped by document. By default only open ones.',
-    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'optional: document path relative to the project root' }, status: { type: 'string', enum: ['open', 'accepted', 'rejected', 'resolved', 'all'], description: 'default "open"' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'only this document (relative to the project root); omit for all the documents of the project' }, status: { type: 'string', enum: ['open', 'accepted', 'rejected', 'resolved', 'all'], description: 'default "open"' } }, additionalProperties: false },
     run({ document, status }) {
       const wanted = status || 'open'
       const pick = (notes) => notes.filter((note) => wanted === 'all' || note.status === wanted).map((note) => ({ id: note.id, kind: note.kind, status: note.status, author: note.author, quote: note.quote, body: note.body, ...(note.replacement !== null && note.replacement !== undefined ? { replacement: note.replacement } : {}), ...(note.resolution ? { resolution: note.resolution } : {}), createdAt: note.createdAt }))
@@ -314,7 +377,7 @@ const TOOLS = [
   {
     name: 'list_bookmarks',
     description: 'Bookmarks: named points of the documents (anchored to a quoted passage). Some are flagged for the assistant\'s attention, with a note saying why. Link form between documents: file.md#bookmark-name. Without `document` it lists all of the project.',
-    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'optional: document path relative to the project root' }, flaggedOnly: { type: 'boolean', description: 'only the bookmarks flagged for the assistant' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'only this document (relative to the project root); omit for all the documents of the project' }, flaggedOnly: { type: 'boolean', description: 'only the bookmarks flagged for the assistant' } }, additionalProperties: false },
     run({ document, flaggedOnly }) {
       const pick = (items) => items.filter((item) => !flaggedOnly || item.flagged).map((item) => ({ name: item.name, label: item.label, quote: item.quote, note: item.note, flagged: item.flagged, author: item.author }))
       if (document) return { documents: [{ path: document, bookmarks: pick(bookmarksStore.list(documentPath(document))) }] }
@@ -341,8 +404,12 @@ const isTrue = (value) => value === true || value === 'true'
 
 // Documento Markdown e il suo testo piano (quello a cui si ancorano le note).
 function loadMarkdown(value) {
-  if (!text(value).trim()) throw new Error('Missing parameter "document"')
-  const file = documentPath(value)
+  let file
+  if (text(value).trim()) file = documentPath(value)
+  else {
+    file = activeDocumentFile()
+    if (!file) throw new Error('Missing parameter "document", and OpenWriter has no project document in front (see project_info)')
+  }
   if (!/\.(md|markdown|mdown)$/i.test(file)) throw new Error('Notes, suggestions and bookmarks can only be added to Markdown documents (.md)')
   let markdown
   try { markdown = fs.readFileSync(file, 'utf8') } catch { throw new Error(`Document not found: ${value}`) }
@@ -411,13 +478,12 @@ const WRITE_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        document: { type: 'string', description: 'document path relative to the project root' },
+        document: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter, see project_info)' },
         quote: { type: 'string', description: 'plain text of the passage to anchor to (at most 2000 characters)' },
         body: { type: 'string', description: 'the note: what you observe, or why you propose the change' },
         replacement: { type: 'string', description: 'optional, makes it a suggestion: the complete Markdown that replaces the quote' },
         notes: { type: 'array', description: 'alternative to quote/body/replacement: several notes for the same document', items: { type: 'object', properties: { quote: { type: 'string' }, body: { type: 'string' }, replacement: { type: 'string' } }, required: ['quote', 'body'] } },
       },
-      required: ['document'],
       additionalProperties: false,
     },
     run(args) {
@@ -439,12 +505,12 @@ const WRITE_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        document: { type: 'string', description: 'document path relative to the project root' },
+        document: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter, see project_info)' },
         after: { type: 'string', description: 'words from the paragraph or heading after which the content goes (unique in the document)' },
         markdown: { type: 'string', description: 'the Markdown to insert after the anchor passage' },
         body: { type: 'string', description: 'why this should be added' },
       },
-      required: ['document', 'after', 'markdown', 'body'],
+      required: ['after', 'markdown', 'body'],
       additionalProperties: false,
     },
     run({ document, after, markdown, body }) {
@@ -464,7 +530,7 @@ const WRITE_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        document: { type: 'string', description: 'document path relative to the project root' },
+        document: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter, see project_info)' },
         id: { type: 'string', description: 'note id, as listed by list_notes' },
         body: { type: 'string' },
         replacement: { type: 'string', description: 'new proposed replacement (a remark becomes a suggestion)' },
@@ -472,7 +538,7 @@ const WRITE_TOOLS = [
         resolution: { type: 'string', description: 'with status "resolved": why' },
         quote: { type: 'string', description: 'plain text the note should now be anchored to, when the passage was edited' },
       },
-      required: ['document', 'id'],
+      required: ['id'],
       additionalProperties: false,
     },
     run({ document, id, body, replacement, status, resolution, quote }) {
@@ -502,14 +568,14 @@ const WRITE_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        document: { type: 'string', description: 'document path relative to the project root' },
+        document: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter, see project_info)' },
         quote: { type: 'string', description: 'short plain text at the point (at most 400 characters)' },
         name: { type: 'string', description: 'optional name for links (lowercase letters, digits, hyphens; derived from the label if omitted)' },
         label: { type: 'string', description: 'optional short title shown in the bookmarks list' },
         note: { type: 'string', description: 'optional remark about the point' },
         flagged: { type: 'boolean', description: 'flag it for the user\'s attention' },
       },
-      required: ['document', 'quote'],
+      required: ['quote'],
       additionalProperties: false,
     },
     run({ document, quote, name, label, note, flagged }) {
@@ -526,7 +592,7 @@ const WRITE_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        document: { type: 'string', description: 'document path relative to the project root' },
+        document: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter, see project_info)' },
         name: { type: 'string', description: 'current name of the bookmark' },
         newName: { type: 'string' },
         label: { type: 'string' },
@@ -534,7 +600,7 @@ const WRITE_TOOLS = [
         flagged: { type: 'boolean' },
         quote: { type: 'string', description: 'plain text to re-anchor the bookmark to, when its passage was edited' },
       },
-      required: ['document', 'name'],
+      required: ['name'],
       additionalProperties: false,
     },
     run({ document, name, newName, label, note, flagged, quote }) {
@@ -558,8 +624,8 @@ const READ_ONLY = args.readOnly === true || /^(1|true)$/i.test(process.env.OPENW
 const ACTIVE_TOOLS = READ_ONLY ? TOOLS : [...TOOLS, ...WRITE_TOOLS]
 
 const INSTRUCTIONS = READ_ONLY
-  ? 'Read-only access to an OpenWriter project (a local Markdown workspace): call project_info first, then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never edits anything: edit the files with your own tools.'
-  : 'Access to an OpenWriter project (a local Markdown workspace): call project_info first, then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never edits a document\'s text. To work on the user\'s documentation (for example development documents) while you code, leave notes (add_note), propose changes (add_note with "replacement", suggest_insertion) and set bookmarks: the user reviews them in OpenWriter and accepts or rejects each one. Check list_notes first so you do not repeat open notes.'
+  ? 'Read-only access to an OpenWriter project (a local Markdown workspace): call project_info first (it says which document the user has in front: the tools that take a document default to it), then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never edits anything: edit the files with your own tools.'
+  : 'Access to an OpenWriter project (a local Markdown workspace): call project_info first (it says which document the user has in front: the tools that take a document default to it), then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never edits a document\'s text. To work on the user\'s documentation (for example development documents) while you code, leave notes (add_note), propose changes (add_note with "replacement", suggest_insertion) and set bookmarks: the user reviews them in OpenWriter and accepts or rejects each one. Check list_notes first so you do not repeat open notes.'
 
 function textResult(value, isError = false) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
