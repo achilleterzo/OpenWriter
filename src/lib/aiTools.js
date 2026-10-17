@@ -35,8 +35,8 @@ export const TOOL_DEFINITIONS = [
   { group: 'create', name: 'move_file', required: ['from', 'to'], description: 'Moves or renames a file or folder inside the project (history and notes follow). It never overwrites: if the destination exists it fails. Use it to put a document in the right folder or to fix a wrong name.', parameters: { from: 'current path, relative to the project root', to: 'new path, relative to the project root' } },
   { group: 'create', name: 'delete_file', required: ['path'], description: 'Moves a file or folder of the project to the trash. The user is always asked to confirm in a dialog, and can recover it from the trash. Use it only for mistakes you made (for example a duplicate you created) or when the user asks.', parameters: { path: 'path relative to the project root' } },
   { group: 'edit', name: 'open_document', required: ['path'], description: 'Opens an existing project document (.md, .txt, .docx, .pdf) in a tab, so that it can be edited with replace_text, insert_text or replace_document. A document that is not open cannot be edited: open it first.', parameters: { path: 'path of the document, relative to the project root' } },
-  { group: 'edit', name: 'replace_document', required: ['content'], description: 'Replaces the WHOLE content of the open document with the given Markdown (a full rewrite). The user can undo it with Ctrl+Z and a version of the previous text is archived; the document is saved automatically when you finish your work. For small changes prefer replace_text.', parameters: { content: 'the complete new text of the document, in Markdown', allow_shrink: { type: 'boolean', description: 'optional: true only if the new text is meant to be much shorter than the current one' }, path: 'optional: document (default: the active one)' } },
-  { group: 'edit', name: 'replace_text', required: ['find', 'replace'], description: 'Replaces a passage of the open document. The user can undo the change with Ctrl+Z; the document is saved automatically when you finish your work (a version of the previous text is archived).', parameters: { find: 'EXACT text to replace, as shown by read_file (plain text or Markdown source, e.g. a whole link [text](url)); it must appear only once', replace: 'new text, empty to delete; may contain Markdown', path: 'optional: document (default: the active one)' } },
+  { group: 'edit', name: 'replace_document', required: ['content'], description: 'Replaces the WHOLE content of the open document with the given Markdown (a full rewrite). The user can undo it with Ctrl+Z and a version of the previous text is archived; the edit stays marked for the user to accept or reject, and nothing is written to the file until the user saves. For small changes prefer replace_text.', parameters: { content: 'the complete new text of the document, in Markdown', allow_shrink: { type: 'boolean', description: 'optional: true only if the new text is meant to be much shorter than the current one' }, path: 'optional: document (default: the active one)' } },
+  { group: 'edit', name: 'replace_text', required: ['find', 'replace'], description: 'Replaces a passage of the open document. The user can undo the change with Ctrl+Z; the edit stays marked for the user to accept or reject, and nothing is written to the file until the user saves (a version of the previous text is archived).', parameters: { find: 'EXACT text to replace, as shown by read_file (plain text or Markdown source, e.g. a whole link [text](url)); it must appear only once', replace: 'new text, empty to delete; may contain Markdown', path: 'optional: document (default: the active one)' } },
   { group: 'edit', name: 'insert_text', required: ['text'], description: 'Inserts text into the open document, in an undoable way.', parameters: { text: 'text to insert; may contain Markdown', position: 'optional (default: end): after | before | start | end', anchor: 'only for after/before: EXACT text next to which to insert, as shown by read_file (plain text or Markdown source); it must appear only once', path: 'optional: document (default: the active one)' } },
   { group: 'web', name: 'browser_tabs', required: [], description: 'Lists the browser tabs of the app (including those opened by the user) with their current number, address and title.', parameters: {} },
   { group: 'web', name: 'browser_read', required: [], description: 'Reads the CURRENT content of a browser tab (even if the user opened or moved it): text and links. It does not change page.', parameters: { tab: 'optional: tab number or id (default: the foreground one or the last used)' } },
@@ -841,7 +841,7 @@ export function createToolRunner(context) {
       await context.beforeEdit(tab, editor)
       context.onDocumentEdited?.(tab)
       if (!rewriteMarkdown(editor, value)) return NO_CHANGE_MESSAGE
-      return `Rewrote the whole document "${tab.title}". The user can undo it with Ctrl+Z; the document is saved automatically when you finish.`
+      return `Rewrote the whole document "${tab.title}". The user can undo it with Ctrl+Z; the edit stays marked for the user to accept or reject, and nothing is written to the file until the user saves.`
     },
 
     async replace_text(args) {
@@ -856,14 +856,14 @@ export function createToolRunner(context) {
         await context.beforeEdit(tab, editor)
         context.onDocumentEdited?.(tab)
         if (!rewriteMarkdown(editor, markdown.slice(0, hit.index) + text(args.replace) + markdown.slice(hit.index + hit.length))) return NO_CHANGE_MESSAGE
-        return `Replaced the passage in “${tab.title}” (matched in the Markdown source). The user can undo it with Ctrl+Z; the document is saved automatically when you finish.${await closeNotes(tab, covered)}`
+        return `Replaced the passage in “${tab.title}” (matched in the Markdown source). The user can undo it with Ctrl+Z; the edit stays marked for the user to accept or reject, and nothing is written to the file until the user saves.${await closeNotes(tab, covered)}`
       }
       const { range } = located
       const covered = await notesOnPassage(tab, editor, { range })
       await context.beforeEdit(tab, editor)
       context.onDocumentEdited?.(tab)
       if (!insertAt(editor, range.from, range.to, args.replace)) return NO_CHANGE_MESSAGE
-      return `Replaced the passage in “${tab.title}”. The user can undo it with Ctrl+Z; the document is saved automatically when you finish.${await closeNotes(tab, covered)}`
+      return `Replaced the passage in “${tab.title}”. The user can undo it with Ctrl+Z; the edit stays marked for the user to accept or reject, and nothing is written to the file until the user saves.${await closeNotes(tab, covered)}`
     },
 
     async insert_text(args) {
@@ -884,7 +884,7 @@ export function createToolRunner(context) {
           await context.beforeEdit(tab, editor)
           context.onDocumentEdited?.(tab)
           if (!rewriteMarkdown(editor, markdown.slice(0, point) + text(args.text) + markdown.slice(point))) return NO_CHANGE_MESSAGE
-          return `Text inserted in “${tab.title}” (anchor matched in the Markdown source). The user can undo it with Ctrl+Z; the document is saved automatically when you finish.`
+          return `Text inserted in “${tab.title}” (anchor matched in the Markdown source). The user can undo it with Ctrl+Z; the edit stays marked for the user to accept or reject, and nothing is written to the file until the user saves.`
         }
         at = position === 'after' ? located.range.to : located.range.from
       }
@@ -894,7 +894,7 @@ export function createToolRunner(context) {
       const block = position === 'start' || position === 'end'
       const value = block && !text(args.text).includes('\n') ? `${text(args.text)}\n\n` : text(args.text)
       if (!insertAt(editor, at, at, value)) return NO_CHANGE_MESSAGE
-      return `Text inserted in “${tab.title}”. The user can undo it with Ctrl+Z; the document is saved automatically when you finish.`
+      return `Text inserted in “${tab.title}”. The user can undo it with Ctrl+Z; the edit stays marked for the user to accept or reject, and nothing is written to the file until the user saves.`
     },
 
     async browser_tabs() {

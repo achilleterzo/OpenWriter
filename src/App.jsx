@@ -546,10 +546,19 @@ export default function App() {
       setHistoryVersion((value) => value + 1)
       setStatus(t('Renamed'))
     },
-    // Le schede di un file eliminato restano aperte come documenti non salvati, così il testo non va perso.
+    // Le schede di un file eliminato che avevano modifiche (o modifiche dell'assistente da rivedere) restano aperte come documenti non salvati, così il testo non va perso;
+    // quelle senza nulla da salvare, e le immagini, si chiudono: non c'è nulla da conservare.
     pathDeleted(target) {
-      // Le schede di un'immagine eliminata si chiudono: non c'è nulla da salvare.
-      setTabs((current) => current.filter((tab) => !(tab.kind === 'image' && isInside(tab.imagePath, target))).map((tab) => (isInside(tab.sourcePath, target) || isInside(tab.filePath, target) ? { ...tab, sourcePath: null, filePath: null, dirty: true } : tab)))
+      const { editors: currentEditors } = latest.current
+      const inside = (tab) => isInside(tab.sourcePath, target) || isInside(tab.filePath, target)
+      const hasWork = (tab) => tab.dirty || Boolean(currentEditors[tab.id] && !currentEditors[tab.id].isDestroyed && getPending(currentEditors[tab.id].state).length)
+      setTabs((current) => {
+        const remaining = current
+          .filter((tab) => !(tab.kind === 'image' && isInside(tab.imagePath, target)))
+          .filter((tab) => !(isDocument(tab) && inside(tab) && !hasWork(tab)))
+          .map((tab) => (isDocument(tab) && inside(tab) ? { ...tab, sourcePath: null, filePath: null, dirty: true, closed: false } : tab))
+        return remaining.some(isDocument) ? remaining : [...remaining, createTab()]
+      })
       setExpandedPaths((current) => new Set([...current].filter((item) => !isInside(item, target))))
       setHistoryVersion((value) => value + 1)
       setStatus(t('Moved to the trash'))
@@ -798,11 +807,14 @@ export default function App() {
       return editor ? editor.getMarkdown() : null
     },
     // Salva un documento già associato a un file Markdown (usato a fine lavoro dell'assistente); gli altri restano modificati.
-    async saveDocument(id) {
+    // Le modifiche dell'assistente ancora da rivedere non si scrivono nel file: salvarle equivarrebbe ad accettarle al posto dell'utente.
+    // Il documento resta modificato finché l'utente le accetta o le rifiuta e salva (`force`: solo per non perdere il lavoro, quando le schede stanno per essere sostituite).
+    async saveDocument(id, { force = false } = {}) {
       const { tabs: currentTabs, editors: currentEditors } = latest.current
       const tab = currentTabs.find((item) => item.id === id)
       const editor = currentEditors[id]
       if (!tab?.filePath || !editor) return false
+      if (!force && getPending(editor.state).length) return false
       const savedPath = await electronAPI.saveMarkdown({ filePath: tab.filePath, markdown: editor.getMarkdown(), saveAs: false })
       if (!savedPath) return false
       workspaceRef.current.markSaved(id, savedPath)

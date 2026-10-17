@@ -10,6 +10,7 @@ import { quickActionsOf } from '../lib/quickActions.js'
 import { DEFAULT_MAX_TOOL_STEPS, TOOL_DEFINITIONS, createToolRunner, describeCall, parseToolCall, splitNextPrompt, toolAvailable, toolSchemas, toolsPrompt, visibleText } from '../lib/aiTools.js'
 import { t } from '../i18n/index.js'
 import { activeSkillIds, skillsPromptText } from '../lib/skills.js'
+import { abbreviateEmbeddedImages } from '../lib/embeddedImages.js'
 import { MAX_MODEL_USER_IMAGES, MAX_MODEL_USER_PDFS, MAX_PENDING_ATTACHMENTS, blobToBase64, canAttach, formatBytes, formatTokens, prepareImage, readAttachmentFile, totalUsage } from '../lib/chatAttachments.js'
 
 const api = window.electronAPI
@@ -952,12 +953,12 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         // Documento e selezione sono riletti a ogni passaggio: dopo una modifica il modello vede il testo aggiornato.
         const selection = editor ? selectedText(editor) : ''
         const documents = []
-        if (editor && (includeDocument || pinnedIds.includes(contextTab?.id))) documents.push({ title: contextTab?.title, text: editor.getMarkdown() })
+        if (editor && (includeDocument || pinnedIds.includes(contextTab?.id))) documents.push({ title: contextTab?.title, text: abbreviateEmbeddedImages(editor.getMarkdown()) })
         for (const id of pinnedIds) {
           if (id === contextTab?.id) continue
           const text = toolBridge.documentMarkdown(id)
           const title = openDocuments.find((item) => item.id === id)?.title
-          if (text !== null && title) documents.push({ title, text })
+          if (text !== null && title) documents.push({ title, text: abbreviateEmbeddedImages(text) })
         }
         const perDocument = Math.floor(MAX_CONTEXT_CHARS / Math.max(1, documents.length))
         const documentBlocks = documents.map(({ title, text }) => (documents.length === 1 && !pinnedIds.length
@@ -1106,7 +1107,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
           const created = handoff
           handoff = null
           // Le schede stanno per essere sostituite: prima si salvano i documenti già modificati dall'assistente.
-          for (const id of editedTabs) await toolBridge.saveDocument(id).catch((error) => console.error(error))
+          for (const id of editedTabs) await toolBridge.saveDocument(id, { force: true }).catch((error) => console.error(error))
           await toolBridge.moveToCreatedProject({ ...created, conversationId: conversation.id })
           return
         }
