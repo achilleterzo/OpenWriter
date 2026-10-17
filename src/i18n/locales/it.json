@@ -1034,7 +1034,6 @@
   "Edit description and title": "Modifica descrizione e titolo",
   "Save all (available with more than one modified document)": "Salva tutto (disponibile con più di un documento modificato)",
   "Agents (MCP)": "Agenti (MCP)",
-  "OpenWriter can act as an MCP server: agents such as Claude Code, Codex or OpenCode, or the clients built into your IDE, can read the context and instructions of the project, its skills, notes, bookmarks and memory, and search and read its documents. It is read-only: editing stays with the agent's own client.": "OpenWriter può fare da server MCP: agenti come Claude Code, Codex o OpenCode, o i client integrati nel tuo IDE, possono leggere contesto e istruzioni del progetto, le sue skill, note, segnalibri e memoria, e cercare e leggere i documenti. È in sola lettura: le modifiche restano al client dell'agente.",
   "The project is the one of the folder where the agent starts, if it contains a .ow folder; otherwise the one open in OpenWriter.": "Il progetto è quello della cartella in cui l'agente parte, se contiene una cartella .ow; altrimenti quello aperto in OpenWriter.",
   "Add the server to your client": "Aggiungi il server al tuo client",
   "Always use this project, whatever the folder the agent starts in": "Usa sempre questo progetto, qualunque sia la cartella da cui parte l'agente",
@@ -1043,5 +1042,7 @@
   "Add to {file}:": "Aggiungi a {file}:",
   "Other clients (JSON)": "Altri client (JSON)",
   "The usual \"mcpServers\" format (Claude Desktop, Cursor, Windsurf…). VS Code and PhpStorm use the same fields under \"servers\" in .vscode/mcp.json or in the MCP settings.": "Il formato \"mcpServers\" più diffuso (Claude Desktop, Cursor, Windsurf…). VS Code e PhpStorm usano gli stessi campi sotto \"servers\" in .vscode/mcp.json o nelle impostazioni MCP.",
-  "Development build: the command uses Node.js from the PATH.": "Versione di sviluppo: il comando usa Node.js dal PATH."
+  "Development build: the command uses Node.js from the PATH.": "Versione di sviluppo: il comando usa Node.js dal PATH.",
+  "OpenWriter can act as an MCP server: agents such as Claude Code, Codex or OpenCode, or the clients built into your IDE, can read the context and instructions of the project, its skills, notes, bookmarks and memory, and search and read its documents. They never edit the text of a document: they can add notes, suggested changes and bookmarks, which you review in OpenWriter and accept or reject one by one.": "OpenWriter può fare da server MCP: agenti come Claude Code, Codex o OpenCode, o i client integrati nel tuo IDE, possono leggere contesto e istruzioni del progetto, le sue skill, note, segnalibri e memoria, e cercare e leggere i documenti. Non modificano mai il testo di un documento: possono aggiungere note, modifiche suggerite e segnalibri, che rivedi in OpenWriter e accetti o rifiuti una per una.",
+  "Read-only: the agent cannot add notes, suggestions or bookmarks": "Sola lettura: l’agente non può aggiungere note, suggerimenti o segnalibri"
 }

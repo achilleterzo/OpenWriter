@@ -4,13 +4,14 @@ import { t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
 
-const TOOL_NAMES = 'project_info, get_context, list_skills, get_skill, list_documents, read_document, search_documents, list_notes, list_bookmarks, list_memory'
+const TOOL_NAMES = 'project_info, read_project, get_context, list_skills, get_skill, list_documents, read_document, search_documents, list_notes, list_bookmarks, list_memory'
+const WRITE_TOOL_NAMES = 'add_note, suggest_insertion, update_note, add_bookmark, update_bookmark'
 
 // Virgolette per una riga di comando: i percorsi con spazi vanno racchiusi.
 const shell = (value) => (/[\s"\\]/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value)
 
 // Configurazione da incollare nel client scelto: comando e argomenti sono quelli di questa installazione.
-function snippets({ command, args, env }) {
+function snippets({ command, args, env, platform }) {
   const envEntries = Object.entries(env || {})
   const json = (value) => JSON.stringify(value, null, 2)
   return [
@@ -18,7 +19,9 @@ function snippets({ command, args, env }) {
       id: 'claude-code',
       label: 'Claude Code',
       where: t('Run in a terminal:'),
-      text: ['claude mcp add openwriter', ...envEntries.map(([key, value]) => `-e ${key}=${value}`), '--', shell(command), ...args.map(shell)].join(' '),
+      // `--env` accetta più valori e inghiottirebbe il nome: va dopo il nome e prima di `--`. Su Windows, in PowerShell `claude` è uno script (claude.ps1) che perde il `--`
+      // e fa scambiare i flag del server (es. --data) per opzioni sue: `claude.cmd` li passa intatti.
+      text: [platform === 'win32' ? 'claude.cmd' : 'claude', 'mcp add --transport stdio openwriter', ...envEntries.map(([key, value]) => `--env ${key}=${value}`), '--', shell(command), ...args.map(shell)].join(' '),
     },
     {
       id: 'codex',
@@ -50,6 +53,7 @@ function snippets({ command, args, env }) {
 export default function McpSettings({ project }) {
   const [config, setConfig] = useState(null)
   const [pinProject, setPinProject] = useState(false)
+  const [readOnly, setReadOnly] = useState(false)
   const [clientId, setClientId] = useState('claude-code')
   const [copied, setCopied] = useState(false)
 
@@ -59,7 +63,7 @@ export default function McpSettings({ project }) {
     return () => { cancelled = true }
   }, [])
 
-  const options = useMemo(() => (config ? snippets({ ...config, args: pinProject && project ? [...config.args, '--project', project] : config.args }) : []), [config, pinProject, project])
+  const options = useMemo(() => (config ? snippets({ ...config, args: [...config.args, ...(pinProject && project ? ['--project', project] : []), ...(readOnly ? ['--read-only'] : [])] }) : []), [config, pinProject, project, readOnly])
   const current = options.find((item) => item.id === clientId) || options[0]
 
   async function copy() {
@@ -74,13 +78,17 @@ export default function McpSettings({ project }) {
     <div className="grid gap-6">
       <section className="grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
         <h2 className="text-lg font-semibold">{t('Agents (MCP)')}</h2>
-        <p className="max-w-2xl text-sm leading-6 text-slate-400">{t('OpenWriter can act as an MCP server: agents such as Claude Code, Codex or OpenCode, or the clients built into your IDE, can read the context and instructions of the project, its skills, notes, bookmarks and memory, and search and read its documents. It is read-only: editing stays with the agent\'s own client.')}</p>
+        <p className="max-w-2xl text-sm leading-6 text-slate-400">{t('OpenWriter can act as an MCP server: agents such as Claude Code, Codex or OpenCode, or the clients built into your IDE, can read the context and instructions of the project, its skills, notes, bookmarks and memory, and search and read its documents. They never edit the text of a document: they can add notes, suggested changes and bookmarks, which you review in OpenWriter and accept or reject one by one.')}</p>
         <p className="max-w-2xl text-sm leading-6 text-slate-400">{t('The project is the one of the folder where the agent starts, if it contains a .ow folder; otherwise the one open in OpenWriter.')}</p>
-        <p className="max-w-2xl break-words font-mono text-xs leading-5 text-slate-500">{TOOL_NAMES}</p>
+        <p className="max-w-2xl break-words font-mono text-xs leading-5 text-slate-500">{TOOL_NAMES}<br />{WRITE_TOOL_NAMES}</p>
       </section>
 
       <section className="grid grid-cols-1 gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
         <h2 className="text-lg font-semibold">{t('Add the server to your client')}</h2>
+        <label className="flex items-start gap-2 text-sm text-slate-300">
+          <input type="checkbox" className="mt-1" checked={readOnly} onChange={(event) => setReadOnly(event.target.checked)} />
+          <span>{t('Read-only: the agent cannot add notes, suggestions or bookmarks')}</span>
+        </label>
         {project && (
           <label className="flex items-start gap-2 text-sm text-slate-300">
             <input type="checkbox" className="mt-1" checked={pinProject} onChange={(event) => setPinProject(event.target.checked)} />
