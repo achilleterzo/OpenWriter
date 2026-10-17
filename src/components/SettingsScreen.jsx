@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Bot, FolderCog, Info, Palette, Settings2, SlidersHorizontal, Wand2, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, FolderCog, Info, Palette, Plug, Settings2, SlidersHorizontal, Wand2, Zap } from 'lucide-react'
 import AboutSettings from './AboutSettings.jsx'
 import AiProviderSettings from './AiProviderSettings.jsx'
 import AppearanceSettings from './AppearanceSettings.jsx'
 import GeneralSettings from './GeneralSettings.jsx'
+import McpSettings from './McpSettings.jsx'
 import QuickActionsSettings from './QuickActionsSettings.jsx'
 import ProjectSettings from './ProjectSettings.jsx'
 import SkillsManager from './SkillsManager.jsx'
@@ -17,6 +18,7 @@ const sections = [
   { id: 'ai', label: 'AI', icon: Bot },
   { id: 'actions', label: t('Quick actions'), icon: Zap },
   { id: 'skills', label: t('Skills'), icon: Wand2 },
+  { id: 'agents', label: t('Agents (MCP)'), icon: Plug },
   { id: 'about', label: t('About'), icon: Info },
 ]
 
@@ -84,6 +86,7 @@ export default function SettingsScreen({ initialSection = 'general', project, on
                 <SkillsManager scope="global" />
               </section>
             )}
+            {section === 'agents' && <McpSettings project={project} />}
             {section === 'about' && <AboutSettings version={version} release={release} onCheck={onCheckUpdate} />}
           </div>
         </div>
