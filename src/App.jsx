@@ -411,6 +411,12 @@ export default function App() {
     return electronAPI.onWorkspaceChanged(() => setExplorerRefresh((value) => value + 1))
   }, [project])
 
+  // Note e segnalibri scritti da fuori (l'agente, tramite il server MCP) compaiono subito, senza riaprire il documento.
+  useEffect(() => {
+    if (!electronAPI?.onAnnotationsChanged || !project) return undefined
+    return electronAPI.onAnnotationsChanged(() => { setNotesVersion((value) => value + 1); setBookmarksVersion((value) => value + 1) })
+  }, [project])
+
   // Carattere dell'editor specifico del progetto aperto, se le sue impostazioni ne indicano uno.
   useEffect(() => {
     if (!electronAPI) return

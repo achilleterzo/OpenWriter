@@ -676,8 +676,8 @@ ipcMain.handle('mcp:get-config', () => {
   const server = path.join(__dirname, 'mcp-server.cjs')
   const args = [server, '--data', app.getPath('userData')]
   return app.isPackaged
-    ? { packaged: true, command: process.execPath, args, env: { ELECTRON_RUN_AS_NODE: '1' } }
-    : { packaged: false, command: 'node', args, env: {} }
+    ? { packaged: true, platform: process.platform, command: process.execPath, args, env: { ELECTRON_RUN_AS_NODE: '1' } }
+    : { packaged: false, platform: process.platform, command: 'node', args, env: {} }
 })
 ipcMain.handle('session:load', () => loadSession({ startup: true }))
 ipcMain.handle('session:save', (_event, session) => saveSession(session))
@@ -1517,8 +1517,10 @@ ipcMain.handle('clipboard:paste-files', async (_event, { targetDirectory } = {})
 // Cambiamenti nella cartella del progetto fatti da fuori (file incollati, creati, spostati o eliminati con altri programmi): l'albero si aggiorna da solo.
 let workspaceWatcher = null
 let workspaceWatchTimer = null
+let annotationsWatchTimer = null
 function stopWorkspaceWatch() {
   clearTimeout(workspaceWatchTimer)
+  clearTimeout(annotationsWatchTimer)
   try { workspaceWatcher?.close() } catch { /* già chiuso */ }
   workspaceWatcher = null
 }
@@ -1527,7 +1529,15 @@ ipcMain.handle('workspace:watch', () => {
   if (!projectPath) return false
   try {
     workspaceWatcher = fsSync.watch(projectPath, { recursive: true }, (_event, name) => {
-      if (name && String(name).split(/[\\/]/).some((part) => CLIPBOARD_IGNORED.has(part))) return
+      const parts = name ? String(name).split(/[\\/]/) : []
+      // Note e segnalibri scritti da altri programmi (per esempio l'agente tramite il server MCP): l'interfaccia li rilegge.
+      const owner = parts.indexOf('.ow')
+      if (owner !== -1 && (parts[owner + 1] === 'notes' || parts[owner + 1] === 'bookmarks')) {
+        clearTimeout(annotationsWatchTimer)
+        annotationsWatchTimer = setTimeout(() => mainWindow?.webContents.send('workspace:annotations-changed'), 300)
+        return
+      }
+      if (parts.some((part) => CLIPBOARD_IGNORED.has(part))) return
       clearTimeout(workspaceWatchTimer)
       workspaceWatchTimer = setTimeout(() => mainWindow?.webContents.send('workspace:changed'), 400)
     })

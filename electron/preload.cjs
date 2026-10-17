@@ -8,6 +8,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   copyFilesToClipboard: (request) => ipcRenderer.invoke('clipboard:copy-files', request),
   pasteFilesFromClipboard: (request) => ipcRenderer.invoke('clipboard:paste-files', request),
   watchWorkspace: () => ipcRenderer.invoke('workspace:watch'),
+  onAnnotationsChanged: (callback) => {
+    const listener = () => callback()
+    ipcRenderer.on('workspace:annotations-changed', listener)
+    return () => ipcRenderer.removeListener('workspace:annotations-changed', listener)
+  },
   onWorkspaceChanged: (callback) => {
     const listener = () => callback()
     ipcRenderer.on('workspace:changed', listener)
