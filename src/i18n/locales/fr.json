@@ -557,7 +557,6 @@
   "The selected model does not support images: the image and screenshot tools stay off.": "Le modèle sélectionné ne prend pas en charge les images : les outils d'images et de captures restent désactivés.",
   "The source project has no context": "Le projet source n'a pas de contexte",
   "The spell checker is managed by the operating system.": "Le correcteur orthographique est géré par le système d'exploitation.",
-  "The text is identical to the current one: there is nothing to correct": "Le texte est identique à l'actuel : il n'y a rien à corriger",
   "The tools work with every provider, but small models may use them less reliably.": "Les outils fonctionnent avec tous les fournisseurs, mais les petits modèles peuvent les utiliser moins fiablement.",
   "Theme": "Thème",
   "There is no next page": "Il n'y a pas de page suivante",

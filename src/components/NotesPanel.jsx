@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useEditorState } from '@tiptap/react'
 import { Bot, Check, MessageSquarePlus, Search, SearchCheck, Pencil, Trash2, User, X } from 'lucide-react'
-import { markdownToPlain, replaceRangeWithMarkdown } from '../lib/editorInsert.js'
+import { rangeToMarkdown, replaceRangeWithMarkdown } from '../lib/editorInsert.js'
+import InlineMarkdown from './InlineMarkdown.jsx'
 import { anchorContext, buildTextIndex, foldText, locateNote, locateQuote, noteIsShown } from '../lib/anchoring.js'
 import { formatDateTime } from '../i18n/index.js'
 import { t } from '../i18n/index.js'
@@ -26,6 +27,11 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
       return JSON.stringify(notes.map((note) => locateNote(current.state.doc, note, index)?.from ?? null))
     },
   })
+  // Testo citato con la formattazione che ha nel documento (la nota ne conserva solo il testo semplice); se non si trova, il testo semplice.
+  const quoteMarkdown = (note) => {
+    const location = locateQuote(editor.state.doc, note)
+    return (location && rangeToMarkdown(editor, location.from, location.to)) || note.quote
+  }
   const positions = JSON.parse(located)
   const found = positions.map((position) => position !== null)
 
@@ -115,7 +121,6 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
   const applyCorrection = (note, text) => run(async () => {
     const location = locateQuote(editor.state.doc, note)
     if (!location) throw new Error(t('The note\'s text is no longer in the document'))
-    if (text === note.quote) throw new Error(t('The text is identical to the current one: there is nothing to correct'))
     replaceRangeWithMarkdown(editor, location.from, location.to, text)
     editor.commands.focus()
     await electronAPI.updateNote({ filePath: tab.filePath, id: note.id, changes: { kind: 'suggestion', replacement: text, status: 'accepted' } })
@@ -186,16 +191,16 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
                   {note.updatedAt && <span className="text-slate-500" title={t('Revised on {formatDateTime}', { formatDateTime: formatDateTime(note.updatedAt, { dateStyle: 'medium', timeStyle: 'short' }) })}>{t('· revised')}</span>}
                   {orphan && <span className="text-slate-400" title={t('The passage has changed since the note was written, so it cannot be located any more. Verify whether the note still applies, or resolve it.')}>{t('· text modified')}</span>}
                 </span>
-                <span className="mt-1 block truncate border-l-2 border-slate-600 pl-2 text-xs italic text-slate-400">{note.quote}</span>
+                <span className="mt-1 block truncate border-l-2 border-slate-600 pl-2 text-xs italic text-slate-400"><InlineMarkdown value={quoteMarkdown(note)} /></span>
                 <span className="mt-1 block whitespace-pre-wrap text-sm text-slate-200">{note.body}</span>
                 {note.status !== 'open' && note.resolution && (
                   <span className="mt-1 block whitespace-pre-wrap rounded bg-slate-950/50 px-2 py-1 text-xs italic text-slate-400"><span className="not-italic text-slate-500">{t('Reason')}: </span>{note.resolution}</span>
                 )}
                 {note.kind === 'suggestion' && (
                   <span className="mt-1 block rounded bg-slate-950/50 px-2 py-1 text-xs">
-                    <span className="text-rose-300 line-through">{note.quote}</span>
+                    <span className="text-rose-300 line-through"><InlineMarkdown value={quoteMarkdown(note)} /></span>
                     <span className="mx-1 text-slate-500">→</span>
-                    <span className="text-emerald-300">{markdownToPlain(note.replacement) || t('(delete)')}</span>
+                    <span className="text-emerald-300">{note.replacement ? <InlineMarkdown value={note.replacement} /> : t('(delete)')}</span>
                   </span>
                 )}
               </button>
