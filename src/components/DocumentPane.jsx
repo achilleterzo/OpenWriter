@@ -11,7 +11,8 @@ import { Annotations } from '../lib/annotationExtension.js'
 import { Bookmarks } from '../lib/bookmarkExtension.js'
 import { Search } from '../lib/searchExtension.js'
 import { KeepSelection } from '../lib/keepSelectionExtension.js'
-import { DocumentImage, markdownDestination } from '../lib/imageExtension.js'
+import { DocumentImage } from '../lib/imageExtension.js'
+import { markdownTarget } from '../lib/markdownSyntax.js'
 import { MathBlock, MathInline } from '../lib/mathExtensions.js'
 import { AlertBlockquote } from '../lib/alertExtension.js'
 import { MarkdownItalic, SafeMarks } from '../lib/markExtensions.js'
@@ -49,9 +50,8 @@ const DocumentLink = Link.configure({ openOnClick: false }).extend({
   },
   renderMarkdown(node, helpers) {
     const href = node.attrs?.href ?? ''
-    const title = node.attrs?.title ?? ''
     const text = helpers.renderChildren(node)
-    return title ? `[${text}](${markdownDestination(href)} "${title}")` : `[${text}](${markdownDestination(href)})`
+    return `[${text}](${markdownTarget(href, node.attrs?.title ?? '')})`
   },
   // Un link che racchiude solo un'immagine diventa un'immagine con il suo link (vedi imageExtension.js).
   parseMarkdown(token, helpers) {

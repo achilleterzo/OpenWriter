@@ -1,8 +1,7 @@
 import Image from '@tiptap/extension-image'
 import { mergeAttributes } from '@tiptap/core'
+import { markdownLinkText, markdownTarget } from './markdownSyntax.js'
 
-// Destinazione di un link o di un'immagine nel Markdown: con spazi (o parentesi angolari) va tra < >, altrimenti il link si romperebbe.
-export const markdownDestination = (value) => (/[\s<>]/.test(String(value)) ? `<${value}>` : String(value))
 
 // Il documento conserva il `src` così come sta nel Markdown (relativo o file:///); nel DOM si mette l'indirizzo caricabile.
 export const DocumentImage = Image.extend({
@@ -21,9 +20,10 @@ export const DocumentImage = Image.extend({
 
   renderMarkdown(node) {
     const { src = '', alt = '', title = '', href = null, linkTitle = null } = node.attrs || {}
-    const image = title ? `![${alt ?? ''}](${markdownDestination(src)} "${title}")` : `![${alt ?? ''}](${markdownDestination(src)})`
+    // Destinazioni, testo alternativo e titoli passano da markdownSyntax.js: protetti `[` `]` `\` `<` `>` e le virgolette.
+    const image = `![${markdownLinkText(alt)}](${markdownTarget(src, title)})`
     if (!href) return image
-    return linkTitle ? `[${image}](${markdownDestination(href)} "${linkTitle}")` : `[${image}](${markdownDestination(href)})`
+    return `[${image}](${markdownTarget(href, linkTitle)})`
   },
 
   renderHTML({ HTMLAttributes }) {
