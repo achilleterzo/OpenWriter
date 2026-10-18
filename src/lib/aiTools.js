@@ -463,6 +463,30 @@ export function createToolRunner(context) {
 
   const isNotFound = (error) => /not found in the document/.test(error.message)
 
+  // Quando il testo da sostituire non si trova, si indica il passaggio più simile (stesso inizio o stessa fine): così l'assistente lo ricopia tale e quale
+  // invece di tentare variazioni a vuoto o di riscrivere l'intero documento.
+  function closestPassage(editor, needle) {
+    const squash = (value) => String(value).replace(/\s+/g, ' ')
+    const target = squash(needle).trim()
+    if (target.length < 12) return ''
+    const haystack = squash(editor.getMarkdown())
+    const lower = haystack.toLowerCase()
+    const probe = Math.min(30, target.length)
+    const head = lower.indexOf(target.slice(0, probe).toLowerCase())
+    if (head !== -1) return ` The closest passage in the document starts like this, copy it exactly (use read_file if you need more): “${haystack.slice(head, head + target.length + 60)}”`
+    const tail = lower.indexOf(target.slice(-probe).toLowerCase())
+    if (tail !== -1) return ` The closest passage in the document ends like this, copy it exactly (use read_file if you need more): “${haystack.slice(Math.max(0, tail + probe - target.length - 60), tail + probe)}”`
+    return ''
+  }
+
+  // Come locateInMarkdown, ma l'errore "non trovato" porta con sé il passaggio più simile.
+  function locateInMarkdownOrHint(editor, quote, label) {
+    try { return locateInMarkdown(editor, quote, label) } catch (error) {
+      if (isNotFound(error)) throw new Error(`${error.message}${closestPassage(editor, quote)}`)
+      throw error
+    }
+  }
+
   // The text may contain Markdown (**bold**, *italic*, links): it is parsed, not inserted as literal characters.
   function insertAt(editor, from, to, content) {
     return trackEdit(editor, () => replaceRangeWithMarkdown(editor, from, to, text(content)))
@@ -853,7 +877,7 @@ export function createToolRunner(context) {
       let located = null
       try { located = locateUnique(editor, text(args.find), 'The text to replace') } catch (error) { if (!isNotFound(error)) throw error }
       if (!located) {
-        const { markdown, hit } = locateInMarkdown(editor, text(args.find), 'The text to replace')
+        const { markdown, hit } = locateInMarkdownOrHint(editor, text(args.find), 'The text to replace')
         const covered = await notesOnPassage(tab, editor, { find: markdown.slice(hit.index, hit.index + hit.length) })
         await context.beforeEdit(tab, editor)
         context.onDocumentEdited?.(tab)
@@ -881,7 +905,7 @@ export function createToolRunner(context) {
         let located = null
         try { located = locateUnique(editor, text(args.anchor), 'The anchor') } catch (error) { if (!isNotFound(error)) throw error }
         if (!located) {
-          const { markdown, hit } = locateInMarkdown(editor, text(args.anchor), 'The anchor')
+          const { markdown, hit } = locateInMarkdownOrHint(editor, text(args.anchor), 'The anchor')
           const point = position === 'after' ? hit.index + hit.length : hit.index
           await context.beforeEdit(tab, editor)
           context.onDocumentEdited?.(tab)
