@@ -1,5 +1,6 @@
 import { createToolRunner } from './aiTools.js'
 import { getPending } from './pendingChangesExtension.js'
+import { isInsidePath, samePath } from './pathCompare.js'
 
 /**
  * Richieste di modifica che arrivano dal server MCP (un agente esterno, tramite il ponte del processo principale): si eseguono con gli stessi
@@ -11,9 +12,27 @@ const READ_MAX_CHARS = 40000
 const SNAPSHOT_EVERY_MS = 60_000
 const lastSnapshot = new Map()
 
+const isAbsolute = (value) => /^([A-Za-z]:[\\/]|\\\\|\/)/.test(value)
+
+// Un agente raggiunge solo i documenti del progetto, quelli collegati al progetto e quelli già aperti in OpenWriter (anche fuori dalla cartella:
+// aprirli nell'editor li rende parte dell'area di lavoro attiva). Qualunque altro percorso è rifiutato prima di aprire o toccare qualcosa.
+async function authorizeDocument(given, { api, toolBridge, project }) {
+  if (!isAbsolute(given)) {
+    if (given.replace(/\\/g, '/').split('/').some((part) => part === '..' || part === '.ow')) throw new Error('The path is not accessible: it must be a document of the project, a document linked to the project, or a document open in OpenWriter')
+    return
+  }
+  if (samePath(given, project) || isInsidePath(given, project)) return
+  try { toolBridge.getDocument(given); return } catch { /* non è aperto */ }
+  let links = []
+  try { links = (await api.listLinks()) || [] } catch { /* senza collegamenti */ }
+  if (links.some((link) => samePath(link.path, given))) return
+  throw new Error('The path is not accessible: it must be a document of the project, a document linked to the project, or a document open in OpenWriter')
+}
+
 export async function handleMcpRequest({ tool, args = {} }, { api, toolBridge, project, activate, notify, refreshNotes }) {
   if (!project) throw new Error('No project is open in OpenWriter')
   const given = String(args.path ?? '').trim()
+  if (given) await authorizeDocument(given, { api, toolBridge, project })
 
   // Quello che l'utente vede in questo momento (modifiche non salvate e da rivedere comprese), mentre il file su disco può essere più vecchio.
   if (tool === 'read_open_document') {

@@ -9,6 +9,10 @@
  * le modifiche arrivano come "da rivedere", con accetta/rifiuta, tramite un ponte locale verso l'app (vedi mcp-bridge.cjs). Con `--read-only`
  * gli strumenti di scrittura non esistono. Il resto non dipende da Electron, quindi funziona anche con l'app chiusa.
  *
+ * Quali documenti si raggiungono (modello di accesso, vedi authorizedDocument): i documenti del progetto, i documenti collegati al progetto e quelli
+ * aperti in OpenWriter (anche fuori dalla cartella: aprirli nell'editor li rende parte dell'area di lavoro attiva). Nient'altro: un percorso
+ * qualunque del disco viene rifiutato. Cartelle, elenco e ricerca riguardano solo la cartella del progetto.
+ *
  * Il progetto è, in ordine: `--project <cartella>` (o OPENWRITER_PROJECT); la `.ow` più vicina risalendo dalla cartella in cui parte l'agente;
  * il progetto aperto nell'app (workspace.json nei dati dell'app, riletto a ogni chiamata). `--data <cartella>` indica i dati dell'app.
  *
@@ -19,12 +23,15 @@ const http = require('node:http')
 const os = require('node:os')
 const path = require('node:path')
 const readline = require('node:readline')
+const { pathToFileURL } = require('node:url')
 const { createProjectFile } = require('./project-file.cjs')
 const { createNotesStore } = require('./notes-store.cjs')
 const { createBookmarksStore } = require('./bookmarks-store.cjs')
 const { createMemoryStore } = require('./memory-store.cjs')
 const { createSkillsStore } = require('./skills-store.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
+const { createLinksStore } = require('./project-links.cjs')
+const { isSameOrInside, samePath } = require('./path-compare.cjs')
 const { findOwners } = require('./project-owner.cjs')
 const { analyzeMarkdown, markdownToPlain } = require('./markdown-plain.cjs')
 
@@ -103,18 +110,45 @@ async function readDocument(filePath) {
   }
   throw new Error('PDF files cannot be read from here: open the PDF in OpenWriter, which converts it to a Markdown file next to it, then read that file.')
 }
+const linksStore = createLinksStore({ getProjectPath: projectPath })
 const projectTools = createProjectTools({ getProjectPath: projectPath, readDocument })
 
 const posix = (value) => value.split(path.sep).join('/')
 
 // Percorso di un documento dato dall'agente (relativo al progetto o assoluto) → assoluto, mai fuori dal progetto né dentro `.ow`.
-function documentPath(value) {
+// Cartella o file DENTRO il progetto (percorso relativo, o assoluto purché dentro la cartella del progetto), mai in .ow, .git o node_modules.
+function projectPathInside(value) {
   const project = projectPath()
   const target = path.resolve(project, String(value || ''))
   const relative = path.relative(project, target)
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('The path is outside the project')
+  if (!relative || !isSameOrInside(project, target)) throw new Error('The path is outside the project')
   if (relative.split(path.sep).some((part) => SKIPPED_NAMES.has(part))) throw new Error('This path is not accessible')
   return target
+}
+
+// Modello di accesso ai DOCUMENTI. L'agente raggiunge solo:
+//   1. i documenti del progetto (percorso relativo alla radice, o assoluto dentro la cartella del progetto);
+//   2. i documenti collegati al progetto (.ow/links.json: file fuori dalla cartella, aggiunti dall'utente come parte del progetto);
+//   3. i documenti aperti in OpenWriter, anche fuori dalla cartella: aprirli nell'editor li rende parte dell'area di lavoro attiva.
+// Qualunque altro percorso assoluto è rifiutato: un agente non può leggere né annotare file arbitrari del disco.
+function linkedDocuments() {
+  try { return linksStore.list().map((link) => link.path) } catch { return [] }
+}
+
+function openDocumentFiles(project) {
+  const open = appContext(project)?.open || []
+  return open.map((item) => item.path).filter(Boolean).map((file) => path.resolve(project, file))
+}
+
+function authorizedDocument(value) {
+  const project = projectPath()
+  const given = String(value || '').trim()
+  if (!given) throw new Error('Missing document path')
+  const target = path.resolve(project, given)
+  if (isSameOrInside(project, target)) return projectPathInside(given)
+  if (linkedDocuments().some((link) => samePath(link, target))) return target
+  if (openDocumentFiles(project).some((file) => samePath(file, target))) return target
+  throw new Error('The path is not accessible: it must be a document of the project, a document linked to the project, or a document open in OpenWriter')
 }
 
 const relativeTo = (project, target) => posix(path.relative(project, target)) || '.'
@@ -124,8 +158,7 @@ const relativeTo = (project, target) => posix(path.relative(project, target)) ||
 function readAppSession(project) {
   try {
     const sessions = JSON.parse(fs.readFileSync(path.join(dataDirectory, 'sessions.json'), 'utf8'))
-    const same = (left, right) => path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase()
-    const key = Object.keys(sessions).find((item) => item !== '__none__' && same(item, project))
+    const key = Object.keys(sessions).find((item) => item !== '__none__' && samePath(item, project))
     return key ? sessions[key] : null
   } catch { return null }
 }
@@ -133,13 +166,13 @@ function readAppSession(project) {
 function openedInApp(project) {
   try {
     const { project: open } = JSON.parse(fs.readFileSync(path.join(dataDirectory, 'workspace.json'), 'utf8'))
-    return Boolean(open) && path.resolve(open).toLowerCase() === path.resolve(project).toLowerCase()
+    return samePath(open, project)
   } catch { return false }
 }
 
 function describeTab(project, tab) {
   const file = tab.filePath || tab.sourcePath || null
-  const inside = file && (() => { const relative = path.relative(project, path.resolve(file)); return relative && !relative.startsWith('..') && !path.isAbsolute(relative) })()
+  const inside = file && path.resolve(file) !== path.resolve(project) && isSameOrInside(project, path.resolve(file))
   return {
     title: tab.title,
     path: file ? (inside ? relativeTo(project, path.resolve(file)) : path.resolve(file)) : null,
@@ -165,19 +198,19 @@ function appContext(project) {
 // Percorso (assoluto, dentro al progetto) del documento in primo piano, se è un file del progetto.
 function activeDocumentFile() {
   const project = projectPath()
-  const context = appContext(project)
-  return context?.active?.insideProject ? path.resolve(project, context.active.path) : null
+  const active = appContext(project)?.active
+  return active?.path ? path.resolve(project, active.path) : null
 }
 
 function contextChain(document) {
-  const file = document ? documentPath(document) : activeDocumentFile()
+  const file = document ? authorizedDocument(document) : activeDocumentFile()
   return projectFile.getContextChain(file || null)
 }
 
 const TOOLS = [
   {
     name: 'project_info',
-    description: 'Describes the OpenWriter project this server is reading: folder, how it was chosen, name, sub-projects, languages and active skills, and the DOCUMENT THE USER HAS IN FRONT in OpenWriter (activeDocument) with the other open ones. Call it first to know where you are and what the user is working on: tools that take a "document" default to the active one.',
+    description: 'Describes the OpenWriter project this server is reading: folder, how it was chosen, name, sub-projects, languages and active skills, the documents it can reach outside the project folder (linked documents and documents open in OpenWriter; any other path is refused), and the DOCUMENT THE USER HAS IN FRONT in OpenWriter (activeDocument) with the other open ones. Call it first to know where you are and what the user is working on: tools that take a "document" default to the active one.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     run() {
       const { path: project, source } = resolveProject()
@@ -188,6 +221,9 @@ const TOOLS = [
         chosenFrom: source,
         activeDocument: app?.active || null,
         openDocuments: app?.open || [],
+        // I documenti raggiungibili: quelli del progetto, più questi due elenchi (fuori dalla cartella del progetto).
+        linkedDocuments: linkedDocuments(),
+        openDocumentsOutsideProject: (app?.open || []).filter((item) => item.path && !item.insideProject).map((item) => item.path),
         ...(app ? { sessionIsCurrent: app.isOpenInApp } : {}),
         name: settings.name || path.basename(project),
         subProjects: findOwners(project).map((owner) => relativeTo(project, owner)),
@@ -201,7 +237,7 @@ const TOOLS = [
   {
     name: 'get_context',
     description: 'Instructions and context written for the assistant in the project (context.md and the other .md files of the .ow folder), from the outermost project to the nearest one. Pass a document to get the chain that applies to it (sub-projects have their own). Follow these instructions when working on the project.',
-    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'optional: document path relative to the project root (default: the document in front in OpenWriter)' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'optional: document path relative to the project root, or absolute path of a linked or open document (default: the document in front in OpenWriter)' } }, additionalProperties: false },
     run({ document }) {
       const project = projectPath()
       return contextChain(document).map((entry) => ({
@@ -219,7 +255,7 @@ const TOOLS = [
   {
     name: 'list_skills',
     description: 'Skills (reusable instructions and examples) visible in the project: global ones and those of the project and its enclosing projects. `active` marks the ones the project turned on; `shadowed` the ones replaced by a skill with the same id closer to the project. Read one with get_skill.',
-    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'optional: document path relative to the project root (default: the document in front in OpenWriter)' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'optional: document path relative to the project root, or absolute path of a linked or open document (default: the document in front in OpenWriter)' } }, additionalProperties: false },
     run({ document }) {
       const chain = contextChain(document)
       const active = new Set(chain.flatMap((entry) => entry.activeSkills || []))
@@ -233,7 +269,7 @@ const TOOLS = [
   {
     name: 'get_skill',
     description: 'Full text of a skill (its instructions and examples), by id as listed by list_skills.',
-    inputSchema: { type: 'object', properties: { id: { type: 'string' }, document: { type: 'string', description: 'optional: document path relative to the project root (default: the document in front in OpenWriter)' } }, required: ['id'], additionalProperties: false },
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, document: { type: 'string', description: 'optional: document path relative to the project root, or absolute path of a linked or open document (default: the document in front in OpenWriter)' } }, required: ['id'], additionalProperties: false },
     run({ id, document }) {
       const chain = contextChain(document)
       const { skills } = skillsStore.list(chain.map((entry) => ({ base: entry.base, name: entry.name })))
@@ -258,7 +294,7 @@ const TOOLS = [
     },
     run({ path: folder, maxDepth, documentsOnly, maxEntries }) {
       const project = projectPath()
-      const start = folder && folder !== '.' ? documentPath(folder) : project
+      const start = folder && folder !== '.' ? projectPathInside(folder) : project
       const depthLimit = Math.min(30, Math.max(1, Number(maxDepth) || 12))
       const limit = Math.min(TREE_MAX_ENTRIES, Math.max(1, Number(maxEntries) || TREE_DEFAULT_ENTRIES))
       const onlyDocuments = isTrue(documentsOnly)
@@ -318,22 +354,20 @@ const TOOLS = [
   },
   {
     name: 'read_document',
-    description: 'Reads a project document as text (.md, .txt, .docx). Long ones come in chunks: use `offset` with the `nextOffset` of the previous answer. It returns what is saved on disk: edits still being reviewed in OpenWriter are not included.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter)' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, description: 'maximum characters (default 20000, max 40000)' } }, additionalProperties: false },
+    description: 'Reads a document as text (.md, .txt, .docx): a document of the project, a document linked to the project, or a document open in OpenWriter (see project_info). Long ones come in chunks: use `offset` with the `nextOffset` of the previous answer. It returns what is saved on disk: edits still being reviewed in OpenWriter are not included.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document: path relative to the project root, or the absolute path of a linked or open document (default: the document in front in OpenWriter)' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, description: 'maximum characters (default 20000, max 40000)' } }, additionalProperties: false },
     run({ path: file, offset, limit }) {
-      let target = file
-      if (!text(target).trim()) {
-        const active = activeDocumentFile()
-        if (!active) throw new Error('Missing parameter "path", and OpenWriter has no project document in front (see project_info)')
-        target = relativeTo(projectPath(), active)
-      }
-      return projectTools.readFile(target, { offset, limit })
+      const target = text(file).trim() ? authorizedDocument(file) : activeDocumentFile()
+      if (!target) throw new Error('Missing parameter "path", and OpenWriter has no document in front (see project_info)')
+      const project = projectPath()
+      // Dentro il progetto con il percorso relativo; un documento collegato o aperto fuori dalla cartella con il percorso assoluto (già autorizzato qui sopra).
+      return isSameOrInside(project, target) ? projectTools.readFile(relativeTo(project, target), { offset, limit }) : projectTools.readFile(target, { offset, limit, absolute: true })
     },
   },
   {
     name: 'read_open_document',
     description: 'Reads a document as the user sees it right now in OpenWriter: with unsaved changes and edits waiting for review included, while read_document returns the saved file (possibly older). Use it before editing a document that is open (project_info shows activeDocument and its unsavedChanges). Needs the OpenWriter app running.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter)' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, description: 'maximum characters (default 20000, max 40000)' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document: path relative to the project root, or the absolute path of a linked or open document (default: the document in front in OpenWriter)' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, description: 'maximum characters (default 20000, max 40000)' } }, additionalProperties: false },
     run: (args) => bridgeCall('read_open_document', args),
   },
   {
@@ -344,7 +378,7 @@ const TOOLS = [
       const needle = String(query || '').toLowerCase()
       if (!needle.trim()) throw new Error('The query is empty')
       const project = projectPath()
-      const start = folder ? documentPath(folder) : project
+      const start = folder ? projectPathInside(folder) : project
       const limit = Math.min(MAX_SEARCH_RESULTS, Math.max(1, Number(maxResults) || 20))
       const matches = []
       let total = 0
@@ -374,21 +408,21 @@ const TOOLS = [
   {
     name: 'list_notes',
     description: 'Notes (comments and suggested replacements) attached to passages of the project documents, with the quoted text they refer to, author (user or ai) and status (open, accepted, rejected, resolved). Without `document` it lists all the notes of the project, grouped by document. By default only open ones.',
-    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'only this document (relative to the project root); omit for all the documents of the project' }, status: { type: 'string', enum: ['open', 'accepted', 'rejected', 'resolved', 'all'], description: 'default "open"' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'only this document (relative to the project root, or the absolute path of a linked or open one); omit for all the documents of the project' }, status: { type: 'string', enum: ['open', 'accepted', 'rejected', 'resolved', 'all'], description: 'default "open"' } }, additionalProperties: false },
     run({ document, status }) {
       const wanted = status || 'open'
       const pick = (notes) => notes.filter((note) => wanted === 'all' || note.status === wanted).map((note) => ({ id: note.id, kind: note.kind, status: note.status, author: note.author, quote: note.quote, body: note.body, ...(note.replacement !== null && note.replacement !== undefined ? { replacement: note.replacement } : {}), ...(note.resolution ? { resolution: note.resolution } : {}), createdAt: note.createdAt }))
-      if (document) return { documents: [{ path: document, notes: pick(notesStore.list(documentPath(document))) }] }
+      if (document) return { documents: [{ path: document, notes: pick(notesStore.list(authorizedDocument(document))) }] }
       return { documents: notesStore.listAll().map((entry) => ({ path: entry.path, notes: pick(entry.notes) })).filter((entry) => entry.notes.length) }
     },
   },
   {
     name: 'list_bookmarks',
     description: 'Bookmarks: named points of the documents (anchored to a quoted passage). Some are flagged for the assistant\'s attention, with a note saying why. Link form between documents: file.md#bookmark-name. Without `document` it lists all of the project.',
-    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'only this document (relative to the project root); omit for all the documents of the project' }, flaggedOnly: { type: 'boolean', description: 'only the bookmarks flagged for the assistant' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'only this document (relative to the project root, or the absolute path of a linked or open one); omit for all the documents of the project' }, flaggedOnly: { type: 'boolean', description: 'only the bookmarks flagged for the assistant' } }, additionalProperties: false },
     run({ document, flaggedOnly }) {
       const pick = (items) => items.filter((item) => !flaggedOnly || item.flagged).map((item) => ({ name: item.name, label: item.label, quote: item.quote, note: item.note, flagged: item.flagged, author: item.author }))
-      if (document) return { documents: [{ path: document, bookmarks: pick(bookmarksStore.list(documentPath(document))) }] }
+      if (document) return { documents: [{ path: document, bookmarks: pick(bookmarksStore.list(authorizedDocument(document))) }] }
       return { documents: bookmarksStore.listAll().map((entry) => ({ path: entry.path, bookmarks: pick(entry.bookmarks) })).filter((entry) => entry.bookmarks.length) }
     },
   },
@@ -413,10 +447,10 @@ const isTrue = (value) => value === true || value === 'true'
 // Documento Markdown e il suo testo piano (quello a cui si ancorano le note).
 function loadMarkdown(value) {
   let file
-  if (text(value).trim()) file = documentPath(value)
+  if (text(value).trim()) file = authorizedDocument(value)
   else {
     file = activeDocumentFile()
-    if (!file) throw new Error('Missing parameter "document", and OpenWriter has no project document in front (see project_info)')
+    if (!file) throw new Error('Missing parameter "document", and OpenWriter has no document in front (see project_info)')
   }
   if (!/\.(md|markdown|mdown)$/i.test(file)) throw new Error('Notes, suggestions and bookmarks can only be added to Markdown documents (.md)')
   let markdown
@@ -479,6 +513,14 @@ function addOneNote(document, plain, item) {
   return `Note ${note.id} added (${note.kind}) on “${anchor.quote.slice(0, 80)}”.`
 }
 
+// Link a un segnalibro: percorso relativo alla radice del progetto se il documento è dentro, altrimenti un indirizzo file:/// (tra unità diverse di
+// Windows, per esempio da D: a E:, un percorso relativo non esiste).
+function bookmarkLink(file, name) {
+  const project = projectPath()
+  const target = `${isSameOrInside(project, file) ? relativeTo(project, file) : pathToFileURL(file).href}#${name}`
+  return /\s/.test(target) ? `<${target}>` : target
+}
+
 // Chiamata al ponte dell'app aperta (porta e token in mcp-bridge.json nei dati dell'app). Lancia con un messaggio chiaro se l'app non c'è.
 function bridgeCall(tool, args) {
   let bridge
@@ -508,21 +550,39 @@ const EDIT_NOTE = 'It happens in the OpenWriter editor: the change is marked for
 
 const WRITE_TOOLS = [
   {
+    name: 'create_file',
+    description: 'Creates a NEW document in the project (.md, or .txt; ".md" is added if the path has no extension), with the given content, creating the missing folders. It never overwrites: an existing path is refused, and so is a name already used by another document of the project unless allowSameName is true. The file is written straight to disk (a new file replaces nothing, and the user can delete it) and appears in the OpenWriter explorer at once. Only inside the project folder, never in .ow, .git or node_modules. Once created you can add notes and bookmarks to it.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'path of the new file, relative to the project root (folders are created as needed)' }, content: { type: 'string', description: 'full text of the document (Markdown for .md); empty by default' }, allowSameName: { type: 'boolean', description: 'true only if a second document with the same name as one in another folder is really wanted' } }, required: ['path'], additionalProperties: false },
+    async run({ path: file, content, allowSameName }) {
+      const result = await projectTools.createFile(text(file), text(content), { allowSameName: isTrue(allowSameName) })
+      return `Created ${result.path} (${text(content).length} characters).`
+    },
+  },
+  {
+    name: 'create_folder',
+    description: 'Creates a folder in the project (and the missing parent folders); if it already exists nothing happens. Only inside the project folder, never in .ow, .git or node_modules.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'folder path relative to the project root' } }, required: ['path'], additionalProperties: false },
+    async run({ path: folder }) {
+      const result = await projectTools.createDirectory(text(folder))
+      return result.created ? `Created the folder ${result.path}.` : `The folder ${result.path} already exists.`
+    },
+  },
+  {
     name: 'replace_text',
     description: `Replaces one passage of a document, directly in the editor. "find" is the EXACT text to replace as read_document / read_open_document show it (plain text or Markdown source, for example a whole link [text](url)) and must appear only once: use a longer passage if it does not. "replace" is the new Markdown (empty to delete). Open notes on the replaced passage are marked resolved. ${EDIT_NOTE}`,
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter)' }, find: { type: 'string' }, replace: { type: 'string', description: 'new text, empty string to delete' } }, required: ['find', 'replace'], additionalProperties: false },
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document: path relative to the project root, or the absolute path of a linked or open document (default: the document in front in OpenWriter)' }, find: { type: 'string' }, replace: { type: 'string', description: 'new text, empty string to delete' } }, required: ['find', 'replace'], additionalProperties: false },
     run: (args) => bridgeCall('replace_text', args),
   },
   {
     name: 'insert_text',
     description: `Inserts Markdown into a document, directly in the editor: at the "end" (default) or "start", or "after"/"before" an anchor passage given as EXACT text that appears only once. ${EDIT_NOTE}`,
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter)' }, text: { type: 'string', description: 'Markdown to insert' }, position: { type: 'string', enum: ['after', 'before', 'start', 'end'] }, anchor: { type: 'string', description: 'with after/before: exact text next to which to insert' } }, required: ['text'], additionalProperties: false },
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document: path relative to the project root, or the absolute path of a linked or open document (default: the document in front in OpenWriter)' }, text: { type: 'string', description: 'Markdown to insert' }, position: { type: 'string', enum: ['after', 'before', 'start', 'end'] }, anchor: { type: 'string', description: 'with after/before: exact text next to which to insert' } }, required: ['text'], additionalProperties: false },
     run: (args) => bridgeCall('insert_text', args),
   },
   {
     name: 'replace_document',
     description: `Rewrites the WHOLE document in the editor with the given Markdown. Only for real rewrites: read the document first and write it complete (a much shorter text is refused unless allow_shrink is true). For small changes use replace_text. ${EDIT_NOTE}`,
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter)' }, content: { type: 'string', description: 'the complete new text, in Markdown' }, allow_shrink: { type: 'boolean', description: 'true only if the new text is meant to be much shorter' } }, required: ['content'], additionalProperties: false },
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document: path relative to the project root, or the absolute path of a linked or open document (default: the document in front in OpenWriter)' }, content: { type: 'string', description: 'the complete new text, in Markdown' }, allow_shrink: { type: 'boolean', description: 'true only if the new text is meant to be much shorter' } }, required: ['content'], additionalProperties: false },
     run: (args) => bridgeCall('replace_document', args),
   },
   {
@@ -636,7 +696,7 @@ const WRITE_TOOLS = [
       checkLength(quote, MAX_BOOKMARK_QUOTE, 'The quote')
       const anchor = locateUnique(plain, quote)
       const bookmark = bookmarksStore.add(file, { ...anchor, name: text(name), label: text(label), note: text(note), flagged: isTrue(flagged), author: 'ai' })
-      return `Bookmark "${bookmark.name}" added on “${anchor.quote.slice(0, 80)}”. Link to it as [text](${(() => { const target = `${relativeTo(projectPath(), file)}#${bookmark.name}`; return /\s/.test(target) ? `<${target}>` : target })()}) (angle brackets are needed when the path has spaces; the path is relative to the project root: adjust it to the document that contains the link).`
+      return `Bookmark "${bookmark.name}" added on “${anchor.quote.slice(0, 80)}”. Link to it as [text](${bookmarkLink(file, bookmark.name)}) (angle brackets are needed when the path has spaces; a relative path is relative to the project root: adjust it to the document that contains the link; a document outside the project gets a file:/// address).`
     },
   },
   {
@@ -678,7 +738,7 @@ const ACTIVE_TOOLS = READ_ONLY ? TOOLS : [...TOOLS, ...WRITE_TOOLS]
 
 const INSTRUCTIONS = READ_ONLY
   ? 'Read-only access to an OpenWriter project (a local Markdown workspace): call project_info first (it says which document the user has in front: the tools that take a document default to it), then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never edits anything: edit the files with your own tools.'
-  : 'Access to an OpenWriter project (a local Markdown workspace): call project_info first (it says which document the user has in front: the tools that take a document default to it), then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never writes to the document files. To work on the user\'s documentation (for example development documents) while you code: leave notes (add_note), propose changes as suggestions (add_note with "replacement", suggest_insertion) and set bookmarks, or, when the user asks you to change a document directly, edit it in the OpenWriter editor with replace_text / insert_text (read it first with read_open_document, which includes unsaved changes). Every one of these is reviewed by the user in OpenWriter, who accepts or rejects it; direct edits need the app running. Check list_notes first so you do not repeat open notes.'
+  : 'Access to an OpenWriter project (a local Markdown workspace): call project_info first (it says which document the user has in front: the tools that take a document default to it), then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never writes to the document files. To work on the user\'s documentation (for example development documents) while you code: leave notes (add_note), propose changes as suggestions (add_note with "replacement", suggest_insertion) and set bookmarks, create new documents and folders (create_file, create_folder), or, when the user asks you to change a document directly, edit it in the OpenWriter editor with replace_text / insert_text (read it first with read_open_document, which includes unsaved changes). Every one of these is reviewed by the user in OpenWriter, who accepts or rejects it; direct edits need the app running. Check list_notes first so you do not repeat open notes.'
 
 function textResult(value, isError = false) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
