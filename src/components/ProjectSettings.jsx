@@ -7,6 +7,7 @@ import SpellcheckLanguages from './SpellcheckLanguages.jsx'
 import { EditorFontChoice } from './FontPicker.jsx'
 import { setProjectEditor } from '../appearance.js'
 import { formatNumber } from '../i18n/index.js'
+import { samePath } from '../lib/pathCompare.js'
 import { t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
@@ -107,7 +108,7 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
       const result = await (projectPath ? electronAPI.saveProjectSettingsFor(projectPath, payload) : electronAPI.saveProjectSettings(payload))
       // Se è il progetto aperto, il carattere cambia subito.
       const open = await electronAPI.getProject()
-      if (!projectPath || (open && projectPath.toLowerCase() === String(open).toLowerCase())) setProjectEditor(result.editor)
+      if (!projectPath || (open && samePath(projectPath, String(open)))) setProjectEditor(result.editor)
       onChanged?.()
       setInfo(result)
       setSaved(true)
@@ -313,7 +314,7 @@ function CopyContext({ target, onCopied }) {
     Promise.all([electronAPI.listProjects(), electronAPI.getProject()]).then(([list, open]) => { setProjects(list.filter((item) => !item.missing)); setCurrent(target || open) }).catch(() => {})
   }, [target])
 
-  const sources = projects.filter((item) => current && item.path.toLowerCase() !== current.toLowerCase())
+  const sources = projects.filter((item) => current && !samePath(item.path, current))
 
   async function copy() {
     setMessage('')

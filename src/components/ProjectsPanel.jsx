@@ -4,6 +4,7 @@ import { ContextMenuContext } from './ContextMenu.jsx'
 import { ProjectAvatar } from './ProjectIcon.jsx'
 import ProjectSettingsDialog from './ProjectSettingsDialog.jsx'
 import { formatDateTime, t } from '../i18n/index.js'
+import { samePath } from '../lib/pathCompare.js'
 
 const electronAPI = window.electronAPI
 const revealLabel = /Win/.test(navigator.platform) ? t('Show in File Explorer') : /Mac/.test(navigator.platform) ? t('Reveal in Finder') : t('Show in file manager')
@@ -61,7 +62,7 @@ export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onC
 
   const remove = (item) => run(async () => setProjects(await electronAPI.removeProject(item.path)))
 
-  const sameProject = (item) => project && item.path.toLowerCase() === project.toLowerCase()
+  const sameProject = (item) => project && samePath(item.path, project)
 
   const moveProject = (item) => run(async () => {
     if (await onMove(item.path)) await refresh()
@@ -144,7 +145,7 @@ export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onC
           title={settingsFor.name}
           path={settingsFor.path}
           onClose={() => setSettingsFor(null)}
-          onMove={onMove ? async (directory) => { const moved = await onMove(directory); if (moved) { setSettingsFor(null); await refresh() } return moved } : undefined} onEditContext={project && settingsFor.path.toLowerCase() === project.toLowerCase() ? (file) => { setSettingsFor(null); onOpenFile(file) } : undefined} onChanged={() => { refresh(); if (project && settingsFor.path.toLowerCase() === project.toLowerCase()) onSettingsChanged?.() }}
+          onMove={onMove ? async (directory) => { const moved = await onMove(directory); if (moved) { setSettingsFor(null); await refresh() } return moved } : undefined} onEditContext={project && samePath(settingsFor.path, project) ? (file) => { setSettingsFor(null); onOpenFile(file) } : undefined} onChanged={() => { refresh(); if (project && samePath(settingsFor.path, project)) onSettingsChanged?.() }}
         />
       )}
     </div>

@@ -1,10 +1,11 @@
 // Percorsi delle immagini nei documenti Markdown.
 // Nel file si scrive un percorso relativo al documento (se l'immagine sta nel progetto o accanto al documento),
 // altrimenti un indirizzo file:/// assoluto. Per mostrarle l'editor le trasforma in indirizzi ow-file:// serviti dal processo principale.
+import { pathKey } from './pathCompare.js'
 
 const normalize = (value) => String(value || '').replace(/\\/g, '/')
-const isWindowsPath = (value) => /^[A-Za-z]:\//.test(value)
-const comparable = (value) => (isWindowsPath(value) ? value.toLowerCase() : value)
+// Maiuscole e minuscole contano solo dove il file system le distingue (vedi pathCompare.js).
+const comparable = pathKey
 
 export const dirname = (value) => normalize(value).replace(/\/[^/]*$/, '')
 
