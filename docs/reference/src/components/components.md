@@ -21,6 +21,7 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [FontPicker.jsx](pages/FontPicker.jsx.md) — Editor font choice and Google Fonts catalog
 - [GeneralSettings.jsx](pages/GeneralSettings.jsx.md) — General settings: language, project folder, spell check
 - [HistoryPanel.jsx](pages/HistoryPanel.jsx.md) — Document history: versions, labels, diff, restore
+- [InfoPanel.jsx](pages/InfoPanel.jsx.md) — Document info: last save, word and character counts, reading time, structure
 - [ImagePane.jsx](pages/ImagePane.jsx.md) — Zoomable read-only tab for a project image
 - [MarkdownMessage.jsx](pages/MarkdownMessage.jsx.md) — Markdown rendering of chat messages
 - [McpSettings.jsx](pages/McpSettings.jsx.md) — MCP server: what it offers and the client configuration

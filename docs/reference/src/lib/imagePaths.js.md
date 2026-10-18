@@ -10,3 +10,4 @@ Image path handling for Markdown documents (Windows-separator tolerant, case-ins
 - `isImageFile(filePath)`: whether the application can show a file (png, jpg, gif, webp, bmp); `imageFileUrl(absolutePath)`: the `ow-file://` address used to display it, also for the image tab.
 - Helpers: `dirname`, `isInside`, plus internal `relativePath`/`joinPath` (`..`-aware) and a decode that never throws.
 
+Paths are compared with [pathCompare.js](pathCompare.js.md): case matters on Linux, not on Windows and macOS.

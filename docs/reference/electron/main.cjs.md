@@ -11,7 +11,7 @@ The `ow-file://` scheme is registered as privileged and serves the document imag
 Other responsibilities:
 
 - File dialogs for opening and saving documents, with supported-extension filters, and documents handed over by the operating system (`.md`, `.markdown`, `.mdown`), kept for the renderer if it is not ready yet.
-- Workspace operations limited to the project directory: rename, delete with a confirmation dialog and trash, reveal in the file manager, unique-destination import with drag and drop, creating an entry, moving an item into a folder, and directory listing that hides dot folders, `node_modules`, `dist`, and `out`. Files can be copied or cut to the system clipboard and pasted back ([file-clipboard.cjs](file-clipboard.cjs.md)).
+- Workspace operations limited to the project directory: rename, delete with a confirmation dialog and trash (a Markdown document goes to the trash together with its DOCX/PDF original, which is named in the confirmation; the answer lists every path deleted so that the open tabs close) (`workspace:delete-paths` deletes several items with one confirmation that counts them and lists the first names; an item inside another deleted folder is not counted twice), reveal in the file manager, unique-destination import with drag and drop, creating an entry, moving an item into a folder, and directory listing that hides dot folders, `node_modules`, `dist`, and `out`. Files can be copied or cut to the system clipboard and pasted back ([file-clipboard.cjs](file-clipboard.cjs.md)).
 - Moving a document carries its images along ([document-images.cjs](document-images.cjs.md)) and moves history, notes, bookmarks and memory entries with it.
 - Export to PDF through a hidden print window, to DOCX through html-to-docx, and to a self-contained Markdown with the images embedded ([markdown-embed.cjs](markdown-embed.cjs.md)).
 - Project extras: icons ([project-icon.cjs](project-icon.cjs.md)), linked documents, reference folders, the shareable setup file ([project-pack.cjs](project-pack.cjs.md)), sub-projects moved in and out, and moving a whole project.
@@ -21,7 +21,7 @@ Other responsibilities:
 - Writing skills through the `skills:*` channels; `skills:import-file` picks a Markdown file and returns its parsed fields through `skillFromMarkdown` without saving.
 - UI preferences in the application data (`preferences:load`, read synchronously at startup, and `preferences:set`), with `localStorage` as a fallback on the renderer side.
 - Fonts: the Google Fonts catalog, the list of installed fonts, install and remove ([fonts.cjs](fonts.cjs.md)).
-- The MCP server: `mcp:get-config` returns the command and arguments an agent's client has to use ([mcp-server.cjs](mcp-server.cjs.md)).
+- The MCP server: `mcp:get-config` returns the command and arguments an agent's client has to use ([mcp-server.cjs](mcp-server.cjs.md)). The main process also runs the local bridge ([mcp-bridge.cjs](mcp-bridge.cjs.md)) that forwards the agent's editing requests to the interface (`mcp:request` / `mcp:response`), gated by the preference `openwriter.mcpEdit`. Paths are compared through [path-compare.cjs](path-compare.cjs.md), and confirmations (delete, move) are asked in the interface (`dialog:ask` / `dialog:answer`).
 - Window state persistence, restored only when still visible on a connected display.
 - The BrowserWindow hosting the renderer loads the Vite dev server in development and the built bundle in production.
 

@@ -33,7 +33,7 @@ A project corresponds to a working directory. The file explorer displays folders
 
 Tabs support multiple documents at the same time, with independent undo history, scroll position, and unsaved-change indicators.
 
-Side panels are resizable and their dimensions are remembered. The rail on the left switches between the projects list, the file explorer, the heading outline, the notes, the bookmarks, the history, and the project memory ([ActivityBar.jsx](reference/src/components/pages/ActivityBar.jsx.md)).
+Side panels are resizable and their dimensions are remembered. The rail on the left switches between the projects list, the file explorer, the heading outline, the notes, the bookmarks, the history, the document info (statistics), and the project memory ([ActivityBar.jsx](reference/src/components/pages/ActivityBar.jsx.md)).
 
 A tab opened by a single click is a preview and is replaced by the next file, until the user works on it or double-clicks to keep it. Many modified documents can be saved at once from the tab bar.
 
@@ -113,7 +113,12 @@ Ollama, Ollama Cloud, OpenRouter, Codex, Claude, and Gemini are supported. Ollam
 
 ### External Agents (MCP)
 
-OpenWriter also exposes its project to external agents as an MCP server on stdio: they can read the context, the instructions, the skills, the notes, the bookmarks and the memory, and search and read the documents, but never edit a text — they can only leave notes, suggested changes and bookmarks for review ([mcp-server.cjs](reference/electron/mcp-server.cjs.md), configured from Settings → Agents (MCP), [McpSettings.jsx](reference/src/components/pages/McpSettings.jsx.md)).
+OpenWriter also exposes its project to external agents as an MCP server on stdio ([mcp-server.cjs](reference/electron/mcp-server.cjs.md), configured from Settings → Agents (MCP), [McpSettings.jsx](reference/src/components/pages/McpSettings.jsx.md)).
+
+- **What an agent reaches**: the documents of the project, the documents linked to the project, and the documents open in OpenWriter (also outside the project folder: opening one in the editor makes it part of the active workspace). Any other path on the disk is refused. Folder listing and search concern the project folder only.
+- **What it reads**: the context, the instructions, the skills, the notes, the bookmarks, the memory, and the documents (the saved file, or with `read_open_document` what the user sees right now, unsaved changes included).
+- **What it writes**: notes, suggested changes (a note with a replacement) and bookmarks, which are stored in `.ow` and reviewed in the Notes panel; new documents and folders (`create_file`, `create_folder`: inside the project, never overwriting); and, with the application running, edits to the documents open in the editor — `replace_text`, `insert_text` and `replace_document`. Those edits are applied to the live editor through a local bridge ([mcp-bridge.cjs](reference/electron/mcp-bridge.cjs.md), [mcpRequests.js](reference/src/lib/mcpRequests.js.md)): they are marked for the user to accept or reject, can be undone with Ctrl+Z, and nothing is written to the file until the user saves. A document that is not open is opened in a tab first.
+- **Switches**: `--read-only` (Settings → Agents (MCP) → Read-only) removes every writing tool, the bridge ones included; "Let agents change the documents open in OpenWriter" turns the editor edits off at any time, without regenerating the client configuration.
 
 ## Spell Checking
 
@@ -163,6 +168,8 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [skills-store.cjs.md](reference/electron/skills-store.cjs.md) ([skills-store.cjs](../electron/skills-store.cjs)) — Writing skills: global and project libraries
   - [project-tools.cjs.md](reference/electron/project-tools.cjs.md) ([project-tools.cjs](../electron/project-tools.cjs)) — File tools for the assistant
   - [markdown-plain.cjs.md](reference/electron/markdown-plain.cjs.md) ([markdown-plain.cjs](../electron/markdown-plain.cjs)) — Plain text of a document, for anchoring quotations
+  - [markdown-tokens.cjs.md](reference/electron/markdown-tokens.cjs.md) ([markdown-tokens.cjs](../electron/markdown-tokens.cjs)) — Markdown tokenizer with the editor's extensions
+  - [markdown-images.cjs.md](reference/electron/markdown-images.cjs.md) ([markdown-images.cjs](../electron/markdown-images.cjs)) — Images of a document found and rewritten through the tokens
   - [markdown-embed.cjs.md](reference/electron/markdown-embed.cjs.md) ([markdown-embed.cjs](../electron/markdown-embed.cjs)) — Self-contained Markdown export with embedded images
   - [document-images.cjs.md](reference/electron/document-images.cjs.md) ([document-images.cjs](../electron/document-images.cjs)) — Images following a document that is moved
   - [pdf-import.cjs.md](reference/electron/pdf-import.cjs.md) ([pdf-import.cjs](../electron/pdf-import.cjs)) — PDF text extraction with the images in place
@@ -171,6 +178,8 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [browser-history.cjs.md](reference/electron/browser-history.cjs.md) ([browser-history.cjs](../electron/browser-history.cjs)) — History of the built-in browser, per project
   - [images.cjs.md](reference/electron/images.cjs.md) ([images.cjs](../electron/images.cjs)) — Image downloads, screenshots, normalization
   - [mcp-server.cjs.md](reference/electron/mcp-server.cjs.md) ([mcp-server.cjs](../electron/mcp-server.cjs)) — MCP server for external agents
+  - [mcp-bridge.cjs.md](reference/electron/mcp-bridge.cjs.md) ([mcp-bridge.cjs](../electron/mcp-bridge.cjs)) — Local bridge from the MCP server to the running app
+  - [path-compare.cjs.md](reference/electron/path-compare.cjs.md) ([path-compare.cjs](../electron/path-compare.cjs)) — Platform-aware path comparison
   - [menu.cjs.md](reference/electron/menu.cjs.md) ([menu.cjs](../electron/menu.cjs)) — Native application menu
   - [updates.cjs.md](reference/electron/updates.cjs.md) ([updates.cjs](../electron/updates.cjs)) — Latest version from the GitHub releases
   - [projects.cjs.md](reference/electron/projects.cjs.md) ([projects.cjs](../electron/projects.cjs)) — Recently opened projects
@@ -199,6 +208,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [bookmarkExtension.js.md](reference/src/lib/bookmarkExtension.js.md) ([bookmarkExtension.js](../src/lib/bookmarkExtension.js)) — Bookmarks drawn in the text
     - [bookmarkLinks.js.md](reference/src/lib/bookmarkLinks.js.md) ([bookmarkLinks.js](../src/lib/bookmarkLinks.js)) — Links to bookmarks and headings
     - [chatAttachments.js.md](reference/src/lib/chatAttachments.js.md) ([chatAttachments.js](../src/lib/chatAttachments.js)) — Chat attachments and token usage
+    - [documentStats.js.md](reference/src/lib/documentStats.js.md) ([documentStats.js](../src/lib/documentStats.js)) — Word, sentence and reading-time statistics of a document
     - [editorInsert.js.md](reference/src/lib/editorInsert.js.md) ([editorInsert.js](../src/lib/editorInsert.js)) — Markdown inserted into the editor in place of a range
     - [embeddedImages.js.md](reference/src/lib/embeddedImages.js.md) ([embeddedImages.js](../src/lib/embeddedImages.js)) — Embedded base64 images collapsed for display
     - [fonts.js.md](reference/src/lib/fonts.js.md) ([fonts.js](../src/lib/fonts.js)) — Editor fonts and the Google Fonts catalog
@@ -210,8 +220,11 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [layout.js.md](reference/src/lib/layout.js.md) ([layout.js](../src/lib/layout.js)) — Panel widths and persistence
     - [lineDiff.js.md](reference/src/lib/lineDiff.js.md) ([lineDiff.js](../src/lib/lineDiff.js)) — Line-level diff
     - [listItemExtension.js.md](reference/src/lib/listItemExtension.js.md) ([listItemExtension.js](../src/lib/listItemExtension.js)) — List items indented by their marker
+    - [markdownSyntax.js.md](reference/src/lib/markdownSyntax.js.md) ([markdownSyntax.js](../src/lib/markdownSyntax.js)) — Destination, text and title of links and images, written correctly
     - [markExtensions.js.md](reference/src/lib/markExtensions.js.md) ([markExtensions.js](../src/lib/markExtensions.js)) — Safe writing of the Markdown marks
     - [mathExtensions.js.md](reference/src/lib/mathExtensions.js.md) ([mathExtensions.js](../src/lib/mathExtensions.js)) — LaTeX formulas kept as written
+    - [mcpRequests.js.md](reference/src/lib/mcpRequests.js.md) ([mcpRequests.js](../src/lib/mcpRequests.js)) — Agent requests applied to the open editor
+    - [pathCompare.js.md](reference/src/lib/pathCompare.js.md) ([pathCompare.js](../src/lib/pathCompare.js)) — Platform-aware path comparison in the interface
     - [pendingChangesExtension.js.md](reference/src/lib/pendingChangesExtension.js.md) ([pendingChangesExtension.js](../src/lib/pendingChangesExtension.js)) — Assistant edits marked for review
     - [preferences.js.md](reference/src/lib/preferences.js.md) ([preferences.js](../src/lib/preferences.js)) — Interface preferences in the app data
     - [projectIcons.js.md](reference/src/lib/projectIcons.js.md) ([projectIcons.js](../src/lib/projectIcons.js)) — Project icons: reading, caching, choosing
