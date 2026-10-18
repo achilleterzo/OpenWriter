@@ -696,14 +696,16 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-1 border-b border-slate-800 px-3 py-2">
-        <button type="button" title={t('{project}\nClick to open the folder in the file manager', { project })} className="min-w-0 flex-1 truncate text-left text-xs font-semibold uppercase tracking-wider text-slate-300 hover:text-slate-50" onClick={() => electronAPI.openProjectFolder().catch((reason) => onStatus(reason.message))}><span className="flex items-center gap-2"><ProjectAvatar directory={project} name={name} active size={28} /><span className="truncate">{name}</span></span></button>
+      <div className="flex flex-wrap items-center gap-x-1 gap-y-1 border-b border-slate-800 px-3 py-2">
+        <button type="button" title={t('{project}\nClick to open the folder in the file manager', { project })} className="min-w-[7rem] flex-1 truncate text-left text-xs font-semibold uppercase tracking-wider text-slate-300 hover:text-slate-50" onClick={() => electronAPI.openProjectFolder().catch((reason) => onStatus(reason.message))}><span className="flex items-center gap-2"><ProjectAvatar directory={project} name={name} active size={28} /><span className="truncate">{name}</span></span></button>
+        <div className="ml-auto flex flex-wrap items-center gap-1">
         <button type="button" aria-label={t('New folder…')} title={selectedFolder && selectedFolder !== project ? t('New folder in {folder}', { folder: selectedFolder.split(/[\\/]/).filter(Boolean).at(-1) }) : t('New folder…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => startCreate(creationTarget(), 'directory')}><FolderPlus size={14} /></button>
         <button type="button" aria-label={t('New document…')} title={selectedFolder && selectedFolder !== project ? t('New document in {folder}', { folder: selectedFolder.split(/[\\/]/).filter(Boolean).at(-1) }) : t('New document…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => startCreate(creationTarget(), 'file')}><FilePlus size={14} /></button>
         <button type="button" aria-label={t('Add a reference folder…')} title={t('Add a reference folder…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={addReference}><Library size={14} /></button>
         <button type="button" aria-label={t('Move a project here…')} title={t('Move a project here…')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => moveProjectIn(project)}><FolderInput size={14} /></button>
         <button type="button" aria-label={t('Refresh')} title={t('Refresh')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => setLocalRefresh((value) => value + 1)}><RefreshCw size={14} /></button>
         <button type="button" aria-label={t('Project settings')} title={t('Project settings')} className="rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-slate-50" onClick={() => setSubSettings({ path: project, name })}><Settings size={14} /></button>
+        </div>
       </div>
       {subSettings && (
         <ProjectSettingsDialog

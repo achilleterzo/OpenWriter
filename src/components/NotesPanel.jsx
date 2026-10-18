@@ -145,17 +145,17 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
   const smallButton = 'flex items-center gap-1 rounded px-2 py-1 text-xs transition'
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
       <div className="grid gap-2 border-b border-slate-800 p-3">
         <textarea rows={3} value={draft.body} placeholder={t('Note on the selected text…')} className={`${fieldClass} resize-none`} onChange={(event) => setDraft({ body: event.target.value })} />
         <button type="button" className="flex items-center justify-center gap-1.5 rounded-md bg-accent-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-accent-500" onClick={addNote}><MessageSquarePlus size={15} /> {t('Add to selection')}</button>
       </div>
 
-      <div className="flex gap-1 border-b border-slate-800 px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-x-1 gap-y-1 border-b border-slate-800 px-3 py-2 text-xs">
         {[['open', t('Open|notes')], ['all', t('All|notes')], ['mine', t('Mine|notes')], ['none', t('Hide|notes')]].map(([value, label]) => (
-          <button key={value} type="button" className={`rounded-full px-2.5 py-1 transition ${noteView === value ? 'bg-accent-500/20 text-accent-400' : 'text-slate-500 hover:text-slate-200'}`} title={t('Which notes to show in the list and in the text (the selected note is always shown)')} onClick={() => onNoteViewChange(value)}>{label}</button>
+          <button key={value} type="button" className={`shrink-0 rounded-full px-2.5 py-1 transition ${noteView === value ? 'bg-accent-500/20 text-accent-400' : 'text-slate-500 hover:text-slate-200'}`} title={t('Which notes to show in the list and in the text (the selected note is always shown)')} onClick={() => onNoteViewChange(value)}>{label}</button>
         ))}
-        <span className="ml-auto self-center text-slate-500">{t('{length} open', { length: notes.filter((note) => note.status === 'open').length })}</span>
+        <span className="ml-auto self-center whitespace-nowrap text-slate-500">{t('{length} open', { length: notes.filter((note) => note.status === 'open').length })}</span>
       </div>
 
       <div className="relative border-b border-slate-800 px-3 py-2">
