@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { fileURLToPath } = require('node:url')
+const { rewriteImageDestinations } = require('./markdown-images.cjs')
 
 /**
  * Esportazione Markdown "autosufficiente": le immagini del documento (file accanto al documento, nel progetto o altrove su disco) si incorporano
@@ -10,9 +11,6 @@ const { fileURLToPath } = require('node:url')
 const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml' }
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 const MAX_TOTAL_BYTES = 60 * 1024 * 1024
-
-// ![testo](percorso "titolo") oppure ![testo](<percorso con spazi> 'titolo'): anche dentro un link ([![…](…)](…)).
-const IMAGE = /!\[([^\]]*)\]\(\s*(?:<([^>]+)>|([^)\s]+))((?:\s+(?:"[^"]*"|'[^']*'))?)\s*\)/g
 
 function resolveSource(source, documentPath) {
   let value = source
@@ -50,12 +48,13 @@ function embedImages(markdown, documentPath) {
     return result
   }
 
-  const output = String(markdown).replace(IMAGE, (whole, alt, bracketed, plain, title) => {
-    const source = bracketed || plain
-    if (/^data:/i.test(source)) return whole
-    if (/^https?:\/\//i.test(source)) { report.remote += 1; return whole }
-    const uri = toDataUri(source)
-    return uri ? `![${alt}](${uri}${title})` : whole
+  // Le immagini le trovano i token del Markdown (anche dentro un link o una tabella): non si toccano gli esempi in blocchi di codice o tra apici inversi,
+  // e le destinazioni con parentesi, escape o <…> si leggono per intero. Il resto del documento resta identico.
+  const output = rewriteImageDestinations(String(markdown), (image) => {
+    const source = image.destination.value
+    if (/^data:/i.test(source)) return null
+    if (/^https?:\/\//i.test(source)) { report.remote += 1; return null }
+    return toDataUri(source)
   })
   return { markdown: output, ...report }
 }
