@@ -272,6 +272,8 @@ body {
   color: rgb(var(--slate-400));
   text-decoration: line-through;
 }
+/* Parola tolta mostrata nel testo, accanto a quella nuova (ritocchi leggeri). */
+.document-editor .tiptap .ow-pending-removed-inline { margin-right: 0.25em; user-select: none; }
 .document-editor .tiptap .ow-pending-same { opacity: 0.5; }
 .document-editor .tiptap .ow-pending-touched {
   border-left: 3px solid rgb(var(--emerald-400) / 0.6);
@@ -494,8 +496,17 @@ body {
   font-size: 0.75em;
   font-weight: 600;
 }
-.document-editor .tiptap .ow-footnote-ref::before { content: '['; }
-.document-editor .tiptap .ow-footnote-ref::after { content: ']'; }
+.document-editor .tiptap .ow-footnote-ref { vertical-align: super; line-height: 0; }
+/* Inizio di una definizione fuori dal cursore: `[^` e `]:` nascosti, l'etichetta in apice come il richiamo nel testo. */
+.document-editor .tiptap .ow-footnote-syntax { font-size: 0; }
+.document-editor .tiptap .ow-footnote-label {
+  color: rgb(var(--accent-400));
+  font-weight: 600;
+  font-size: 0.85em;
+  vertical-align: super;
+  line-height: 0;
+  margin-right: 0.4em;
+}
 .document-editor .tiptap pre.ow-footnote-definition {
   font-family: var(--editor-font);
   font-size: 0.85em;
