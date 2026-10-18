@@ -6,16 +6,14 @@ import ProjectIcon, { ProjectAvatar } from './ProjectIcon.jsx'
 import { isImageFile } from '../lib/imagePaths.js'
 import ProjectSettingsDialog from './ProjectSettingsDialog.jsx'
 import { t } from '../i18n/index.js'
+import { isInsidePath, samePath } from '../lib/pathCompare.js'
 
 const electronAPI = window.electronAPI
 const revealLabel = /Win/.test(navigator.platform) ? t('Show in File Explorer') : /Mac/.test(navigator.platform) ? t('Reveal in Finder') : t('Show in file manager')
 const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes('Files')
 const parentOf = (target) => target.replace(/[\\/][^\\/]*$/, '')
-// Il percorso sta dentro la cartella del progetto (confronto senza distinguere maiuscole e separatori).
-const isInsideProject = (target, project) => {
-  const normalize = (value) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-  return normalize(target).startsWith(`${normalize(project)}/`)
-}
+// Il percorso sta dentro la cartella del progetto (maiuscole e separatori come in pathCompare.js).
+const isInsideProject = (target, project) => isInsidePath(target.replace(/\/+$/, ''), project.replace(/\/+$/, ''))
 
 // Campo di rinomina in linea: Invio conferma, Esc annulla, la perdita del focus conferma. Seleziona il nome senza estensione.
 function RenameInput({ entry, onCommit, onCancel }) {
@@ -152,8 +150,8 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
           onDragEnd={drop.end}
           onDragOver={(event) => drop.over(event, parentOf(entry.path))}
           onDrop={(event) => drop.drop(event, parentOf(entry.path))}
-          className={`${rowClass} ${active ? 'bg-slate-800 text-slate-50' : 'text-slate-400'}`}
-          onClick={() => { menu.select(parentOf(entry.path)); onOpenFile(entry.path, { preview: true }) }}
+          className={`${rowClass} ${menu.isSelected(entry.path) ? 'bg-accent-500/25 text-slate-50' : active ? 'bg-slate-800 text-slate-50' : 'text-slate-400'}`}
+          onClick={(event) => { if (menu.pick(event, entry)) return; menu.select(parentOf(entry.path)); onOpenFile(entry.path, { preview: true }) }}
           onDoubleClick={() => onOpenFile(entry.path, { permanent: true })}
           onContextMenu={(event) => menu.open(event, entry)}
           onKeyDown={(event) => menu.key(event, entry)}
@@ -187,8 +185,8 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
             data-depth={depth + 1}
             style={{ paddingLeft: 8 + (depth + 1) * 14 }}
             title={`${original.path} · ${t('Original, read-only')}`}
-            className={`${rowClass} ${original.path === activePath ? 'bg-slate-800 text-slate-50' : 'text-slate-500'}`}
-            onClick={() => onOpenFile(original.path, { original: true, preview: true })}
+            className={`${rowClass} ${menu.isSelected(original.path) ? 'bg-accent-500/25 text-slate-50' : original.path === activePath ? 'bg-slate-800 text-slate-50' : 'text-slate-500'}`}
+            onClick={(event) => { if (menu.pick(event, { ...original, isDirectory: false })) return; onOpenFile(original.path, { original: true, preview: true }) }}
             onDoubleClick={() => onOpenFile(original.path, { original: true, permanent: true })}
             onContextMenu={(event) => menu.open(event, { ...original, isDirectory: false })}
             onKeyDown={(event) => menu.key(event, { ...original, isDirectory: false })}
@@ -216,8 +214,8 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
         draggable={menu.renaming !== entry.path}
         onDragStart={(event) => drop.start(event, entry)}
         onDragEnd={drop.end}
-        className={`${rowClass} text-slate-300 ${drop.target === entry.path ? 'bg-accent-500/20 ring-1 ring-inset ring-accent-400' : menu.selected === entry.path ? 'bg-slate-800/60' : ''}`}
-        onClick={() => { menu.select(entry.path); onToggle(entry.path) }}
+        className={`${rowClass} text-slate-300 ${drop.target === entry.path ? 'bg-accent-500/20 ring-1 ring-inset ring-accent-400' : menu.isSelected(entry.path) ? 'bg-accent-500/25' : menu.selected === entry.path ? 'bg-slate-800/60' : ''}`}
+        onClick={(event) => { if (menu.pick(event, entry)) return; menu.select(entry.path); onToggle(entry.path) }}
         onContextMenu={(event) => menu.open(event, entry)}
         onKeyDown={(event) => menu.key(event, entry)}
         onDragOver={(event) => drop.over(event, entry.path)}
@@ -268,10 +266,13 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   const [newName, setNewName] = useState('')
   const openMenu = useContext(ContextMenuContext)
 
-  const deleteEntry = async (entry) => {
+  // Elimina uno o più elementi con una sola conferma. Il processo principale risponde con i percorsi eliminati: gli elementi e i loro originali (DOCX/PDF).
+  const deleteEntries = async (paths) => {
     try {
-      if (await electronAPI.deletePath(entry.path)) {
-        onDeleted(entry.path)
+      const deleted = await electronAPI.deletePaths(paths)
+      if (deleted) {
+        for (const item of deleted) onDeleted(item)
+        setSelection([])
         setSelectedFolder(null)
         setLocalRefresh((value) => value + 1)
       }
@@ -279,6 +280,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       onStatus(t('Delete failed: {message}', { message: reason.message }))
     }
   }
+  const deleteEntry = (entry) => deleteEntries([entry.path])
 
   async function createSubproject(entry) {
     try {
@@ -359,9 +361,40 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     cancelCreate,
     selected: selectedFolder,
     select: setSelectedFolder,
+    isSelected: (path) => selection.some((item) => samePath(item, path)),
+    // Clic con Ctrl/Cmd (aggiunge o toglie) o Maiusc (intervallo): cambia solo la selezione, non apre né espande. Il clic semplice seleziona solo quella riga e prosegue.
+    pick(event, entry) {
+      if (event.ctrlKey || event.metaKey) {
+        setSelection((current) => (current.some((item) => samePath(item, entry.path)) ? current.filter((item) => !samePath(item, entry.path)) : [...current, entry.path]))
+        anchorRef.current = entry.path
+        return true
+      }
+      if (event.shiftKey) { selectRange(entry.path); return true }
+      selectOnly(entry.path)
+      return false
+    },
     open(event, entry) {
       event.preventDefault()
       event.stopPropagation()
+      // Tasto destro su una riga della selezione: il menu vale per tutta la selezione; su una riga fuori dalla selezione, questa diventa la selezione.
+      const inSelection = selectionRef.current.some((item) => samePath(item, entry.path))
+      if (selectionRef.current.length > 1 && inSelection) {
+        const paths = topLevel(selectionRef.current)
+        openMenu({
+          x: event.clientX,
+          y: event.clientY,
+          items: [
+            { label: t('{count} items selected', { count: paths.length }), disabled: true },
+            { separator: true },
+            { label: t('Copy'), hint: 'Ctrl+C', onClick: () => copyEntries(paths, false) },
+            { label: t('Cut'), hint: 'Ctrl+X', onClick: () => copyEntries(paths, true) },
+            { separator: true },
+            { label: t('Delete'), hint: t('Del'), danger: true, onClick: () => deleteEntries(paths) },
+          ],
+        })
+        return
+      }
+      if (!inSelection) selectOnly(entry.path)
       openMenu({
         x: event.clientX,
         y: event.clientY,
@@ -390,13 +423,15 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     key(event, entry) {
       if (renaming) return
       // Ctrl+C / Ctrl+X / Ctrl+V: appunti di file del sistema (si incolla anche nel file manager o in altri programmi, e viceversa).
+      const together = selectionRef.current.length > 1 && selectionRef.current.some((item) => samePath(item, entry.path))
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.target === event.currentTarget) {
         const shortcut = event.key.toLowerCase()
+        if ((shortcut === 'c' || shortcut === 'x') && together) { event.preventDefault(); copyEntries(topLevel(selectionRef.current), shortcut === 'x'); return }
         if (shortcut === 'c' || shortcut === 'x') { event.preventDefault(); copyToClipboard(entry, shortcut === 'x'); return }
         if (shortcut === 'v') { event.preventDefault(); pasteFromClipboard(entry.isDirectory ? entry.path : parentOf(entry.path)); return }
       }
       if (event.key === 'F2') { event.preventDefault(); setRenaming(entry.path) }
-      if (event.key === 'Delete') { event.preventDefault(); deleteEntry(entry) }
+      if (event.key === 'Delete') { event.preventDefault(); if (together) deleteEntries(topLevel(selectionRef.current)); else deleteEntry(entry) }
     },
     cancelRename(entry, { keepFocus } = {}) {
       setRenaming(null)
@@ -430,6 +465,16 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       onStatus(reason.message)
     }
   }
+  // Più elementi negli appunti di sistema (copia o taglia).
+  const copyEntries = async (paths, cut) => {
+    try {
+      await electronAPI.copyFilesToClipboard({ paths, cut })
+      const name = t('{count} items', { count: paths.length })
+      onStatus(cut ? t('Cut: {name}', { name }) : t('Copied: {name}', { name }))
+    } catch (reason) {
+      onStatus(reason.message)
+    }
+  }
   const pasteFromClipboard = async (directory) => {
     try {
       const result = await electronAPI.pasteFilesFromClipboard({ targetDirectory: directory })
@@ -452,11 +497,46 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
   // Trascinamento dei file. In uscita il file è trascinato dal sistema (si può rilasciare in un'altra applicazione o nel file manager,
   // per allegarlo o copiarlo lì). Lo stesso trascinamento, rilasciato nell'albero, sposta l'elemento se viene dal progetto; i file che
   // arrivano da fuori si copiano nella cartella sotto il puntatore, o nella radice del progetto.
+  // Selezione multipla: i percorsi selezionati e il punto da cui parte la selezione con Maiusc. Ctrl/Cmd+clic aggiunge o toglie una riga, Maiusc+clic
+  // (o Maiusc+frecce) seleziona l'intervallo, Ctrl/Cmd+A tutto, Esc annulla. Trascinamento, menu, copia, taglia ed elimina valgono per tutta la selezione.
+  const [selection, setSelection] = useState([])
+  const selectionRef = useRef([])
+  selectionRef.current = selection
+  const anchorRef = useRef(null)
+  useEffect(() => { setSelection([]); anchorRef.current = null }, [project])
+  const visibleRows = () => [...(treeRef.current?.querySelectorAll('[data-tree-path]') || [])].map((row) => row.dataset.treePath)
+  // Un elemento dentro una cartella selezionata segue la cartella: non si conta a parte (non si trascina né si elimina due volte).
+  const topLevel = (paths) => paths.filter((item) => !paths.some((other) => other !== item && isInsidePath(item, other)))
+  const selectRange = (path) => {
+    const rows = visibleRows()
+    const to = rows.findIndex((row) => samePath(row, path))
+    if (to === -1) return
+    const found = rows.findIndex((row) => samePath(row, anchorRef.current ?? path))
+    const from = found === -1 ? to : found
+    setSelection(rows.slice(Math.min(from, to), Math.max(from, to) + 1))
+  }
+  const selectOnly = (path) => { setSelection([path]); anchorRef.current = path }
+
+  // Cosa si sta trascinando dall'albero. Il trascinamento passa dal sistema, e una CARTELLA non sempre arriva al rilascio con il proprio percorso
+  // tra i file del trascinamento (per i file sì): senza questo promemoria rilasciare una cartella in un'altra non faceva nulla. Si dimentica
+  // appena il mouse si muove di nuovo (durante il trascinamento del sistema la pagina non riceve movimenti), così non resta addosso a un rilascio diverso.
+  const internalDrag = useRef(null)
+  useEffect(() => {
+    const forget = () => { internalDrag.current = null }
+    window.addEventListener('mousemove', forget, true)
+    return () => window.removeEventListener('mousemove', forget, true)
+  }, [])
+
   const drop = {
     target: dropTarget,
     start(event, entry) {
       event.preventDefault()
-      electronAPI.startDrag([entry.path])
+      // Una riga della selezione porta con sé tutta la selezione; una riga fuori dalla selezione parte da sola (e diventa la selezione).
+      const together = selectionRef.current.length > 1 && selectionRef.current.some((item) => samePath(item, entry.path))
+      const paths = together ? topLevel(selectionRef.current) : [entry.path]
+      if (!together) selectOnly(entry.path)
+      internalDrag.current = paths
+      electronAPI.startDrag(paths)
     },
     end() {
       setDropTarget(null)
@@ -473,8 +553,13 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       event.preventDefault()
       event.stopPropagation()
       setDropTarget(null)
-      const paths = electronAPI.getDroppedPaths(Array.from(event.dataTransfer.files))
-      if (!paths.length) return
+      // Una cartella può comparire tra gli elementi del trascinamento e non tra i file: si guardano entrambi.
+      const fromItems = Array.from(event.dataTransfer.items || []).filter((item) => item.kind === 'file').map((item) => item.getAsFile()).filter(Boolean)
+      let paths = electronAPI.getDroppedPaths([...Array.from(event.dataTransfer.files), ...fromItems])
+      const dragged = internalDrag.current
+      internalDrag.current = null
+      if (dragged && paths.length < dragged.length) paths = dragged
+      if (!paths.length) { onStatus(t('Could not read the path of the dropped items')); return }
       const folderName = directory === project ? name : directory.split(/[\\/]/).filter(Boolean).at(-1)
       // Tutto ciò che viene dal progetto stesso si sposta (cronologia, note e memoria lo seguono, anche per un sotto-progetto).
       if (paths.every((item) => isInsideProject(item, project))) {
@@ -497,6 +582,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
           }
         }
         if (moved) {
+          setSelection([])
           setSelectedFolder(null)
           if (directory !== project && !expandedPaths.has(directory)) onToggle(directory)
           setLocalRefresh((value) => value + 1)
@@ -632,11 +718,36 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       <div
         ref={treeRef}
         className={`min-h-0 flex-1 overflow-y-auto py-1 ${dropTarget === project ? 'bg-accent-500/10 ring-1 ring-inset ring-accent-400' : ''}`}
-        onKeyDown={(event) => navigateTree(event, (row) => {
-          // Con un'immagine aperta, passare con le frecce su un'altra immagine la mostra nella stessa scheda (anteprima), senza togliere il focus all'albero.
-          const target = row.dataset.treePath
-          if (target && row.dataset.treeRow === 'file' && isImageFile(target) && isImageFile(activePath)) onOpenFile(target, { preview: true })
-        })}
+        onKeyDown={(event) => {
+          // Selezione da tastiera (solo su una riga: i campi di rinomina e creazione tengono i loro tasti).
+          if (event.target.matches?.('[data-tree-row]')) {
+            if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'a') {
+              event.preventDefault()
+              setSelection(visibleRows())
+              return
+            }
+            if (event.key === 'Escape' && selectionRef.current.length) { setSelection([]); return }
+            if (event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+              const rows = [...event.currentTarget.querySelectorAll('[data-tree-row]')]
+              const next = rows[rows.indexOf(event.target) + (event.key === 'ArrowDown' ? 1 : -1)]
+              event.preventDefault()
+              if (next) {
+                if (anchorRef.current === null) anchorRef.current = event.target.dataset.treePath
+                next.focus()
+                next.scrollIntoView({ block: 'nearest' })
+                selectRange(next.dataset.treePath)
+              }
+              return
+            }
+          }
+          navigateTree(event, (row) => {
+            // Una freccia semplice porta la selezione sulla riga raggiunta.
+            if (row.dataset.treePath) selectOnly(row.dataset.treePath)
+            // Con un'immagine aperta, passare con le frecce su un'altra immagine la mostra nella stessa scheda (anteprima), senza togliere il focus all'albero.
+            const target = row.dataset.treePath
+            if (target && row.dataset.treeRow === 'file' && isImageFile(target) && isImageFile(activePath)) onOpenFile(target, { preview: true })
+          })
+        }}
         onDragOver={(event) => drop.over(event, project)}
         onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDropTarget(null) }}
         onDrop={(event) => drop.drop(event, project)}

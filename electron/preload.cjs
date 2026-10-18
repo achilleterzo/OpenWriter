@@ -32,7 +32,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveSession: (session) => ipcRenderer.invoke('session:save', session),
   saveSessionSync: (session) => ipcRenderer.sendSync('session:save-sync', session),
   startDrag: (paths) => ipcRenderer.send('workspace:start-drag', paths),
-  getDroppedPaths: (files) => files.map((file) => webUtils.getPathForFile(file)).filter(Boolean),
+  // Percorsi dei file (e delle cartelle) rilasciati; un elemento senza percorso su disco è ignorato, uno ripetuto conta una volta.
+  getDroppedPaths: (files) => [...new Set(files.map((file) => { try { return webUtils.getPathForFile(file) } catch { return '' } }).filter(Boolean))],
   importFiles: (request) => ipcRenderer.invoke('workspace:import-files', request),
   getProjectSettings: () => ipcRenderer.invoke('project:get-settings'),
   getContextChain: (filePath) => ipcRenderer.invoke('project:context-chain', filePath),
@@ -68,6 +69,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   answerMcp: (id, payload) => ipcRenderer.send('mcp:response', id, payload),
   renamePath: (request) => ipcRenderer.invoke('workspace:rename-path', request),
   deletePath: (target) => ipcRenderer.invoke('workspace:delete-path', target),
+  deletePaths: (targets) => ipcRenderer.invoke('workspace:delete-paths', targets),
   openProjectFolder: () => ipcRenderer.invoke('workspace:open-project-folder'),
   createSubproject: (directory) => ipcRenderer.invoke('workspace:create-subproject', directory),
   revealPath: (target) => ipcRenderer.invoke('workspace:reveal-path', target),

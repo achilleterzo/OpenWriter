@@ -11,11 +11,13 @@ const { createProjectsStore } = require('./projects.cjs')
 const { createChatStore } = require('./chat-store.cjs')
 const { createMemoryStore } = require('./memory-store.cjs')
 const { createMcpBridge } = require('./mcp-bridge.cjs')
+const { isSameOrInside, samePath } = require('./path-compare.cjs')
 const { fetchLatestRelease } = require('./updates.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
 const { createNotesStore } = require('./notes-store.cjs')
 const projectIcon = require('./project-icon.cjs')
 const { planImageMove, applyImageMove } = require('./document-images.cjs')
+const { findImages, rewriteImageDestinations } = require('./markdown-images.cjs')
 const { writeFileAtomic } = require('./atomic-write.cjs')
 const { createFontsStore } = require('./fonts.cjs')
 const { parsePdf, MARKER } = require('./pdf-import.cjs')
@@ -240,7 +242,7 @@ async function loadProject() {
   } catch {}
   initializeProject()
   // Il progetto di un avvio precedente entra nell'elenco anche se è stato aperto prima che l'elenco esistesse.
-  if (projectPath && !projectsStore.list().some((item) => item.path.toLowerCase() === path.resolve(projectPath).toLowerCase())) projectsStore.touch(projectPath)
+  if (projectPath && !projectsStore.list().some((item) => samePath(item.path, projectPath))) projectsStore.touch(projectPath)
 }
 
 // Prepara la cartella .ow all'apertura del progetto; un errore (es. cartella in sola lettura) non deve impedire di lavorare.
@@ -288,6 +290,14 @@ async function importFiles({ paths, targetDirectory }) {
   for (const source of Array.isArray(paths) ? paths : []) {
     try {
       const stats = await fs.stat(source)
+      // Una cartella arriva con tutto il suo contenuto (come con "incolla"), tranne .ow, .git e node_modules; mai dentro se stessa.
+      if (stats.isDirectory()) {
+        if (CLIPBOARD_IGNORED.has(path.basename(source)) || isSameOrInside(source, directory)) { skipped.push(source); continue }
+        const destination = await uniqueDestination(directory, path.basename(source))
+        await fs.cp(source, destination, { recursive: true, errorOnExist: true, filter: (item) => !CLIPBOARD_IGNORED.has(path.basename(item)) })
+        copied.push(destination)
+        continue
+      }
       if (!stats.isFile() || !listedExtensions.includes(path.extname(source).toLowerCase())) { skipped.push(source); continue }
       const destination = await uniqueDestination(directory, path.basename(source))
       await fs.copyFile(source, destination, fsSync.constants.COPYFILE_EXCL)
@@ -297,6 +307,13 @@ async function importFiles({ paths, targetDirectory }) {
     }
   }
   return { copied, skipped }
+}
+
+// Dove cercare chi usa ancora un'immagine quando un documento si sposta: tutto il progetto e i documenti collegati (vedi document-images.cjs).
+function imageScanOptions() {
+  let extraDocuments = []
+  try { extraDocuments = linksStore.list().map((link) => link.path) } catch { /* senza progetto: solo la cartella del documento */ }
+  return { scanRoot: projectPath, extraDocuments }
 }
 
 async function renamePath({ path: target, newName }) {
@@ -309,13 +326,13 @@ async function renamePath({ path: target, newName }) {
   const finalName = isDirectory || listedExtensions.includes(path.extname(name).toLowerCase()) ? name : `${name}${path.extname(source)}`
   const destination = resolveInProject(path.join(path.dirname(source), finalName))
   if (destination === source) return source
-  const caseOnlyChange = destination.toLowerCase() === source.toLowerCase()
+  const caseOnlyChange = samePath(destination, source)
   if (!caseOnlyChange && fsSync.existsSync(destination)) throw new Error(t('An item with this name already exists'))
   // Gli originali (DOCX/PDF con lo stesso nome) prendono il nuovo nome insieme al documento Markdown.
   const companions = !isDirectory && path.extname(destination).toLowerCase() === '.md' ? originalsOf(source) : []
   const newStem = path.basename(destination, path.extname(destination))
   const companionTargets = companions.map((item) => path.join(path.dirname(item), `${newStem}${path.extname(item)}`))
-  companionTargets.forEach((target, index) => { if (target.toLowerCase() !== companions[index].toLowerCase() && fsSync.existsSync(target)) throw new Error(t('An item with this name already exists')) })
+  companionTargets.forEach((target, index) => { if (!samePath(target, companions[index]) && fsSync.existsSync(target)) throw new Error(t('An item with this name already exists')) })
   await fs.rename(source, destination)
   for (let index = 0; index < companions.length; index += 1) if (companionTargets[index] !== companions[index]) await moveFile(companions[index], companionTargets[index])
   moveArtifacts(source, destination)
@@ -364,7 +381,7 @@ async function moveIntoDirectory({ from, toDirectory }) {
   const destination = path.join(directory, path.basename(source))
   if (fsSync.existsSync(destination)) throw new Error(t('An item with this name already exists'))
   // Le immagini accanto al documento (images/) lo seguono; se nella destinazione ce n'è una diversa con lo stesso nome, lo spostamento non parte.
-  const imagePlan = planImageMove(source, destination)
+  const imagePlan = planImageMove(source, destination, imageScanOptions())
   // Gli originali (DOCX/PDF) vanno con il documento: si controlla prima che nella destinazione non ci siano file con lo stesso nome.
   const companions = originalsOf(source)
   const companionTargets = companions.map((item) => path.join(directory, path.basename(item)))
@@ -393,22 +410,56 @@ ipcMain.on('dialog:answer', (_event, id, answer) => {
   resolve?.(answer === true)
 })
 
-async function deletePath(target) {
-  const source = resolveInProject(target)
-  if (source === projectPath) throw new Error(t('The project folder cannot be deleted from here'))
-  const isDirectory = (await fs.stat(source)).isDirectory()
-  const confirmed = await confirmInApp({
-    message: t('Delete "{basename}"?', { basename: path.basename(source) }),
-    detail: isDirectory
-      ? t('The folder and all its contents will be moved to the trash.') + (fsSync.existsSync(path.join(source, projectFile.directoryName)) ? ` ${t('It is a sub-project: its history, notes and settings go with it.')}` : '')
-      : t('The file will be moved to the trash.'),
-    confirmLabel: t('Move to the trash'),
-    danger: true,
-  })
+// Elimina uno o più elementi (file o cartelle del progetto) con UNA conferma. Un documento Markdown con il suo originale (DOCX/PDF convertito) se ne va
+// insieme all'originale: lasciarlo farebbe riapparire l'originale come file da convertire (e cliccarlo per eliminarlo ricreerebbe il Markdown).
+// Un elemento dentro un'altra cartella eliminata se ne va con quella. Risposta: i percorsi eliminati (per ogni elemento, prima lui, poi i suoi originali), o false se l'utente rinuncia.
+async function deletePaths(targets) {
+  const given = [...new Set((Array.isArray(targets) ? targets : [targets]).map((item) => resolveInProject(item)))]
+  if (!given.length) return false
+  if (given.some((item) => samePath(item, projectPath))) throw new Error(t('The project folder cannot be deleted from here'))
+  const sources = given.filter((item) => !given.some((other) => other !== item && isSameOrInside(other, item)))
+  const info = []
+  for (const source of sources) {
+    const isDirectory = (await fs.stat(source)).isDirectory()
+    info.push({ source, isDirectory, originals: isDirectory ? [] : originalsOf(source) })
+  }
+  const withOriginals = info.filter((item) => item.originals.length)
+  const originalsNote = (item) => t('Its original ({names}) will be moved to the trash too.', { names: item.originals.map((original) => path.basename(original)).join(', ') })
+  let message
+  let detail
+  if (info.length === 1) {
+    const [only] = info
+    message = t('Delete "{basename}"?', { basename: path.basename(only.source) })
+    detail = only.isDirectory
+      ? t('The folder and all its contents will be moved to the trash.') + (fsSync.existsSync(path.join(only.source, projectFile.directoryName)) ? ` ${t('It is a sub-project: its history, notes and settings go with it.')}` : '')
+      : t('The file will be moved to the trash.') + (only.originals.length ? ` ${originalsNote(only)}` : '')
+  } else {
+    const names = info.slice(0, 8).map((item) => `• ${path.basename(item.source)}${item.isDirectory ? '/' : ''}`)
+    if (info.length > 8) names.push(t('And {count} more…', { count: info.length - 8 }))
+    message = t('Delete {count} items?', { count: info.length })
+    detail = [names.join('\n'), t('They will be moved to the trash.') + (withOriginals.length ? ` ${t('The DOCX/PDF originals of the documents are included.')}` : '')].join('\n\n')
+  }
+  const confirmed = await confirmInApp({ message, detail, confirmLabel: t('Move to the trash'), danger: true })
   if (!confirmed) return false
-  await shell.trashItem(source)
-  return true
+  const deleted = []
+  const failures = []
+  for (const item of info) {
+    try {
+      await shell.trashItem(item.source)
+      deleted.push(item.source)
+    } catch (error) {
+      failures.push(error.message)
+      continue
+    }
+    // Un originale che non si riesce a cestinare resta dov'è, senza far fallire il resto.
+    for (const original of item.originals) {
+      try { await shell.trashItem(original); deleted.push(original) } catch (error) { console.error('Originale non cestinato:', original, error.message) }
+    }
+  }
+  if (!deleted.length && failures.length) throw new Error(failures[0])
+  return deleted
 }
+const deletePath = (target) => deletePaths([target])
 
 // Lingue del correttore: quelle del progetto, se impostate, altrimenti quelle generali (spellcheck.json).
 function spellcheckFilePath() {
@@ -701,7 +752,7 @@ ipcMain.handle('projects:save-settings', (_event, { directory, settings } = {}) 
   const { target, file } = projectFileFor(directory)
   file.initialize()
   const saved = file.saveSettings(settings)
-  if (projectPath && path.resolve(projectPath).toLowerCase() === target.toLowerCase()) applySpellcheck()
+  if (projectPath && samePath(projectPath, target)) applySpellcheck()
   return saved
 })
 // Icona di un progetto (anche non aperto): un'immagine in `.ow`, ridimensionata; qui si legge, si sceglie e si toglie.
@@ -761,13 +812,13 @@ ipcMain.handle('projects:import-setup-apply', (_event, { id, directory, mode, ov
   const { target, file } = projectFileFor(directory)
   const outcome = projectPack.applyPack({ pack, file, directory: target, mode: mode === 'append' ? 'append' : 'replace', overwrite: overwrite === true, applySettings: applySettings !== false })
   pendingSetups.delete(String(id))
-  if (projectPath && path.resolve(projectPath).toLowerCase() === target.toLowerCase()) applySpellcheck()
+  if (projectPath && samePath(projectPath, target)) applySpellcheck()
   return outcome
 })
 ipcMain.handle('projects:copy-context', (_event, { from, to, mode } = {}) => {
   const source = projectFileFor(from)
   const destination = projectFileFor(to)
-  if (source.target.toLowerCase() === destination.target.toLowerCase()) throw new Error(t('Choose a different project'))
+  if (samePath(source.target, destination.target)) throw new Error(t('Choose a different project'))
   destination.file.initialize()
   const sourceSettings = source.file.getSettings()
   const incoming = String(sourceSettings.ai?.context || '')
@@ -1086,7 +1137,8 @@ ipcMain.handle('tools:delete-path', async (_event, relativePath) => {
   const { target, relative } = projectTools.resolvePath(relativePath)
   if (!relative) throw new Error(t('The project folder cannot be deleted from here'))
   if (!fsSync.existsSync(target)) throw new Error(t('This path is not accessible'))
-  return { deleted: await deletePath(target), absolute: target, path: relative }
+  const deleted = await deletePath(target)
+  return { deleted: Boolean(deleted), also: deleted ? deleted.slice(1) : [], absolute: target, path: relative }
 })
 ipcMain.handle('tools:move-path', async (_event, { from, to } = {}) => {
   const source = projectTools.resolvePath(from)
@@ -1094,7 +1146,7 @@ ipcMain.handle('tools:move-path', async (_event, { from, to } = {}) => {
   if (!source.relative || !destination.relative) throw new Error(t('Invalid name'))
   if (!fsSync.existsSync(source.target)) throw new Error(t('This path is not accessible'))
   if (fsSync.existsSync(destination.target)) throw new Error(t('An item with this name already exists'))
-  const imagePlan = planImageMove(source.target, destination.target)
+  const imagePlan = planImageMove(source.target, destination.target, imageScanOptions())
   await fs.mkdir(path.dirname(destination.target), { recursive: true })
   await fs.rename(source.target, destination.target)
   moveArtifacts(source.target, destination.target)
@@ -1148,6 +1200,7 @@ ipcMain.handle('edit:replace-misspelling', (event, text) => event.sender.replace
 ipcMain.handle('edit:add-dictionary', (event, word) => event.sender.session.addWordToSpellCheckerDictionary(String(word)))
 ipcMain.handle('workspace:rename-path', (_event, request) => renamePath(request || {}))
 ipcMain.handle('workspace:delete-path', (_event, target) => deletePath(target))
+ipcMain.handle('workspace:delete-paths', (_event, targets) => deletePaths(targets))
 ipcMain.handle('workspace:open-project-folder', async () => { if (!projectPath) throw new Error(t('No project open')); const failure = await shell.openPath(projectPath); if (failure) throw new Error(failure) })
 // Trasforma una cartella del progetto in sotto-progetto: crea la sua `.ow` (impostazioni e contesto vuoti). Solo su richiesta esplicita dell'utente.
 ipcMain.handle('workspace:create-subproject', async (_event, directory) => {
@@ -1170,10 +1223,7 @@ async function moveDirectory(source, destination) {
   }
 }
 
-const isInsideOf = (root, target) => {
-  const relative = path.relative(path.resolve(root), path.resolve(target))
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
-}
+const isInsideOf = isSameOrInside
 
 // Cambia solo l'eredità del contesto di un progetto (le altre impostazioni e il contesto restano come sono).
 function setInheritance(directory, inherit) {
@@ -1246,7 +1296,7 @@ ipcMain.handle('workspace:move-project', async (_event, directory) => {
   const parent = path.resolve(picked.filePaths[0])
   if (isInsideOf(source, parent)) throw new Error(t('Choose a folder outside the project'))
   const target = path.join(parent, path.basename(source))
-  if (path.resolve(target).toLowerCase() === source.toLowerCase()) return null
+  if (samePath(target, source)) return null
   if (fsSync.existsSync(target)) throw new Error(t('An item with this name already exists'))
   const wasOpen = Boolean(projectPath) && path.resolve(projectPath).toLowerCase() === source.toLowerCase()
   await moveDirectory(source, target)
@@ -1285,26 +1335,30 @@ ipcMain.handle('workspace:reveal-path', (_event, target) => { shell.showItemInFo
 ipcMain.handle('workspace:list-directory', (_event, directory) => listDirectory(directory))
 // Le immagini incorporate nel testo (data:, per esempio quelle di un PDF o di un DOCX aperto) diventano file nella cartella images/ accanto al documento:
 // il Markdown resta leggibile e le immagini seguono il documento. Il nome deriva dal contenuto, quindi salvare più volte non crea doppioni.
-const EMBEDDED_IMAGE = /!\[([^\]]*)\]\(\s*<?data:image\/(png|jpe?g|gif|webp|bmp);base64,([A-Za-z0-9+/=]+)>?\s*\)/g
+const EMBEDDED_DESTINATION = /^data:image\/(png|jpe?g|gif|webp|bmp);base64,([A-Za-z0-9+/=]+)$/
 
+// Si guardano i token immagine del documento (non il testo grezzo): un esempio dentro un blocco di codice o tra apici inversi non si tocca.
 async function externalizeImages(markdown, markdownPath) {
-  const matches = [...markdown.matchAll(EMBEDDED_IMAGE)]
-  if (!matches.length) return markdown
+  const embedded = findImages(markdown).filter((image) => image.destination && EMBEDDED_DESTINATION.test(image.destination.value))
+  if (!embedded.length) return markdown
   const directory = path.join(path.dirname(markdownPath), 'images')
   const stem = path.basename(markdownPath).replace(/\.[^.]*$/, '').replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '') || 'image'
   const names = new Map()
-  for (const [, , type, data] of matches) {
+  for (const image of embedded) {
+    const [, type, data] = EMBEDDED_DESTINATION.exec(image.destination.value)
+    if (names.has(data)) continue
     const buffer = Buffer.from(data, 'base64')
     const extension = type === 'jpeg' ? 'jpg' : type
     const name = `${stem}-${require('node:crypto').createHash('sha1').update(buffer).digest('hex').slice(0, 8)}.${extension}`
-    if (!names.has(data)) {
-      await fs.mkdir(directory, { recursive: true })
-      const target = path.join(directory, name)
-      if (!fsSync.existsSync(target)) await fs.writeFile(target, buffer)
-      names.set(data, name)
-    }
+    await fs.mkdir(directory, { recursive: true })
+    const target = path.join(directory, name)
+    if (!fsSync.existsSync(target)) await fs.writeFile(target, buffer)
+    names.set(data, name)
   }
-  return markdown.replace(EMBEDDED_IMAGE, (_all, alt, _type, data) => `![${alt}](images/${names.get(data)})`)
+  return rewriteImageDestinations(markdown, (image) => {
+    const match = image.destination && EMBEDDED_DESTINATION.exec(image.destination.value)
+    return match ? `images/${names.get(match[2])}` : null
+  })
 }
 
 ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, saveAs, defaultName }) => {

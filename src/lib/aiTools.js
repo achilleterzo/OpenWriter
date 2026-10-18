@@ -2,6 +2,7 @@ import { anchorContext, buildTextIndex, findAll, foldText, locateQuote, toRange 
 import { t } from '../i18n/index.js'
 import { replaceRangeWithMarkdown } from './editorInsert.js'
 import { trackEdit } from './pendingChangesExtension.js'
+import { pathKey } from './pathCompare.js'
 
 // Tools use a plain-text protocol shared by every provider (including the Codex and Claude CLIs):
 // the model answers with a <tool_call>{"name": …, "arguments": {…}}</tool_call> block, the app runs it
@@ -284,7 +285,7 @@ export function describeCall(name, args = {}) {
   }
 }
 
-const normalizePath = (value) => String(value || '').replace(/\\/g, '/').toLowerCase()
+const normalizePath = pathKey
 
 export function relativeToProject(project, absolute) {
   if (!project || !absolute) return null
@@ -563,7 +564,8 @@ export function createToolRunner(context) {
       const result = await api.deletePathForAi(text(args.path))
       if (!result.deleted) return `The user declined to delete ${result.path}. Do not try again unless asked.`
       context.onPathChanged?.({ deleted: result.absolute })
-      return `${result.path} moved to the trash.`
+      for (const extra of result.also || []) context.onPathChanged?.({ deleted: extra })
+      return `${result.path} moved to the trash${result.also?.length ? `, together with its original (${result.also.map((item) => String(item).replace(/^.*[\\/]/, '')).join(', ')})` : ''}.`
     },
 
     async move_file(args) {
