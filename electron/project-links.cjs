@@ -1,5 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
+const { samePath } = require('./path-compare.cjs')
 const { t } = require('./i18n.cjs')
 const { writeFileAtomic } = require('./atomic-write.cjs')
 
@@ -11,7 +12,6 @@ const MAX_LINKS = 200
  *   `<progetto>/.ow/links.json` → [ { path (assoluto), addedAt } ]
  * Si modifica sempre l'originale: nessuna copia. Cronologia e note restano legate al percorso del file (come per ogni documento sparso).
  */
-const samePath = (left, right) => path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase()
 
 function readLinks(project) {
   try {

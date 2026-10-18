@@ -3,6 +3,7 @@ const fs = require('node:fs')
 const http = require('node:http')
 const path = require('node:path')
 const { writeFileAtomic } = require('./atomic-write.cjs')
+const { samePath } = require('./path-compare.cjs')
 
 /**
  * Ponte tra il server MCP (un altro processo, avviato dall'agente) e l'app aperta: serve a far modificare i documenti aperti nell'editor,
@@ -24,7 +25,7 @@ function createMcpBridge({ directory, getWindow, getProjectPath, isEnabled = () 
   let server = null
   let queue = Promise.resolve()
 
-  const sameProject = (left, right) => Boolean(left) && Boolean(right) && path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase()
+  const sameProject = samePath
 
   // Una richiesta alla volta: due modifiche dello stesso documento non si sovrappongono.
   function dispatch(tool, args) {

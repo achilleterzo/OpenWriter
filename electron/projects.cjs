@@ -1,5 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
+const { samePath } = require('./path-compare.cjs')
 
 const MAX_PROJECTS = 100
 
@@ -20,7 +21,7 @@ function createProjectsStore({ filePath }) {
     fs.writeFileSync(filePath(), JSON.stringify(list.slice(0, MAX_PROJECTS), null, 2))
   }
 
-  const same = (left, right) => path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase()
+  const same = samePath
 
   // Registra (o riporta in cima) un progetto appena aperto.
   function touch(project) {

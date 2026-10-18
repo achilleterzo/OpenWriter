@@ -1,5 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
+const { isSameOrInside, samePath } = require('./path-compare.cjs')
 const { t } = require('./i18n.cjs')
 const { writeFileAtomic } = require('./atomic-write.cjs')
 
@@ -11,11 +12,7 @@ const MAX_REFERENCES = 20
  * `name` è la sigla con cui l'assistente le indica (`@name/sottocartella/file.md`): unica nel progetto, ricavata dal nome della cartella.
  * Una cartella che non c'è più resta in elenco, segnalata (`missing`), e si può ricollegare a un'altra posizione tenendo la stessa sigla.
  */
-const samePath = (left, right) => path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase()
-const isInside = (root, target) => {
-  const relative = path.relative(path.resolve(root), path.resolve(target))
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
-}
+const isInside = isSameOrInside
 
 function readReferences(project) {
   try {
