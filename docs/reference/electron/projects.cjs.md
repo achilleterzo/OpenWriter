@@ -6,5 +6,6 @@ Persistent list of known working directories (projects), stored by the main proc
 
 - `touch(project)`: registers a project on open/create or moves it back to the top; entries are deduplicated case-insensitively through resolved paths.
 - `remove(project)`: drops an entry.
+- `replace(from, to)`: a project has been moved: the entry changes path and keeps its place in the list.
 - `list()`: entries with folder-name display, `openedAt`, and a `missing` flag when the folder no longer exists (moved or deleted); missing entries stay in the list until removed there.
 

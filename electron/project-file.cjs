@@ -3,7 +3,8 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
-const { ownerRoot, parentOwner } = require('./project-owner.cjs')
+const { writeFileAtomic } = require('./atomic-write.cjs')
+const { ownerRoot, parentOwner, looseKey } = require('./project-owner.cjs')
 
 const DIRECTORY_NAME = '.ow'
 const FORMAT_VERSION = 1
@@ -24,7 +25,8 @@ const MAX_CONTEXT_CHARS = 20000
 const cleanLanguages = (value) => (Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === 'string' && item))] : [])
 const cleanSkillIds = (value) => (Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === 'string' && /^[a-z0-9][a-z0-9-]{0,59}$/.test(item)))].slice(0, 50) : [])
 
-function createProjectFile({ getProjectPath }) {
+// `getMainPath`: cartella del progetto main, che tiene cronologia e note dei documenti fuori dal progetto aperto.
+function createProjectFile({ getProjectPath, getMainPath = () => null }) {
   const root = () => {
     const project = getProjectPath()
     if (!project) throw new Error(t('No project open'))
@@ -47,9 +49,7 @@ function createProjectFile({ getProjectPath }) {
   // Scrittura atomica: un crash a metà non lascia un file troncato.
   function writeAtomic(file, content, base) {
     fs.mkdirSync(path.dirname(file), { recursive: true })
-    const temporary = `${file}.tmp`
-    fs.writeFileSync(temporary, content)
-    fs.renameSync(temporary, file)
+    writeFileAtomic(file, content)
     ensureHidden(base)
   }
 
@@ -60,6 +60,16 @@ function createProjectFile({ getProjectPath }) {
   }
 
   // `base`: cartella di un altro progetto (un sotto-progetto o un progetto sopra); senza, il progetto aperto.
+  // Carattere dell'editor specifico del progetto (facoltativo): `font` è il tipo generico, `fontFamily` un carattere Google per nome. Vuoto = valgono le impostazioni generali.
+  function cleanEditor(value) {
+    const editor = value && typeof value === 'object' ? value : {}
+    const name = typeof editor.fontFamily === 'string' ? editor.fontFamily.trim() : ''
+    return {
+      font: ['sans', 'serif', 'mono'].includes(editor.font) ? editor.font : '',
+      fontFamily: name.length <= 80 && !/["';:{}<>\\\n]/.test(name) ? name : '',
+    }
+  }
+
   function readSettings(base) {
     const parsed = readJson(base ? path.join(rootAt(base), 'project.json') : settingsFile(), {})
     return {
@@ -69,20 +79,26 @@ function createProjectFile({ getProjectPath }) {
       ai: { language: '', documentLanguage: '', ...(parsed.ai && typeof parsed.ai === 'object' ? parsed.ai : {}) },
       options: { autoVersions: true, ...(parsed.options && typeof parsed.options === 'object' ? parsed.options : {}) },
       spellcheck: { languages: [], ...(parsed.spellcheck && typeof parsed.spellcheck === 'object' ? parsed.spellcheck : {}) },
+      editor: cleanEditor(parsed.editor),
       skills: { ...(parsed.skills && typeof parsed.skills === 'object' ? parsed.skills : {}), active: cleanSkillIds(parsed.skills?.active) },
     }
   }
 
   // Dove sta la cronologia di un documento: { base: cartella proprietaria della `.ow`, key: percorso relativo a base con "/" };
-  // null se il documento è fuori dal progetto.
+  // Un documento fuori dal progetto aperto sta nel progetto main (vedi looseKey); null solo senza progetto main.
   function locate(document) {
+    if (!document) return null
     const project = getProjectPath()
-    if (!project || !document) return null
     const resolved = path.resolve(document)
-    const relative = path.relative(project, resolved)
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null
-    const base = ownerRoot(project, resolved)
-    return { base, key: path.relative(base, resolved).split(path.sep).join('/') }
+    if (project) {
+      const relative = path.relative(project, resolved)
+      if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+        const base = ownerRoot(project, resolved)
+        return { base, key: path.relative(base, resolved).split(path.sep).join('/') }
+      }
+    }
+    const main = getMainPath()
+    return main ? { base: path.resolve(main), key: looseKey(resolved) } : null
   }
 
   const historyDirectory = ({ base, key }) => path.join(base, DIRECTORY_NAME, 'history', ...key.split('/'))
@@ -146,7 +162,10 @@ function createProjectFile({ getProjectPath }) {
     if (!project) return []
     const root = path.resolve(project)
     const list = (Array.isArray(documents) ? documents : [documents]).filter(Boolean)
-    const chains = list.length ? list.map((document) => chainBases(root, document)) : [chainBases(root, null)]
+    // Un documento fuori dal progetto aperto usa le istruzioni del progetto main (se il progetto aperto è il main, solo quelle).
+    const main = getMainPath() ? path.resolve(getMainPath()) : null
+    const isOutside = (document) => { const relative = path.relative(root, path.resolve(document)); return !relative || relative.startsWith('..') || path.isAbsolute(relative) }
+    const chains = list.length ? list.map((document) => (isOutside(document) && main ? (main === root ? chainBases(root, null) : [main]) : chainBases(root, document))) : [chainBases(root, null)]
     const depth = (base) => {
       const relative = path.relative(root, base)
       if (!relative) return 0
@@ -186,12 +205,13 @@ function createProjectFile({ getProjectPath }) {
       ai: { context, extraContext: readExtraContext(), language: String(settings.ai.language || ''), documentLanguage: String(settings.ai.documentLanguage || '') },
       options: { autoVersions: settings.options.autoVersions !== false },
       spellcheck: { languages: cleanLanguages(settings.spellcheck.languages) },
+      editor: cleanEditor(settings.editor),
       skills: { active: settings.skills.active },
     }
   }
 
   // `skills` è facoltativo: chi non lo passa (es. la copia del contesto) lascia intatte le skill attive.
-  function saveSettings({ name, ai, options, spellcheck, inherit, skills } = {}) {
+  function saveSettings({ name, ai, options, spellcheck, inherit, skills, editor } = {}) {
     const settings = readSettings()
     if (inherit !== undefined) settings.inherit = Boolean(inherit)
     settings.name = String(name || '').slice(0, 200)
@@ -199,6 +219,7 @@ function createProjectFile({ getProjectPath }) {
     settings.options = { ...settings.options, autoVersions: options?.autoVersions !== false }
     settings.spellcheck = { ...settings.spellcheck, languages: cleanLanguages(spellcheck?.languages) }
     if (skills !== undefined) settings.skills = { ...settings.skills, active: cleanSkillIds(skills?.active) }
+    if (editor !== undefined) settings.editor = cleanEditor(editor)
     writeAtomic(settingsFile(), JSON.stringify(settings, null, 2))
     writeAtomic(contextFile(), String(ai?.context || '').slice(0, MAX_CONTEXT_CHARS))
     return getSettings()

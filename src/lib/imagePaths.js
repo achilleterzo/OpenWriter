@@ -34,6 +34,10 @@ function joinPath(directory, relative) {
 const safeDecode = (value) => { try { return decodeURI(value) } catch { return value } }
 
 /** Testo da scrivere nel Markdown per l'immagine `imagePath` (assoluto) inserita nel documento `documentPath`. */
+// File immagine che l'app sa mostrare (quelli del protocollo ow-file) e indirizzo per mostrarlo.
+export const isImageFile = (filePath) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(String(filePath || ''))
+export const imageFileUrl = (absolutePath) => `ow-file://local/${encodeURIComponent(absolutePath)}`
+
 export function sourceForImage(imagePath, documentPath, project) {
   const image = normalize(imagePath)
   const directory = dirname(documentPath)
@@ -59,22 +63,23 @@ export function displaySource(src, documentPath) {
 /**
  * Destinazione di un collegamento del documento:
  *   { kind: 'external', url }   indirizzo http(s)
- *   { kind: 'file', path }      file locale (relativo al documento, assoluto o file:///), senza #ancora né ?query
- *   { kind: 'anchor' }          riferimento interno (#titolo)
+ *   { kind: 'file', path, fragment }  file locale (relativo al documento, assoluto o file:///), senza ?query; `fragment` è ciò che segue # (nome di un segnalibro o titolo), se c'è
+ *   { kind: 'anchor', fragment }      riferimento interno (#nome) nello stesso documento
  *   { kind: 'unresolved' }      percorso relativo in un documento mai salvato, o schema non gestito
  */
 export function resolveDocumentLink(href, documentPath) {
   const value = String(href || '').trim()
-  if (!value || value.startsWith('#')) return { kind: 'anchor' }
+  if (!value || value.startsWith('#')) return { kind: 'anchor', fragment: safeDecode(value.slice(1)) }
   if (/^https?:\/\//i.test(value)) return { kind: 'external', url: value }
   if (/^[a-z][a-z0-9+.-]*:/i.test(value) && !/^file:\/\//i.test(value) && !/^[A-Za-z]:[\\/]/.test(value)) return { kind: 'unresolved' }
   const clean = value.replace(/[?#].*$/, '')
+  const fragment = /#(.*)$/.test(value) ? safeDecode(/#(.*)$/.exec(value)[1]) : ''
   if (/^file:\/\//i.test(clean)) {
     let absolute = safeDecode(clean.replace(/^file:\/\//i, ''))
     if (/^\/[A-Za-z]:/.test(absolute)) absolute = absolute.slice(1)
-    return { kind: 'file', path: absolute }
+    return { kind: 'file', path: absolute, fragment }
   }
-  if (/^([A-Za-z]:)?[\\/]/.test(clean)) return { kind: 'file', path: normalize(safeDecode(clean)) }
+  if (/^([A-Za-z]:)?[\\/]/.test(clean)) return { kind: 'file', path: normalize(safeDecode(clean)), fragment }
   if (!documentPath) return { kind: 'unresolved' }
-  return { kind: 'file', path: joinPath(dirname(documentPath), safeDecode(clean)) }
+  return { kind: 'file', path: joinPath(dirname(documentPath), safeDecode(clean)), fragment }
 }

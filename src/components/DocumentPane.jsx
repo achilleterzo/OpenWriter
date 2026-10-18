@@ -3,20 +3,31 @@ import { FileText } from 'lucide-react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { Markdown } from '@tiptap/markdown'
 import Code from '@tiptap/extension-code'
-import Heading from '@tiptap/extension-heading'
+import { AlignedBlocks, AlignedHeading, AlignedParagraph, TextAlign } from '../lib/textAlignExtension.js'
 import StarterKit from '@tiptap/starter-kit'
 import DocumentToolbar from './DocumentToolbar.jsx'
 import FindBar from './FindBar.jsx'
 import { Annotations } from '../lib/annotationExtension.js'
+import { Bookmarks } from '../lib/bookmarkExtension.js'
 import { Search } from '../lib/searchExtension.js'
 import { KeepSelection } from '../lib/keepSelectionExtension.js'
-import { DocumentImage } from '../lib/imageExtension.js'
-import { PendingChanges, acceptAll, getPending, rejectAll } from '../lib/pendingChangesExtension.js'
+import { DocumentImage, markdownDestination } from '../lib/imageExtension.js'
+import { MathBlock, MathInline } from '../lib/mathExtensions.js'
+import { AlertBlockquote } from '../lib/alertExtension.js'
+import { MarkdownItalic, SafeMarks } from '../lib/markExtensions.js'
+import { SmartDashes } from '../lib/smartDashesExtension.js'
+import { PendingChanges, acceptAll, getPending, pendingKey, rejectAll, restorePending } from '../lib/pendingChangesExtension.js'
 import { useEditorState } from '@tiptap/react'
 import Link from '@tiptap/extension-link'
 import { TaskItem, TaskList } from '@tiptap/extension-list'
+import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import { FrontMatter, HtmlBlock, HtmlInline } from '../lib/rawMarkdownExtensions.js'
+import { FootnoteDefinition, FootnoteRef } from '../lib/footnoteExtensions.js'
+import { MarkdownListItem } from '../lib/listItemExtension.js'
 import { mergeAttributes } from '@tiptap/core'
+import SelectionToolbar from './SelectionToolbar.jsx'
+import ChangeMarkers from './ChangeMarkers.jsx'
+import SourceEditor from './SourceEditor.jsx'
 import { displaySource, isInside, dirname, resolveDocumentLink, sourceForImage } from '../lib/imagePaths.js'
 import { t } from '../i18n/index.js'
 
@@ -36,9 +47,21 @@ const DocumentLink = Link.configure({ openOnClick: false }).extend({
   renderHTML({ HTMLAttributes }) {
     return ['a', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, { title: t('{target} — Ctrl+click to open', { target: HTMLAttributes.href }) }), 0]
   },
+  renderMarkdown(node, helpers) {
+    const href = node.attrs?.href ?? ''
+    const title = node.attrs?.title ?? ''
+    const text = helpers.renderChildren(node)
+    return title ? `[${text}](${markdownDestination(href)} "${title}")` : `[${text}](${markdownDestination(href)})`
+  },
+  // Un link che racchiude solo un'immagine diventa un'immagine con il suo link (vedi imageExtension.js).
+  parseMarkdown(token, helpers) {
+    const only = token.tokens?.length === 1 && token.tokens[0].type === 'image' ? token.tokens[0] : null
+    if (only) return helpers.createNode('image', { src: only.href, title: only.title, alt: only.text, href: token.href, linkTitle: token.title || null })
+    return helpers.applyMark('link', helpers.parseInline(token.tokens || []), { href: token.href, title: token.title || null })
+  },
 })
 
-function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onNoteSelect, onStatus, onOpenLink, onSave }) {
+function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onPendingRestored, onPendingChange, onNoteSelect, onBookmarkSelect, onStatus, onOpenLink, onSave }) {
   // Vista sorgente: il Markdown grezzo del documento in un campo di testo. È solo un modo di lavorare o copiare il testo:
   // note, assistente e ricerca restano sull'editor visuale, che si aggiorna man mano che si scrive.
   const [sourceOpen, setSourceOpen] = useState(false)
@@ -57,14 +80,16 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
   const context = useRef({})
   context.current = { documentPath: tab.filePath || null, project }
 
-  // Inserisce un'immagine: `imagePath` è il file da riferire; `copy` lo porta prima nella cartella images/ del progetto.
-  async function insertImage(editor, { imagePath, copy, data, mime, name }) {
+  // Inserisce un'immagine: `imagePath` è il file da riferire, `data` un'immagine incollata. Se il file non è già raggiungibile dal documento
+  // (dentro il progetto, o nella cartella del documento) o non ha un file, si copia accanto al documento (sottocartella images/): resta nel progetto.
+  async function insertImage(editor, { imagePath, data, mime, name }) {
     const { documentPath, project: current } = context.current
     try {
       if (!documentPath) throw new Error(t('Save the document first to add images'))
       let target = imagePath
-      if (data || (copy && !(isInside(imagePath, current) || isInside(imagePath, dirname(documentPath))))) {
-        target = await electronAPI.importImage({ sourcePath: data ? undefined : imagePath, data, mime, name })
+      const reachable = Boolean(imagePath) && (isInside(imagePath, dirname(documentPath)) || Boolean(current && isInside(documentPath, current) && isInside(imagePath, current)))
+      if (data || !reachable) {
+        target = await electronAPI.importImage({ documentPath, sourcePath: data ? undefined : imagePath, data, mime, name })
       }
       const alt = String(name || target.split(/[\\/]/).pop()).replace(/\.[^.]*$/, '')
       editor.chain().focus().setImage({ src: sourceForImage(target, documentPath, current), alt }).run()
@@ -73,14 +98,27 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
     }
   }
 
+  // Barra fluttuante dei collegamenti: `linkRequest` cambia a ogni richiesta di inserire o modificare un collegamento (Ctrl+K o pulsante).
+  const [linkRequest, setLinkRequest] = useState(0)
+  const editorArea = useRef(null)
+
   const editor = useEditor({
     editorProps: {
+      handleKeyDown(view, event) {
+        if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
+          event.preventDefault()
+          setLinkRequest((value) => value + 1)
+          return true
+        }
+        return false
+      },
       handleClick(view, pos, event) {
         if (!(event.ctrlKey || event.metaKey)) return false
         const anchor = event.target?.closest?.('a[href]')
-        if (!anchor) return false
+        const target = anchor?.getAttribute('href') || event.target?.closest?.('img[data-href]')?.getAttribute('data-href')
+        if (!target) return false
         event.preventDefault()
-        onOpenLink?.(resolveDocumentLink(anchor.getAttribute('href'), context.current.documentPath))
+        onOpenLink?.(resolveDocumentLink(target, context.current.documentPath))
         return true
       },
       handlePaste(view, event) {
@@ -103,19 +141,37 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
       },
     },
     extensions: [
-      DocumentImage.configure({ resolveSource: (src) => displaySource(src, context.current.documentPath) }),
-      StarterKit.configure({ heading: false, code: false, link: false }),
+      DocumentImage.configure({ allowBase64: true, resolveSource: (src) => displaySource(src, context.current.documentPath) }),
+      StarterKit.configure({ heading: false, code: false, link: false, listItem: false, blockquote: false, paragraph: false, italic: false }),
+      MarkdownItalic,
+      AlignedParagraph,
+      TextAlign,
+      AlignedBlocks,
+      AlertBlockquote,
+      MarkdownListItem,
       DocumentLink,
       // Un link può racchiudere codice in linea ([`file.md`](url)): nello schema predefinito il codice esclude ogni altro marchio e il Markdown non sarebbe valido.
       Code.extend({ excludes: 'bold italic strike' }),
-      Heading.configure({ levels: [1, 2, 3, 4, 5, 6, 7] }),
+      AlignedHeading.configure({ levels: [1, 2, 3, 4, 5, 6, 7] }),
       TaskList,
       TaskItem.configure({ nested: true }),
+      // Tabelle GFM: senza queste estensioni le righe con "|" sparivano all'apertura (e quindi anche dal file al salvataggio).
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
       FrontMatter,
       HtmlBlock,
       HtmlInline,
+      FootnoteRef,
+      MathInline,
+      MathBlock,
+      FootnoteDefinition,
       Markdown,
+      SafeMarks,
+      SmartDashes,
       Annotations.configure({ onSelect: (id) => onNoteSelect?.(id) }),
+      Bookmarks.configure({ onSelect: (id) => onBookmarkSelect?.(id) }),
       Search,
       KeepSelection,
       PendingChanges.configure({ labels: { caption: t('Edited by the assistant'), accept: t('Accept'), reject: t('Reject') } }),
@@ -136,6 +192,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
 
   const editorRef = useRef(null)
   editorRef.current = editor
+  const interact = () => { if (tab.preview) onInteract?.(tab.id) }
 
   // Quando la scheda non è modificata (appena aperta o salvata) quello che c'è nell'editor è il testo di riferimento.
   useEffect(() => {
@@ -199,6 +256,23 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
     if (imagePath) insertImage(editor, { imagePath })
   }
 
+  // Modifiche dell'assistente rimaste in sosta in una sessione precedente: si rimettono da rivedere appena l'editor è pronto.
+  useEffect(() => {
+    if (!editor || !tab.pending) return
+    restorePending(editor, tab.pending)
+    onPendingRestored?.(tab.id)
+    // Solo alla prima apertura del documento.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor])
+
+  // Accettare o rifiutare una modifica cambia ciò che va salvato nella sessione: la si salva anche se il testo non è cambiato.
+  useEffect(() => {
+    if (!editor) return undefined
+    const onTransaction = ({ transaction }) => { if (transaction.getMeta(pendingKey)) onPendingChange?.() }
+    editor.on('transaction', onTransaction)
+    return () => editor.off('transaction', onTransaction)
+  }, [editor, onPendingChange])
+
   useEffect(() => {
     if (!editor) return undefined
     onReady(tab.id, editor)
@@ -231,7 +305,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
 
   return (
     <div className={active ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
-      <DocumentToolbar editor={editor} onSave={onSave} dirty={tab.dirty} sourceOpen={sourceOpen} onToggleSource={toggleSource} onCopySource={() => navigator.clipboard.writeText(sourceLatest.current)} onImage={pickImage} onFind={() => { if (findOpen) closeFind(); else { setFindOpen(true); setFocusToken((value) => value + 1) } }} findOpen={findOpen} />
+      <DocumentToolbar editor={editor} onSave={onSave} dirty={tab.dirty} sourceOpen={sourceOpen} onToggleSource={toggleSource} aiScore={tab.aiScore} onCheckAi={onCheckAi} onCopySource={() => navigator.clipboard.writeText(sourceLatest.current)} onImage={pickImage} onLink={() => { editor.commands.focus(); setLinkRequest((value) => value + 1) }} onFind={() => { if (findOpen) closeFind(); else { setFindOpen(true); setFocusToken((value) => value + 1) } }} findOpen={findOpen} />
       {pendingCount > 0 && !sourceOpen && (
         <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 bg-emerald-400/10 px-4 py-2 text-xs text-slate-200">
           <span>{t('{count} edits to review', { count: pendingCount })}</span>
@@ -239,20 +313,17 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
           <button type="button" className="rounded bg-rose-400/20 px-2 py-1 font-medium text-rose-300 transition hover:bg-rose-400/35" onClick={() => rejectAll(editor)}>{t('Reject all')}</button>
         </div>
       )}
-      <div className="relative min-h-0 flex-1">
+      <div ref={editorArea} className="relative min-h-0 flex-1">
         {findOpen && !sourceOpen && <FindBar editor={editor} replaceMode={replaceMode} onReplaceMode={setReplaceMode} focusToken={focusToken} onClose={closeFind} />}
         {sourceOpen && (
-          <textarea
-            value={sourceText}
-            spellCheck={false}
-            aria-label={t('Markdown source')}
-            className="document-source h-full w-full resize-none border-0 bg-transparent p-6 font-mono text-sm leading-6 text-slate-200 outline-none"
-            onChange={(event) => editSource(event.target.value)}
-          />
+          <SourceEditor value={sourceText} label={t('Markdown source')} onChange={editSource} />
         )}
-        <div className={`h-full overflow-y-auto ${sourceOpen ? 'hidden' : ''}`} data-document-scroll={tab.id}>
+        {/* Qualunque operazione sul documento (anche uno scorrimento o un clic) toglie alla scheda lo stato di anteprima. */}
+        <div className={`document-scroll h-full overflow-y-auto ${sourceOpen ? 'hidden' : ''}`} data-document-scroll={tab.id} onScroll={interact} onWheel={interact} onMouseDown={interact} onKeyDown={interact}>
           <EditorContent editor={editor} className="document-editor mx-auto" />
         </div>
+        {!sourceOpen && <ChangeMarkers editor={editor} containerRef={editorArea} onSelectNote={onNoteSelect} />}
+        {!sourceOpen && <SelectionToolbar editor={editor} containerRef={editorArea} request={linkRequest} documentPath={tab.filePath || null} onOpenLink={onOpenLink} onReplaceImage={pickImage} />}
       </div>
     </div>
   )

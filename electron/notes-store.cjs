@@ -2,7 +2,8 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
-const { ownerRoot, findOwners } = require('./project-owner.cjs')
+const { writeFileAtomic } = require('./atomic-write.cjs')
+const { ownerRoot, findOwners, looseKey, looseFromKey } = require('./project-owner.cjs')
 
 const KINDS = ['comment', 'suggestion']
 const STATUSES = ['open', 'accepted', 'rejected', 'resolved']
@@ -15,18 +16,24 @@ const AUTHORS = ['ai', 'user']
  * `quote` è il testo ancorato; `prefix`/`suffix` servono a ritrovarlo se compare più volte.
  * `kind` = 'comment' (osservazione) oppure 'suggestion' (con `replacement` da accettare o rifiutare).
  */
-function createNotesStore({ getProjectPath }) {
+function createNotesStore({ getProjectPath, getMainPath = () => null }) {
   const notesRoot = (base) => path.join(base, '.ow', 'notes')
 
-  // Dove stanno le note di un documento: { base: cartella proprietaria della `.ow`, key: percorso relativo a base con "/" }; null se fuori dal progetto.
+  // Dove stanno le note di un documento: { base: cartella proprietaria della `.ow`, key: percorso relativo a base con "/" };
+  // un documento fuori dal progetto aperto sta nel progetto main (vedi looseKey).
   function locate(document) {
+    if (!document) return null
     const project = getProjectPath()
-    if (!project || !document) return null
     const resolved = path.resolve(document)
-    const relative = path.relative(project, resolved)
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null
-    const base = ownerRoot(project, resolved)
-    return { base, key: path.relative(base, resolved).split(path.sep).join('/') }
+    if (project) {
+      const relative = path.relative(project, resolved)
+      if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+        const base = ownerRoot(project, resolved)
+        return { base, key: path.relative(base, resolved).split(path.sep).join('/') }
+      }
+    }
+    const main = getMainPath()
+    return main ? { base: path.resolve(main), key: looseKey(resolved) } : null
   }
 
   function fileFor(document) {
@@ -37,9 +44,7 @@ function createNotesStore({ getProjectPath }) {
 
   function writeAtomic(file, content) {
     fs.mkdirSync(path.dirname(file), { recursive: true })
-    const temporary = `${file}.tmp`
-    fs.writeFileSync(temporary, content)
-    fs.renameSync(temporary, file)
+    writeFileAtomic(file, content)
   }
 
   function readNotes(file) {
@@ -57,6 +62,7 @@ function createNotesStore({ getProjectPath }) {
   function normalize(input, existing = {}) {
     const kind = KINDS.includes(input.kind) ? input.kind : existing.kind || 'comment'
     const replacement = input.replacement === undefined ? existing.replacement : input.replacement
+    const status = STATUSES.includes(input.status) ? input.status : existing.status || 'open'
     return {
       id: existing.id || input.id || crypto.randomUUID(),
       kind,
@@ -65,7 +71,9 @@ function createNotesStore({ getProjectPath }) {
       suffix: text(input.suffix ?? existing.suffix, 80),
       body: text(input.body ?? existing.body, 4000),
       replacement: kind === 'suggestion' && replacement !== null && replacement !== undefined ? text(replacement, 4000) : null,
-      status: STATUSES.includes(input.status) ? input.status : existing.status || 'open',
+      status,
+      // Perché la nota è stata chiusa senza applicarla (testo libero, facoltativo): chi rilegge le note capisce cosa è successo. Si azzera se la nota si riapre.
+      resolution: status === 'open' ? null : text(input.resolution ?? existing.resolution, 1000).trim() || null,
       author: AUTHORS.includes(input.author) ? input.author : existing.author || 'user',
       createdAt: existing.createdAt || new Date().toISOString(),
       updatedAt: existing.updatedAt ?? null,
@@ -91,8 +99,8 @@ function createNotesStore({ getProjectPath }) {
     const index = notes.findIndex((note) => note.id === id)
     if (index === -1) throw new Error(t('Note not found'))
     // L'autore non si modifica: cambiano contenuto, stato, (comment → suggestion) il tipo e, per riallinearla dopo una modifica del testo, l'ancora.
-    const { body, replacement, status, kind, quote, prefix, suffix } = changes || {}
-    notes[index] = { ...normalize({ ...notes[index], body, replacement, status, kind, quote, prefix, suffix }, notes[index]), updatedAt: new Date().toISOString() }
+    const { body, replacement, status, kind, quote, prefix, suffix, resolution } = changes || {}
+    notes[index] = { ...normalize({ ...notes[index], body, replacement, status, kind, quote, prefix, suffix, resolution }, notes[index]), updatedAt: new Date().toISOString() }
     writeAtomic(file, JSON.stringify(notes, null, 2))
     return notes[index]
   }
@@ -121,7 +129,10 @@ function createNotesStore({ getProjectPath }) {
             const notes = readNotes(full)
             if (!notes.length) continue
             const inBase = path.relative(notesRoot(base), full).slice(0, -'.json'.length)
-            result.push({ path: path.relative(project, path.join(base, inBase)).split(path.sep).join('/'), notes })
+            const relative = path.relative(project, path.join(base, inBase)).split(path.sep).join('/')
+            // Le note dei documenti sparsi (progetto main) si presentano con il percorso assoluto del documento.
+            const absolute = looseFromKey(inBase.split(path.sep).join('/'))
+            result.push({ path: absolute || relative, absolute: Boolean(absolute), notes })
           } catch {}
         }
       }

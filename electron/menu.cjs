@@ -2,7 +2,10 @@ const { Menu } = require('electron')
 const { t } = require('./i18n.cjs')
 
 // Le voci con "role" usano un'etichetta esplicita: altrimenti Electron le mostrerebbe nella lingua del sistema, non in quella scelta.
-function createApplicationMenu(sendCommand) {
+// Menu Visualizza (vista continua / a pagine): nascosto finché la vista a pagine non è rifinita (vedi pagesViewEnabled in src/appearance.js).
+const PAGES_VIEW_ENABLED = false
+
+function createApplicationMenu(sendCommand, state = {}) {
   const command = (name) => () => sendCommand(name)
 
   Menu.setApplicationMenu(Menu.buildFromTemplate([
@@ -19,8 +22,14 @@ function createApplicationMenu(sendCommand) {
         { type: 'separator' },
         { label: t('Print…'), accelerator: 'CmdOrCtrl+P', click: command('print') },
         { type: 'separator' },
-        { label: t('Export DOCX…'), click: command('export-docx') },
-        { label: t('Export PDF…'), click: command('export-pdf') },
+        {
+          label: t('Export'),
+          submenu: [
+            { label: t('Word document (.docx)…'), click: command('export-docx') },
+            { label: t('PDF document (.pdf)…'), click: command('export-pdf') },
+            { label: t('Markdown with embedded images (.md)…'), click: command('export-markdown-embedded') },
+          ],
+        },
         { type: 'separator' },
         { label: t('Settings…'), accelerator: 'CmdOrCtrl+,', click: command('settings') },
         { type: 'separator' },
@@ -42,6 +51,13 @@ function createApplicationMenu(sendCommand) {
         { label: t('Replace…'), accelerator: 'CmdOrCtrl+H', click: command('replace') },
       ],
     },
+    ...(PAGES_VIEW_ENABLED ? [{
+      label: t('View'),
+      submenu: [
+        { label: t('Endless'), type: 'radio', checked: state.view !== 'pages', click: command('view-endless') },
+        { label: t('Pages (A4)'), type: 'radio', checked: state.view === 'pages', click: command('view-pages') },
+      ],
+    }] : []),
     {
       label: t('Help'),
       submenu: [

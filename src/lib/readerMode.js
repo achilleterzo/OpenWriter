@@ -17,7 +17,7 @@ export function extractArticle(html, url) {
 // Pagina della vista lettura. Va in un iframe con `sandbox` vuoto: il contenuto viene dal web e non può eseguire script.
 export function readerDocument(article, { dark, size }) {
   const escape = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  const colors = dark ? { background: '#18181a', text: '#d9d9de', muted: '#8d8d96', link: '#8ab4f8', rule: '#34343a' } : { background: '#fbfaf7', text: '#222', muted: '#6b6b6b', link: '#1a5fb4', rule: '#ddd' }
+  const colors = dark ? { background: '#18181a', text: '#d9d9de', muted: '#8d8d96', link: '#8ab4f8', rule: '#34343a' } : { background: '#f4f4f2', text: '#222225', muted: '#6b6b6b', link: '#1a5fb4', rule: '#d4d4d0' }
   return `<!doctype html><html><head><meta charset="utf-8"><base href="${escape(article.url)}" target="_blank"><meta name="referrer" content="no-referrer"><style>
     body{margin:0;background:${colors.background};color:${colors.text};font:${size}px/1.7 Georgia,'Times New Roman',serif}
     main{max-width:42rem;margin:0 auto;padding:2rem 1.25rem 4rem}

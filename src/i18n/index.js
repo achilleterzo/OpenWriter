@@ -3,6 +3,7 @@ import es from './locales/es.json'
 import fr from './locales/fr.json'
 import de from './locales/de.json'
 import pt from './locales/pt.json'
+import { getPreference, setPreference } from '../lib/preferences.js'
 
 /**
  * Localizzazione dell'interfaccia. Le chiavi sono i testi in inglese (lingua di partenza e di ripiego):
@@ -40,10 +41,11 @@ function resolve(preference) {
 
 function loadPreference() {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY)
-    return SPECIAL.has(saved) || supported(saved) ? saved : DEFAULT_LANGUAGE
+    const saved = getPreference(STORAGE_KEY)
+    // Senza una scelta salvata vale la lingua del sistema (se supportata, altrimenti l'inglese).
+    return SPECIAL.has(saved) || supported(saved) ? saved : 'auto'
   } catch {
-    return DEFAULT_LANGUAGE
+    return 'auto'
   }
 }
 
@@ -89,9 +91,9 @@ function announce() {
 
 export function setLanguage(next) {
   const before = current
-  preference = SPECIAL.has(next) || supported(next) ? next : DEFAULT_LANGUAGE
+  preference = SPECIAL.has(next) || supported(next) ? next : 'auto'
   current = resolve(preference)
-  try { localStorage.setItem(STORAGE_KEY, preference) } catch { /* senza storage vale solo per questa sessione */ }
+  setPreference(STORAGE_KEY, preference)
   announce()
   if (current !== before) {
     try { sessionStorage.setItem(AFTER_LANGUAGE_RELOAD_KEY, 'settings') } catch { /* si ricarica comunque */ }

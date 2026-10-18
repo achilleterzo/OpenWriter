@@ -127,6 +127,19 @@ body {
 .document-editor .tiptap h6,
 .document-editor .tiptap h7 { font-size: 1rem; }
 
+/* Immagini: blocco a sé con un margine sopra e sotto, così non restano attaccate al testo; non escono mai dalla pagina. */
+.document-editor .tiptap img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.25rem 0;
+}
+
+.document-editor .tiptap img.ProseMirror-selectednode {
+  outline: 2px solid rgb(var(--accent-400));
+  outline-offset: 2px;
+}
+
 .document-editor .tiptap p {
   margin: 0 0 1rem;
 }
@@ -240,8 +253,33 @@ body {
   border-left: 3px solid rgb(var(--rose-400));
   background: rgb(var(--rose-400) / 0.12);
   padding: 0.25rem 0 0.25rem 0.75rem;
+  color: rgb(var(--slate-300));
+}
+
+/* Senza un confronto per parole (struttura cambiata, nulla da abbinare) il blocco "prima" è tutto barrato. */
+.document-editor .tiptap .ow-pending-old--all {
   text-decoration: line-through;
   color: rgb(var(--slate-400));
+}
+
+/* Confronto per parole: nel "prima" solo le parole tolte sono barrate; nel documento solo quelle nuove sono evidenziate. */
+.document-editor .tiptap .ow-pending-removed {
+  border-radius: 0.125rem;
+  background: rgb(var(--rose-400) / 0.3);
+  text-decoration: line-through;
+}
+.document-editor .tiptap .ow-pending-removed-block {
+  color: rgb(var(--slate-400));
+  text-decoration: line-through;
+}
+.document-editor .tiptap .ow-pending-same { opacity: 0.5; }
+.document-editor .tiptap .ow-pending-touched {
+  border-left: 3px solid rgb(var(--emerald-400) / 0.6);
+  padding-left: 0.75rem;
+}
+.document-editor .tiptap .ow-pending-added {
+  border-radius: 0.125rem;
+  background: rgb(var(--emerald-400) / 0.28);
 }
 
 .document-editor .tiptap .ow-pending-old > :last-child { margin-bottom: 0; }
@@ -295,6 +333,16 @@ body {
   }
 }
 
+/* Scheda della nota selezionata nell'elenco: tinta chiara del colore d'accento con una barra a sinistra; funziona in entrambi i temi
+   perché l'accento ha già le sue variabili per ciascuno. */
+.note-card-active {
+  background: rgb(var(--accent-500) / 0.13);
+  box-shadow: inset 3px 0 0 rgb(var(--accent-400));
+}
+:root[data-theme='light'] .note-card-active {
+  background: rgb(var(--accent-500) / 0.09);
+}
+
 /* Note ancorate al testo: commenti in tinta d'accento, suggerimenti con sottolineatura ondulata ambra. */
 .document-editor .tiptap .ow-note {
   cursor: pointer;
@@ -340,3 +388,192 @@ body {
   background: rgb(245 158 11 / 0.75);
   outline: 1px solid rgb(251 191 36);
 }
+
+/* Vista sorgente: numeri di riga a sinistra. La colonna dei numeri contiene una copia invisibile del testo con lo stesso carattere e la stessa larghezza,
+   così ogni numero si allinea alla prima riga visiva anche quando la riga va a capo; la textarea le sta sopra e prende l'altezza dal contenitore. */
+.document-source {
+  --source-gutter: 3.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  color: rgb(var(--slate-200));
+}
+.document-source .source-wrap { position: relative; min-height: 100%; }
+.document-source .source-lines { padding: 1.5rem 1.5rem 1.5rem 0; min-height: 100%; border-right: 0; }
+.document-source .source-line { position: relative; padding-left: var(--source-gutter); }
+.document-source .source-line-number {
+  position: absolute;
+  left: 0;
+  width: calc(var(--source-gutter) - 0.75rem);
+  text-align: right;
+  color: rgb(var(--slate-500));
+  user-select: none;
+}
+.document-source .source-line-text { display: block; visibility: hidden; white-space: pre-wrap; overflow-wrap: break-word; tab-size: 4; }
+.document-source .source-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 1.5rem 1.5rem 1.5rem var(--source-gutter);
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 4;
+}
+.document-source .source-wrap::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--source-gutter) - 0.375rem);
+  border-left: 1px solid rgb(var(--slate-800));
+}
+
+/* Visualizza → Pagine: fogli A4 su un piano di lavoro. Il foglio ha i margini della stampa (2 cm); tra un foglio e l'altro c'è uno stacco.
+   È una resa visiva: il testo scorre in modo continuo, non si divide in pagine vere. */
+:root[data-view='pages'] .document-scroll {
+  background: rgb(var(--slate-900));
+  padding: 1.5rem 1rem 3rem;
+}
+:root[data-view='pages'] .document-editor {
+  width: 210mm;
+  max-width: 100%;
+}
+:root[data-view='pages'] .document-editor .tiptap {
+  min-height: 297mm;
+  padding: 20mm;
+  background-color: rgb(var(--slate-950));
+  background-image: linear-gradient(to bottom, transparent 297mm, rgb(var(--slate-900)) 297mm);
+  background-size: 100% calc(297mm + 1.5rem);
+  background-repeat: repeat-y;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35), 0 8px 24px rgb(0 0 0 / 0.2);
+}
+
+/* Tabelle (GFM). Le celle contengono paragrafi: senza il margine di fondo restano compatte. */
+.document-editor .tiptap table {
+  width: 100%;
+  margin: 0 0 1rem;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.document-editor .tiptap th,
+.document-editor .tiptap td {
+  position: relative;
+  min-width: 3rem;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid rgb(var(--slate-700));
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.document-editor .tiptap th {
+  background: rgb(var(--slate-900));
+  font-weight: 600;
+  text-align: left;
+}
+.document-editor .tiptap th p,
+.document-editor .tiptap td p { margin: 0; }
+.document-editor .tiptap .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgb(var(--accent-400) / 0.2);
+  pointer-events: none;
+}
+
+/* Note a piè di pagina: richiamo in apice e definizione (testo grezzo, come nel file). */
+.document-editor .tiptap .ow-footnote-ref {
+  color: rgb(var(--accent-400));
+  font-size: 0.75em;
+  font-weight: 600;
+}
+.document-editor .tiptap .ow-footnote-ref::before { content: '['; }
+.document-editor .tiptap .ow-footnote-ref::after { content: ']'; }
+.document-editor .tiptap pre.ow-footnote-definition {
+  font-family: var(--editor-font);
+  font-size: 0.85em;
+  color: rgb(var(--slate-400));
+  border-left: 2px solid rgb(var(--slate-700));
+  padding-left: 0.75rem;
+}
+
+/* Formule: testo grezzo (non si disegnano), in carattere a spaziatura fissa. */
+.document-editor .tiptap .ow-math {
+  border-radius: 0.25rem;
+  background: rgb(var(--slate-800));
+  padding: 0 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+/* Avvisi di GitHub: citazione con etichetta colorata. */
+.document-editor .tiptap blockquote[data-alert] {
+  --alert: var(--accent-400);
+  border-left: 3px solid rgb(var(--alert));
+  background: rgb(var(--alert) / 0.08);
+  padding: 0.5rem 1rem;
+  border-radius: 0 0.375rem 0.375rem 0;
+}
+.document-editor .tiptap blockquote[data-alert]::before {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: rgb(var(--alert));
+  font-size: 0.8em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.document-editor .tiptap blockquote[data-alert='NOTE'] { --alert: 96 165 250; }
+.document-editor .tiptap blockquote[data-alert='NOTE']::before { content: 'Note'; }
+.document-editor .tiptap blockquote[data-alert='TIP'] { --alert: var(--emerald-400); }
+.document-editor .tiptap blockquote[data-alert='TIP']::before { content: 'Tip'; }
+.document-editor .tiptap blockquote[data-alert='IMPORTANT'] { --alert: 167 139 250; }
+.document-editor .tiptap blockquote[data-alert='IMPORTANT']::before { content: 'Important'; }
+.document-editor .tiptap blockquote[data-alert='WARNING'] { --alert: var(--amber-400); }
+.document-editor .tiptap blockquote[data-alert='WARNING']::before { content: 'Warning'; }
+.document-editor .tiptap blockquote[data-alert='CAUTION'] { --alert: var(--rose-400); }
+.document-editor .tiptap blockquote[data-alert='CAUTION']::before { content: 'Caution'; }
+
+/* Linea orizzontale: il reset di Tailwind le lascia un bordo grigio chiaro e nessun margine (invisibile sul tema chiaro, attaccata al testo su quello scuro).
+   Ha un'altezza propria, così si vede, si può selezionare con un clic e ha respiro sopra e sotto. */
+.document-editor .tiptap hr {
+  position: relative;
+  height: 1.5rem;
+  margin: 0 0 1rem;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+.document-editor .tiptap hr::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  border-top: 1px solid rgb(var(--slate-500));
+}
+.document-editor .tiptap hr.ProseMirror-selectednode::before {
+  border-top: 2px solid rgb(var(--accent-400));
+}
+
+/* Segnalibri: un segno all'inizio del punto e una sottolineatura a puntini sul testo ancorato; in ambra se contrassegnati per l'assistente. */
+.document-editor .tiptap .ow-bookmark-marker {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 0.15em;
+  color: rgb(var(--accent-400));
+  vertical-align: -0.1em;
+  cursor: pointer;
+  user-select: none;
+}
+.document-editor .tiptap .ow-bookmark-marker-flagged { color: rgb(var(--amber-400)); }
+.document-editor .tiptap .ow-bookmark-range { border-bottom: 1px dotted rgb(var(--accent-400)); }
+.document-editor .tiptap .ow-bookmark-range.ow-bookmark-flagged { border-bottom-color: rgb(var(--amber-400)); }
+.document-editor .tiptap .ow-bookmark-range.ow-bookmark-active { background: rgb(var(--accent-400) / 0.15); }

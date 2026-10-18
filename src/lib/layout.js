@@ -1,4 +1,6 @@
 // Larghezze dei pannelli laterali: valori preferiti dall'utente, salvati tra le sessioni, e minimi/massimi fissi.
+import { getPreference, setPreference } from './preferences.js'
+
 const STORAGE_KEY = 'openwriter.layout'
 
 export const ACTIVITY_BAR_WIDTH = 48
@@ -17,7 +19,7 @@ const clampToRange = (side, value) => {
 
 export function loadLayout() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    const saved = JSON.parse(getPreference(STORAGE_KEY))
     return { left: clampToRange('left', saved?.left), right: clampToRange('right', saved?.right) }
   } catch {
     return { left: PANELS.left.default, right: PANELS.right.default }
@@ -25,7 +27,7 @@ export function loadLayout() {
 }
 
 export function saveLayout(layout) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(layout)) } catch { /* storage non disponibile: si usano i predefiniti */ }
+  setPreference(STORAGE_KEY, JSON.stringify(layout))
 }
 
 // Larghezza massima di un pannello, dato lo spazio della finestra e l'altro pannello se è visibile.

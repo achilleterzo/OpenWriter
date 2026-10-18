@@ -15,13 +15,19 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
   const [error, setError] = useState('')
   // Correzione in modifica: { id, text }. Per un suggerimento parte dalla proposta, per un commento dal testo citato.
   const [editing, setEditing] = useState(null)
+  // Nota che si sta chiudendo senza applicarla: { id, status: 'resolved' | 'rejected', reason } (la motivazione è facoltativa).
+  const [closing, setClosing] = useState(null)
 
-  // Quali note hanno ancora il loro testo nel documento (si aggiorna a ogni modifica).
+  // Dove sta il testo di ogni nota nel documento (posizione di inizio, o null se non c'è più); si aggiorna a ogni modifica.
   const located = useEditorState({
     editor,
-    selector: ({ editor: current }) => JSON.stringify(notes.map((note) => Boolean(locateQuote(current.state.doc, note)))),
+    selector: ({ editor: current }) => {
+      const index = buildTextIndex(current.state.doc)
+      return JSON.stringify(notes.map((note) => locateNote(current.state.doc, note, index)?.from ?? null))
+    },
   })
-  const found = JSON.parse(located)
+  const positions = JSON.parse(located)
+  const found = positions.map((position) => position !== null)
 
   // Selezionando una nota (dall'elenco o cliccandola nel testo) l'elenco scorre fino alla sua scheda.
   useEffect(() => {
@@ -34,7 +40,17 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
   if (!tab.filePath) return <p className="px-3 py-3 text-xs text-slate-500">{t('Save the document as Markdown inside the project to add notes.')}</p>
 
   const needle = foldText(search.trim())
-  const visible = notes.filter((note) => noteIsShown(note, noteView, activeNoteId, needle))
+  // Ordine dell'elenco: prima le note aperte con il testo ancora nel documento, in ordine di posizione; poi le chiuse (risolte, accettate,
+  // rifiutate), sempre per posizione; per ultime quelle il cui testo non c'è più (aperte prima, poi per data di creazione).
+  const order = (note) => {
+    const position = positions[notes.indexOf(note)]
+    return { group: position === null ? 2 : note.status === 'open' ? 0 : 1, closed: note.status === 'open' ? 0 : 1, position: position ?? 0, created: String(note.createdAt || '') }
+  }
+  const visible = notes
+    .filter((note) => noteIsShown(note, noteView, activeNoteId, needle))
+    .map((note) => ({ note, ...order(note) }))
+    .sort((left, right) => left.group - right.group || (left.group === 2 ? left.closed - right.closed || left.created.localeCompare(right.created) : left.position - right.position || left.created.localeCompare(right.created)))
+    .map((item) => item.note)
 
 
   async function run(action) {
@@ -74,15 +90,16 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
         `Original quoted passage: ${note.quote}`,
         note.kind === 'suggestion' ? `Proposed replacement: ${note.replacement ?? ''}` : '',
         `Read the current text of the document (read_file "${tab.title}" if needed) and check whether the remark or suggestion of the note still applies to what is written now.`,
-        `If it no longer applies (already fixed, or the passage is gone), archive the note with update_note (id ${note.id}, status "resolved").`,
+        `If it no longer applies (already fixed, or the passage is gone), archive the note with update_note (id ${note.id}, status "resolved", and a short "resolution" saying why).`,
         `Otherwise align it: call update_note (id ${note.id}) with "quote" set to the exact current passage it refers to and, for a suggestion, "replacement" set to the complete updated corrected passage (also "body" if you are the author and it needs rewording).`,
         'Do not ask for confirmation and keep your final reply to one short sentence saying what you did.',
       ].filter(Boolean).join('\n'),
     })
   }
 
-  const setStatus = (note, status) => run(async () => {
-    await electronAPI.updateNote({ filePath: tab.filePath, id: note.id, changes: { status } })
+  const setStatus = (note, status, resolution = '') => run(async () => {
+    await electronAPI.updateNote({ filePath: tab.filePath, id: note.id, changes: { status, ...(resolution.trim() ? { resolution: resolution.trim() } : {}) } })
+    setClosing(null)
     // Una nota chiusa non resta "selezionata": la selezione la terrebbe in elenco e nel testo anche con la vista "Aperte".
     if (status !== 'open' && note.id === activeNoteId) onSelectNote(null)
   })
@@ -161,7 +178,7 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
           const index = notes.indexOf(note)
           const orphan = note.status === 'open' && !found[index]
           return (
-            <div key={note.id} data-note-card={note.id} className={`border-b border-slate-800/60 px-3 py-2.5 ${note.id === activeNoteId ? 'bg-slate-800/60' : ''}`}>
+            <div key={note.id} data-note-card={note.id} className={`border-b border-slate-800/60 px-3 py-2.5 ${note.id === activeNoteId ? 'note-card-active' : ''}`}>
               <button type="button" className="block w-full text-left" onClick={() => focusNote(note)}>
                 <span className="flex items-center gap-1.5 text-xs text-slate-500">
                   {note.author === 'ai' ? <Bot size={12} /> : <User size={12} />}
@@ -171,6 +188,9 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
                 </span>
                 <span className="mt-1 block truncate border-l-2 border-slate-600 pl-2 text-xs italic text-slate-400">{note.quote}</span>
                 <span className="mt-1 block whitespace-pre-wrap text-sm text-slate-200">{note.body}</span>
+                {note.status !== 'open' && note.resolution && (
+                  <span className="mt-1 block whitespace-pre-wrap rounded bg-slate-950/50 px-2 py-1 text-xs italic text-slate-400"><span className="not-italic text-slate-500">{t('Reason')}: </span>{note.resolution}</span>
+                )}
                 {note.kind === 'suggestion' && (
                   <span className="mt-1 block rounded bg-slate-950/50 px-2 py-1 text-xs">
                     <span className="text-rose-300 line-through">{note.quote}</span>
@@ -197,25 +217,47 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
                   </div>
                 </div>
               )}
+              {closing?.id === note.id && (
+                <div className="mt-2 grid gap-1.5">
+                  <label className="text-xs text-slate-400" htmlFor={`reason-${note.id}`}>{closing.status === 'rejected' ? t('Why is the suggestion rejected? (optional)') : t('Why is the note closed without applying it? (optional)')}</label>
+                  <textarea
+                    id={`reason-${note.id}`}
+                    autoFocus
+                    rows={2}
+                    value={closing.reason}
+                    placeholder={t('The assistant reads it when it looks at the notes again')}
+                    className={`${fieldClass} resize-y`}
+                    onChange={(event) => setClosing({ ...closing, reason: event.target.value })}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') setClosing(null)
+                      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); setStatus(note, closing.status, closing.reason) }
+                    }}
+                  />
+                  <div className="flex gap-1">
+                    <button type="button" className={`${smallButton} ${closing.status === 'rejected' ? 'bg-rose-500/15 text-rose-300 hover:bg-rose-500/25' : 'bg-slate-700 text-slate-100 hover:bg-slate-600'}`} onClick={() => setStatus(note, closing.status, closing.reason)}>{closing.status === 'rejected' ? <X size={12} /> : <Check size={12} />} {closing.status === 'rejected' ? t('Reject') : t('Resolve')}</button>
+                    <button type="button" className={`${smallButton} text-slate-400 hover:bg-slate-800 hover:text-slate-50`} onClick={() => setClosing(null)}>{t('Cancel')}</button>
+                  </div>
+                </div>
+              )}
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {note.status === 'open' && note.kind === 'suggestion' && (
                   <>
                     {!orphan && <button type="button" className={`${smallButton} bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25`} onClick={() => applyCorrection(note, note.replacement ?? '')}><Check size={12} /> {t('Accept')}</button>}
                     {!orphan && <button type="button" className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600`} onClick={() => setEditing({ id: note.id, text: note.replacement ?? '' })}><Pencil size={12} /> {t('Edit…')}</button>}
-                    <button type="button" className={`${smallButton} bg-rose-500/15 text-rose-300 hover:bg-rose-500/25`} onClick={() => setStatus(note, 'rejected')}><X size={12} /> {t('Reject')}</button>
-                    <button type="button" className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600`} title={t('Closes the note without changing the document')} onClick={() => setStatus(note, 'resolved')}><Check size={12} /> {t('Resolve')}</button>
+                    <button type="button" className={`${smallButton} bg-rose-500/15 text-rose-300 hover:bg-rose-500/25`} onClick={() => setClosing({ id: note.id, status: 'rejected', reason: '' })}><X size={12} /> {t('Reject')}</button>
+                    <button type="button" className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600`} title={t('Closes the note without changing the document')} onClick={() => setClosing({ id: note.id, status: 'resolved', reason: '' })}><Check size={12} /> {t('Resolve')}</button>
                   </>
                 )}
                 {note.status === 'open' && note.kind === 'comment' && (
                   <>
                     {!orphan && <button type="button" className={`${smallButton} bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25`} onClick={() => askAi(note)}><Pencil size={12} /> {t('Apply correction…')}</button>}
-                    <button type="button" className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600`} title={t('Closes the note without changing the document')} onClick={() => setStatus(note, 'resolved')}><Check size={12} /> {t('Resolve without changing')}</button>
+                    <button type="button" className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600`} title={t('Closes the note without changing the document')} onClick={() => setClosing({ id: note.id, status: 'resolved', reason: '' })}><Check size={12} /> {t('Resolve without changing')}</button>
                   </>
                 )}
                 {note.status === 'open' && orphan && (
                   <>
                     <button type="button" className={`${smallButton} bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25`} title={t('Ask the assistant to check whether the note still applies: if not it is archived, otherwise it is aligned to the current text')} onClick={() => verifyWithAi(note)}><SearchCheck size={12} /> {t('Verify')}</button>
-                    <button type="button" className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600`} title={t('Archives the note without changing the document')} onClick={() => setStatus(note, 'resolved')}><Check size={12} /> {t('Resolve')}</button>
+                    <button type="button" className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600`} title={t('Archives the note without changing the document')} onClick={() => setClosing({ id: note.id, status: 'resolved', reason: '' })}><Check size={12} /> {t('Resolve')}</button>
                   </>
                 )}
                 {note.status !== 'open' && (

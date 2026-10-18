@@ -61,4 +61,24 @@ function parentOwner(directory) {
   return null
 }
 
-module.exports = { ownerRoot, findOwners, parentOwner, isInside }
+// Documenti "sparsi" (fuori dal progetto aperto): cronologia e note stanno nella `.ow` del progetto main, sotto `loose/`,
+// con lo stesso percorso del file (la lettera del disco o la radice diventa il primo segmento): `D:/a/b.md` → `loose/d/a/b.md`.
+// Su Windows le maiuscole non contano, quindi la chiave è in minuscolo.
+const LOOSE_DIRECTORY = 'loose'
+function looseKey(target) {
+  const resolved = path.resolve(target)
+  const { root } = path.parse(resolved)
+  const rootId = root.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'root'
+  const key = [LOOSE_DIRECTORY, rootId, ...path.relative(root, resolved).split(path.sep)].join('/')
+  return process.platform === 'win32' ? key.toLowerCase() : key
+}
+
+// Percorso assoluto di una chiave `loose/…` (null se non ricostruibile, es. radice di rete).
+function looseFromKey(key) {
+  const [prefix, rootId, ...rest] = String(key).split('/')
+  if (prefix !== LOOSE_DIRECTORY || !rootId || !rest.length) return null
+  if (process.platform === 'win32') return /^[A-Za-z]$/.test(rootId) ? `${rootId.toUpperCase()}:\\${rest.join('\\')}` : null
+  return rootId === 'root' ? `/${rest.join('/')}` : null
+}
+
+module.exports = { ownerRoot, findOwners, parentOwner, isInside, looseKey, looseFromKey, LOOSE_DIRECTORY }

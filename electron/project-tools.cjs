@@ -10,6 +10,7 @@ const MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'])
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 const MAX_LIST_ENTRIES = 300
+const MAX_SORTED_ENTRIES = 3000
 const TEXT_DOCUMENT_EXTENSIONS = new Set(['.md', '.markdown', '.txt'])
 const MAX_CREATED_CHARS = 500000
 
@@ -34,6 +35,8 @@ function createProjectTools({ getProjectPath, readDocument }) {
   function resolveInside(relativePath = '') {
     const project = getProjectPath()
     if (!project) throw new Error(t('No project open'))
+    // `@sigla/…` indica una cartella di riferimento (sola lettura): si legge con gli strumenti di quella cartella, mai come percorso del progetto.
+    if (String(relativePath || '').startsWith('@')) throw new Error(t('Reference folders are read-only and can only be listed and read'))
     const target = path.resolve(project, String(relativePath || '.'))
     const relative = path.relative(project, target)
     if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error(t('Path is outside the project'))
@@ -41,22 +44,31 @@ function createProjectTools({ getProjectPath, readDocument }) {
     return { target, relative: relative.split(path.sep).join('/') }
   }
 
-  async function listDirectory(relativePath) {
+  // `sort`: 'name' (cartelle prima, poi file per nome) o 'date' (dal più recente: cartelle e file insieme, per data di ultima modifica).
+  // Ogni voce porta `modified` (millisecondi): per un file è la data dell'ultimo salvataggio su disco.
+  async function listDirectory(relativePath, { sort = 'name' } = {}) {
     const { target, relative } = resolveInside(relativePath)
     const entries = await fs.promises.readdir(target, { withFileTypes: true }).catch(() => { throw new Error(t('Folder not found: {path}', { path: relative || '.' })) })
     const visible = entries.filter((entry) => !EXCLUDED_NAMES.has(entry.name))
-    const items = await Promise.all(visible.slice(0, MAX_LIST_ENTRIES).map(async (entry) => {
-      if (entry.isDirectory()) return { name: entry.name, type: 'directory', project: fs.existsSync(path.join(target, entry.name, '.ow')) }
-      let size = null
-      try { size = (await fs.promises.stat(path.join(target, entry.name))).size } catch {}
-      return { name: entry.name, type: 'file', size }
+    const byDate = sort === 'date'
+    // Per ordinare per data si leggono le date di tutte le voci (entro un tetto) prima di tagliare l'elenco.
+    const considered = visible.slice(0, byDate ? MAX_SORTED_ENTRIES : MAX_LIST_ENTRIES)
+    const items = await Promise.all(considered.map(async (entry) => {
+      let stats = null
+      try { stats = await fs.promises.stat(path.join(target, entry.name)) } catch {}
+      const modified = stats ? Math.round(stats.mtimeMs) : null
+      if (entry.isDirectory()) return { name: entry.name, type: 'directory', modified, project: fs.existsSync(path.join(target, entry.name, '.ow')) }
+      return { name: entry.name, type: 'file', size: stats ? stats.size : null, modified }
     }))
-    items.sort((left, right) => Number(right.type === 'directory') - Number(left.type === 'directory') || left.name.localeCompare(right.name, 'it', { sensitivity: 'base' }))
-    return { path: relative || '.', entries: items, truncated: visible.length > MAX_LIST_ENTRIES }
+    const byName = (left, right) => left.name.localeCompare(right.name, 'it', { sensitivity: 'base' })
+    if (byDate) items.sort((left, right) => (right.modified ?? 0) - (left.modified ?? 0) || byName(left, right))
+    else items.sort((left, right) => Number(right.type === 'directory') - Number(left.type === 'directory') || byName(left, right))
+    return { path: relative || '.', entries: items.slice(0, MAX_LIST_ENTRIES), truncated: visible.length > MAX_LIST_ENTRIES, sort: byDate ? 'date' : 'name' }
   }
 
-  async function readFile(relativePath, { offset = 0, limit = DEFAULT_READ_CHARS } = {}) {
-    const { target, relative } = resolveInside(relativePath)
+  // `absolute`: il percorso è quello (assoluto) di un documento collegato al progetto, già verificato dal chiamante.
+  async function readFile(relativePath, { offset = 0, limit = DEFAULT_READ_CHARS, absolute = false } = {}) {
+    const { target, relative } = absolute ? { target: path.resolve(String(relativePath)), relative: path.resolve(String(relativePath)) } : resolveInside(relativePath)
     const stats = await fs.promises.stat(target).catch(() => null)
     if (!stats) throw new Error(t('File not found: {path}', { path: relative }))
     if (!stats.isFile()) throw new Error(t('Not a file: use list_directory for folders'))
