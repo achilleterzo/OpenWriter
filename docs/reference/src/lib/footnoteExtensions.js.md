@@ -8,3 +8,7 @@ Footnotes of extended Markdown: the reference `[^id]` in the text and the defini
 - `FootnoteDefinition`: the definition, kept as raw text (class `ow-raw-block ow-footnote-definition`) so that long definitions or ones with several paragraphs are preserved anyway.
 
 Both declare their Markdown tokenizer and renderer, so the source syntax survives the round trip.
+
+Outside the cursor, the start of a definition is drawn as a superscript label (a plugin hides `[^` and `]:` with inline decorations); with the cursor inside the definition the raw code is shown for editing. The reference in the text is a plain superscript, without brackets.
+
+Ref and definition go together: deleting a definition removes the references with its label, and deleting the last reference with a label removes its definition (an `appendTransaction` plugin, only when a node really disappears, never on a manual edit of the label; skipped for transactions that are not added to the history).

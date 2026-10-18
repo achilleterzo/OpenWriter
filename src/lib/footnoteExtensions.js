@@ -1,5 +1,6 @@
 import { Node } from '@tiptap/core'
-import { TextSelection } from '@tiptap/pm/state'
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 
 /**
  * Note a piè di pagina del Markdown esteso: il richiamo `[^id]` nel testo e la definizione `[^id]: testo` (anche su più righe rientrate).
@@ -7,6 +8,50 @@ import { TextSelection } from '@tiptap/pm/state'
  * e la definizione veniva scambiata per una definizione di link, fondendola nel testo.
  */
 const rawText = (node) => (node.content || []).map((child) => child.text || '').join('')
+
+// Richiami e definizioni di un documento: conteggio per etichetta e totale.
+function footnoteCounts(doc) {
+  const refs = new Map()
+  const definitions = new Map()
+  let refTotal = 0
+  let definitionTotal = 0
+  doc.descendants((node) => {
+    if (node.type.name === 'footnoteRef') { refs.set(node.attrs.label, (refs.get(node.attrs.label) || 0) + 1); refTotal += 1 }
+    else if (node.type.name === 'footnoteDefinition') {
+      definitionTotal += 1
+      const found = /^\[\^([^\]\s]+)\]:/.exec(node.textContent)
+      if (found) definitions.set(found[1], (definitions.get(found[1]) || 0) + 1)
+      return false
+    }
+    return true
+  })
+  return { refs, definitions, refTotal, definitionTotal }
+}
+
+// Richiamo e definizione vanno via insieme: cancellando uno dei due si toglie anche l'altro (la definizione solo se non restano altri richiami con la stessa etichetta).
+// Si agisce solo quando un elemento sparisce davvero (non quando si modifica a mano l'etichetta di una definizione).
+function syncFootnotes(transactions, oldState, newState) {
+  if (!transactions.some((transaction) => transaction.docChanged) || transactions.some((transaction) => transaction.getMeta('addToHistory') === false)) return null
+  const before = footnoteCounts(oldState.doc)
+  const after = footnoteCounts(newState.doc)
+  const orphanRefs = after.definitionTotal < before.definitionTotal ? [...before.definitions.keys()].filter((label) => !after.definitions.has(label) && after.refs.has(label)) : []
+  const orphanDefinitions = after.refTotal < before.refTotal ? [...before.refs.keys()].filter((label) => !after.refs.has(label) && after.definitions.has(label)) : []
+  if (!orphanRefs.length && !orphanDefinitions.length) return null
+  const ranges = []
+  newState.doc.descendants((node, pos) => {
+    if (node.type.name === 'footnoteRef' && orphanRefs.includes(node.attrs.label)) ranges.push([pos, pos + node.nodeSize])
+    else if (node.type.name === 'footnoteDefinition') {
+      const found = /^\[\^([^\]\s]+)\]:/.exec(node.textContent)
+      if (found && orphanDefinitions.includes(found[1])) ranges.push([pos, pos + node.nodeSize])
+      return false
+    }
+    return true
+  })
+  if (!ranges.length) return null
+  const { tr } = newState
+  for (const [from, to] of ranges.sort((x, y) => y[0] - x[0])) tr.delete(from, to)
+  return tr
+}
 
 // Richiamo nel testo: un elemento indivisibile che mostra l'etichetta in apice.
 export const FootnoteRef = Node.create({
@@ -84,6 +129,39 @@ export const FootnoteDefinition = Node.create({
 
   parseHTML() { return [{ tag: 'pre[data-footnote-definition]', preserveWhitespace: 'full' }] },
   renderHTML() { return ['pre', { 'data-footnote-definition': '', class: 'ow-raw-block ow-footnote-definition' }, 0] },
+
+  // Il testo resta grezzo (`[^1]: …`), ma fuori dal cursore l'inizio si disegna come numero in apice: si nascondono `[^` e `]:` e resta l'etichetta.
+  // Con il cursore dentro la definizione si vede il codice, per poterlo modificare.
+  addProseMirrorPlugins() {
+    const marker = /^\[\^([^\]\s]+)\]:[ \t]?/
+    return [
+      new Plugin({ key: new PluginKey('owFootnoteSync'), appendTransaction: syncFootnotes }),
+      new Plugin({
+        key: new PluginKey('owFootnoteDefinitions'),
+        props: {
+          decorations(state) {
+            const decorations = []
+            const { from, to } = state.selection
+            state.doc.descendants((node, pos) => {
+              if (node.type.name !== 'footnoteDefinition') return node.isBlock ? undefined : false
+              const found = marker.exec(node.textContent)
+              if (found && !(from >= pos && to <= pos + node.nodeSize)) {
+                const start = pos + 1
+                const labelEnd = start + 2 + found[1].length
+                decorations.push(
+                  Decoration.inline(start, start + 2, { class: 'ow-footnote-syntax' }),
+                  Decoration.inline(start + 2, labelEnd, { class: 'ow-footnote-label' }),
+                  Decoration.inline(labelEnd, start + found[0].length, { class: 'ow-footnote-syntax' }),
+                )
+              }
+              return false
+            })
+            return DecorationSet.create(state.doc, decorations)
+          },
+        },
+      }),
+    ]
+  },
 
   markdownTokenName: 'footnoteDefinition',
   markdownTokenizer: {
