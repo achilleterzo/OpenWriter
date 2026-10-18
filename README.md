@@ -15,6 +15,9 @@ Built with Electron, React, Vite, Tailwind CSS, and Tiptap.
 - Keep conversations, notes, project context, attachments, and document history alongside each project.
 - Browse the web in a tab, read articles in a clean reading view, and save them as Markdown.
 - Customize the editor with themes, accent colors, typography, spell-checking languages, and project-level settings. The interface is available in English, Italian, French, Spanish, German, and Portuguese.
+- Write extended Markdown without losing a character: tables, footnotes, formulas, GitHub alerts, front matter, and HTML are kept exactly as written.
+- Mark points of a document with bookmarks, link to them from any document (`file.md#name`), and flag the ones you want the assistant to look at.
+- Let external agents (Claude Code, Codex, OpenCode, the clients built into your IDE) work on the project through the built-in MCP server: they read its context, notes, and documents, and what they change reaches you as edits to accept or reject.
 
 ## Documents and the editor
 
@@ -24,6 +27,17 @@ Built with Electron, React, Vite, Tailwind CSS, and Tiptap.
 - Document history with automatic and manually labelled versions, comparison with the current document, and restore.
 - DOCX and PDF files are imported as editable Markdown. In a project, the original file is shown under its Markdown file in the explorer and opens read-only.
 - Documents open on the operating system's request (double-click or "Open with"). The installers register the `.md`, `.markdown`, and `.mdown` extensions, and in the installed application a second launch hands its files to the running one.
+- Extended Markdown is round-tripped untouched: tables, footnotes (`[^1]`), LaTeX formulas (`$…$`, `$$…$$`), GitHub alerts (`[!NOTE]`, `[!TIP]`…), front matter, and block or inline HTML.
+- Text alignment (left, centre, right, justified), saved as GitHub-compatible `<div align>` blocks, and typographic rules while typing (`--` becomes «–», `...` becomes «…», never inside code).
+- A floating bar on the selection for bold, italic, strikethrough, code, links (Ctrl+K), and footnotes; for an image it edits the alternative text, the title, and the link, replaces or removes it.
+- Bookmarks: named anchors in a document, with their own panel. Link to one from any document as `file.md#name`; a flagged bookmark is a point you want the assistant to look at. Bookmarks, like notes, are stored outside the Markdown file.
+- Images open in a viewer tab with wheel zoom, drag to pan (only where the image overflows), fit and actual-size toggles, and arrows or the keyboard to move through the images of the folder. An image can be linked to an address. The images of a document follow it when it is moved, and an image another document still uses is copied instead.
+- Export to DOCX or PDF, or to a single self-contained Markdown file with the images embedded. PDFs are imported with their images in place.
+- When the assistant edits a passage, the change is shown at word level, so you review what actually changed and not the whole block.
+- Editor fonts: a curated set of Google Fonts, more installable from the catalog and kept for offline use, with an optional font per project. The reading mode follows the application theme, and the theme and the language default to the system's.
+- The Markdown source view shows line numbers.
+- An Info tab with the statistics of the document in front: last save, words, characters, sentences, pages, reading and speaking time, average and longest sentence, structure (headings, lists, tables, images, links, footnotes, formulas), and the numbers of the selected text.
+- Many modified documents can be saved at once from the tab bar; a document modified by the assistant counts as modified until you accept its edits.
 
 ## AI providers
 
@@ -68,11 +82,36 @@ Depending on the enabled settings, the assistant can:
 
 The `.ow`, `.git`, and `node_modules` directories are excluded from assistant file tools. Read and image operations are size-limited.
 
+## External agents (MCP)
+
+OpenWriter includes a Model Context Protocol server, so that the agents you already use (Claude Code, Codex, OpenCode, the clients built into editors and IDEs) can work with the project the way the built-in assistant does. In Settings → Agents (MCP) you find the configuration to paste into each client; the server runs with the application itself, and it also works with OpenWriter closed (apart from the editor edits below).
+
+- **Which project.** The one given with `--project`, otherwise the nearest `.ow` above the folder where the agent starts, otherwise the project open in OpenWriter. The server also knows which document you have in front, and the tools that take a document default to it.
+- **What it reads.** The project context and instructions, skills, notes, bookmarks, and memory; the whole file tree in one call; documents (the saved file, or with `read_open_document` what you see right now, unsaved changes included); and a text search.
+- **What it can reach.** The documents of the project, the documents linked to it, and the documents open in OpenWriter, also outside the project folder. Any other path on the disk is refused.
+- **What it writes.** Notes, suggested changes (a note with a replacement), and bookmarks, stored in `.ow`; new documents and folders (never overwriting anything); and, with the application running, edits to the documents open in the editor (`replace_text`, `insert_text`, `replace_document`). Those edits are applied to the live editor through a local bridge: they are marked for you to accept or reject, can be undone, and nothing reaches the file until you save.
+- **Control.** `--read-only` (Settings → Agents (MCP) → Read-only) removes every writing tool. "Let agents change the documents open in OpenWriter" turns the editor edits off at any time. The bridge listens only on `127.0.0.1`, requires a token, and accepts a request only for the project that is open.
+
+
 ## Projects and data
 
 A project is a working directory. When it is opened, OpenWriter creates or reuses a `.ow` directory containing project settings, assistant context, skills, conversations, attachments, notes, memory, and document history. These files are plain text or JSON and can be committed to Git or added to `.gitignore`.
 
 The projects view lists the known projects with an avatar (the project's icon, or one generated from its name), and a context menu to open, configure, move, reveal, or remove them.
+
+### File explorer
+
+- Move through the tree with the arrow keys, Home, and End; Enter opens a file, F2 renames, Del deletes. Dropping on a folder moves, from outside the project it copies.
+- **Selection.** Ctrl/Cmd+click adds or removes a row, Shift+click (or Shift+arrows) selects a range, Ctrl/Cmd+A selects everything visible. Dragging, the context menu, copy, cut, and delete all act on the whole selection, with a single confirmation.
+- **Folders** work like files: they can be dragged inside the tree, dropped from the file manager (copied with their content), copied, cut, and pasted.
+- **System clipboard.** Copy or cut in OpenWriter and paste in the file manager or another program, and the other way round. Dragging also hands files and folders to the system.
+- **DOCX and PDF originals.** A converted document keeps its original under it; deleting the document moves the original to the trash with it, and renaming or moving the document carries the original along.
+- Changes made by other programs (a file pasted, created, moved, or deleted) appear in the tree by themselves.
+- Confirmations (delete, move) use the application's own dialogs, not the system's.
+
+### Sharing a project's setup
+
+The context, instruction files, skills, and settings of a project (not the history, conversations, or notes) can be exported to a single file and applied to another project, as a standard way of working on shared projects.
 
 ### Project icon
 
@@ -104,7 +143,11 @@ Document history supports automatic and manually labelled versions, comparison w
 
 ## Browser and reader view
 
-A browser tab lets you search and read web pages without leaving the application, and the assistant can read it when web browsing is enabled. The reading view extracts the article from a page and shows it in a clean layout, with adjustable text size and a light or dark theme. The article can be saved as Markdown, with its title and source, into the project.
+A browser tab lets you search and read web pages without leaving the application, and the assistant can read it when web browsing is enabled. The reading view extracts the article from a page and shows it in a clean layout, with adjustable text size and a light or dark theme. The article can be saved as Markdown, with its title and source, into the project. A screenshot of the content of a tab can be saved in the project's `screenshots` folder. Each project keeps its own history of the addresses you visited, offered as suggestions while you type in the address bar (the assistant's browsing is recorded apart, and available to it through a tool). Tabs and logins survive a restart, and the open pages come back where they were.
+
+## Updates and reliability
+
+The application can check for a new version at a schedule you choose in Settings → About (never by itself replacing anything: you are only notified). Sessions and the data in `.ow` (settings, notes, bookmarks, memory, links) are written atomically, so an interruption never leaves a truncated file. If the interface stops responding, the reason is recorded in `crash.log` in the application data, the window is reloaded, and an oversized unsaved draft that kept the startup from completing is set aside in `recovered-drafts` instead of being lost.
 
 ## Privacy
 
