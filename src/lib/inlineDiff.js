@@ -26,13 +26,14 @@ export function similarity(before, after) {
 }
 
 // Unisce gli intervalli vicini (anche separati solo da spazi, già inclusi come "cambiati") in intervalli [da, a) sul testo.
-function toRanges(tokens, changed) {
+// Il terzo elemento, se noto (`at`), è il punto del testo nuovo in cui cade un intervallo tolto.
+function toRanges(tokens, changed, at = []) {
   const ranges = []
   tokens.forEach((token, index) => {
     if (!changed[index]) return
     const last = ranges.at(-1)
     if (last && last[1] === token.start) last[1] = token.end
-    else ranges.push([token.start, token.end])
+    else ranges.push(at[index] === undefined ? [token.start, token.end] : [token.start, token.end, at[index]])
   })
   return ranges
 }
@@ -40,6 +41,7 @@ function toRanges(tokens, changed) {
 /**
  * Confronta `before` e `after`: restituisce gli intervalli di caratteri cambiati in ciascuno, `{ removed, added }`.
  * Uno spazio fra due parole cambiate conta come cambiato (così "due parole" diventa un solo intervallo); gli spazi ai bordi no.
+ * Ogni intervallo tolto porta come terzo elemento il punto del testo nuovo in cui si trovava.
  */
 export function diffText(before, after) {
   const a = tokenize(before)
@@ -52,10 +54,13 @@ export function diffText(before, after) {
 
   const changedA = new Array(a.length).fill(false)
   const changedB = new Array(b.length).fill(false)
+  const atA = new Array(a.length)
+  const newLength = String(after).length
+  const atOf = (j) => (start + j < b.length ? b[start + j].start : newLength)
   const n = endA - start
   const m = endB - start
   if (n * m > MAX_CELLS) {
-    for (let i = start; i < endA; i += 1) changedA[i] = true
+    for (let i = start; i < endA; i += 1) { changedA[i] = true; atA[i] = atOf(0) }
     for (let j = start; j < endB; j += 1) changedB[j] = true
   } else if (n || m) {
     const width = m + 1
@@ -69,7 +74,7 @@ export function diffText(before, after) {
     let j = 0
     while (i < n || j < m) {
       if (i < n && j < m && a[start + i].text === b[start + j].text) { i += 1; j += 1 }
-      else if (j >= m || (i < n && lcs[(i + 1) * width + j] >= lcs[i * width + j + 1])) { changedA[start + i] = true; i += 1 }
+      else if (j >= m || (i < n && lcs[(i + 1) * width + j] >= lcs[i * width + j + 1])) { changedA[start + i] = true; atA[start + i] = atOf(j); i += 1 }
       else { changedB[start + j] = true; j += 1 }
     }
   }
@@ -82,7 +87,7 @@ export function diffText(before, after) {
   }
   bridge(a, changedA)
   bridge(b, changedB)
-  return { removed: toRanges(a, changedA), added: toRanges(b, changedB) }
+  return { removed: toRanges(a, changedA, atA), added: toRanges(b, changedB) }
 }
 
 /**
