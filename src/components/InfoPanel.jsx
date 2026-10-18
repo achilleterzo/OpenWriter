@@ -47,6 +47,17 @@ function Row({ label, value, hint }) {
   )
 }
 
+// Campo a righe sovrapposte (etichetta sopra, valore sotto, allineato a sinistra): per testi lunghi come il nome e il percorso, che se troppo lunghi si
+// troncano alla fine (con i puntini) come si legge, e hanno il testo intero nel suggerimento.
+function Field({ label, children, title, muted = false }) {
+  return (
+    <div className="min-w-0" title={title}>
+      {label && <dt className="text-slate-400">{label}</dt>}
+      <dd className={`truncate text-left ${muted ? 'text-xs text-slate-500' : 'text-slate-100'}`}>{children}</dd>
+    </div>
+  )
+}
+
 function Tile({ label, value }) {
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2">
@@ -112,14 +123,13 @@ export default function InfoPanel({ tab, editor, project, historyVersion, openNo
   return (
     <div className="min-h-0 flex-1 overflow-y-auto pb-3">
       <Section title={t('Document')}>
-        <Row label={t('Name')} value={<span className="break-all">{tab.title}</span>} hint={tab.filePath || undefined} />
-        {relativePath && relativePath !== tab.title && <Row label={t('Path')} value={<span className="break-all text-xs text-slate-400">{relativePath}</span>} />}
-        <Row
-          label={t('Last saved')}
-          value={file ? <span title={formatDateTime(file.modified, { dateStyle: 'full', timeStyle: 'medium' })}>{formatDateTime(file.modified, { dateStyle: 'medium', timeStyle: 'short' })}</span> : t('Not saved yet')}
-        />
-        {file && <Row label="" value={<span className="text-xs text-slate-500">{relativeTime(file.modified, now)}</span>} />}
-        {tab.dirty && <Row label="" value={<span className="text-xs text-amber-300">{t('Unsaved changes in the editor')}</span>} />}
+        <Field label={t('Name')} title={tab.filePath || tab.title}>{tab.title}</Field>
+        {relativePath && relativePath !== tab.title && <Field label={t('Path')} title={tab.filePath || relativePath} muted>{relativePath}</Field>}
+        <Field label={t('Last saved')} title={file ? formatDateTime(file.modified, { dateStyle: 'full', timeStyle: 'medium' }) : undefined}>
+          {file ? formatDateTime(file.modified, { dateStyle: 'medium', timeStyle: 'short' }) : t('Not saved yet')}
+        </Field>
+        {file && <Field label="" muted>{relativeTime(file.modified, now)}</Field>}
+        {tab.dirty && <p className="text-xs text-amber-300">{t('Unsaved changes in the editor')}</p>}
         {file && <Row label={t('Size')} value={formatSize(file.size)} />}
       </Section>
 
