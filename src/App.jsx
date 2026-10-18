@@ -27,6 +27,8 @@ import { findFragmentTarget } from './lib/bookmarkLinks.js'
 import { foldText, noteIsShown } from './lib/anchoring.js'
 import { relativeToProject } from './lib/aiTools.js'
 import { handleMcpRequest } from './lib/mcpRequests.js'
+import InfoPanel from './components/InfoPanel.jsx'
+import { isInsidePath, samePath } from './lib/pathCompare.js'
 import { PANELS, clampWidth, fitLayout, loadLayout, maxWidthFor, saveLayout } from './lib/layout.js'
 import { AFTER_LANGUAGE_RELOAD_KEY, t } from './i18n/index.js'
 import { setProjectEditor, updateAppearance } from './appearance.js'
@@ -52,7 +54,7 @@ const compareVersions = (left, right) => {
   for (let index = 0; index < 3; index += 1) { const difference = (a[index] || 0) - (b[index] || 0); if (difference) return difference }
   return 0
 }
-const isInside = (value, directory) => Boolean(value) && (value === directory || value.startsWith(`${directory}\\`) || value.startsWith(`${directory}/`))
+const isInside = (value, directory) => Boolean(value) && (samePath(value, directory) || isInsidePath(value, directory))
 
 let untitledCounter = 0
 function createTab(document = null, id = crypto.randomUUID()) {
@@ -75,7 +77,6 @@ const isLive = (tab) => isDocument(tab) && !tab.closed
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms) })
 // Percorso assoluto (Windows, di rete o POSIX): l'assistente lo usa per i documenti aperti fuori dal progetto.
 const isAbsolutePath = (value) => /^([A-Za-z]:[\\/]|\\\\|\/)/.test(String(value || ''))
-const samePath = (left, right) => Boolean(left) && Boolean(right) && left.replace(/\\/g, '/').toLowerCase() === right.replace(/\\/g, '/').toLowerCase()
 
 // Ricostruisce le schede dalla sessione salvata: le bozze tornano dal testo salvato, gli altri file dal disco.
 async function restoreTabs(session) {
@@ -1071,6 +1072,7 @@ export default function App() {
               ? <BookmarksPanel tab={contextTab} editor={editors[contextTab.id]} project={workspaceRoot} bookmarks={bookmarks} activeId={activeBookmarkId} onSelect={setActiveBookmarkId} onChanged={() => setBookmarksVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} onOpenBookmark={(path, name) => openLink({ kind: 'file', path, fragment: name })} />
               : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>)}
             {sideTab === 'memory' && <MemoryPanel project={workspaceRoot} memoryVersion={memoryVersion} activePath={contextTab?.filePath ? relativeToProject(project, contextTab.filePath) : null} onOpenFile={(relative) => openFromExplorer(`${project}/${relative}`)} onStatus={setStatus} />}
+            {sideTab === 'info' && <InfoPanel tab={contextTab} editor={editors[contextTab?.id]} project={workspaceRoot} historyVersion={historyVersion} openNotes={notes.filter((note) => note.status === 'open').length} bookmarkCount={bookmarks.length} />}
             {sideTab === 'history' && (
               <HistoryPanel tab={contextTab} editor={editors[contextTab?.id]} project={workspaceRoot} historyVersion={historyVersion} onChanged={() => setHistoryVersion((value) => value + 1)} onStatus={setStatus} />
             )}
