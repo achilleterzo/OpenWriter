@@ -59,6 +59,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   answerDialog: (id, answer) => ipcRenderer.send('dialog:answer', id, answer),
   // Comando e argomenti per avviare il server MCP (sola lettura) da un client di agenti.
   getMcpConfig: () => ipcRenderer.invoke('mcp:get-config'),
+  // Richieste di modifica dal server MCP (un agente): l'interfaccia le esegue sull'editor e risponde con answerMcp.
+  onMcpRequest: (callback) => {
+    const listener = (_event, request) => callback(request)
+    ipcRenderer.on('mcp:request', listener)
+    return () => ipcRenderer.removeListener('mcp:request', listener)
+  },
+  answerMcp: (id, payload) => ipcRenderer.send('mcp:response', id, payload),
   renamePath: (request) => ipcRenderer.invoke('workspace:rename-path', request),
   deletePath: (target) => ipcRenderer.invoke('workspace:delete-path', target),
   openProjectFolder: () => ipcRenderer.invoke('workspace:open-project-folder'),

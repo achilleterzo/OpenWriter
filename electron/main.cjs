@@ -10,6 +10,7 @@ const { createProjectFile } = require('./project-file.cjs')
 const { createProjectsStore } = require('./projects.cjs')
 const { createChatStore } = require('./chat-store.cjs')
 const { createMemoryStore } = require('./memory-store.cjs')
+const { createMcpBridge } = require('./mcp-bridge.cjs')
 const { fetchLatestRelease } = require('./updates.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
 const { createNotesStore } = require('./notes-store.cjs')
@@ -618,6 +619,7 @@ function createWindow() {
     // Domande in attesa di risposta: la pagina che le avrebbe mostrate non c'è più.
     for (const resolve of pendingQuestions.values()) resolve(false)
     pendingQuestions.clear()
+    mcpBridge.rejectAll('The OpenWriter window stopped responding')
     if (details.reason !== 'clean-exit' && reloads < 2 && !mainWindow.isDestroyed()) {
       reloads += 1
       setTimeout(() => { if (!mainWindow.isDestroyed()) mainWindow.webContents.reload() }, 500)
@@ -1550,6 +1552,17 @@ ipcMain.handle('workspace:watch', () => {
 })
 app.on('will-quit', stopWorkspaceWatch)
 
+// Ponte per il server MCP (vedi mcp-bridge.cjs): gli agenti esterni modificano i documenti aperti nell'editor, con le modifiche "da rivedere".
+// L'utente lo spegne dalle impostazioni (Agenti (MCP)): preferenza openwriter.mcpEdit = "off".
+const mcpBridge = createMcpBridge({
+  directory: app.getPath('userData'),
+  getWindow: () => mainWindow,
+  getProjectPath: () => projectPath,
+  isEnabled: () => loadPreferences()['openwriter.mcpEdit'] !== 'off',
+})
+ipcMain.on('mcp:response', (_event, id, payload) => mcpBridge.answer(id, payload))
+app.on('will-quit', () => mcpBridge.stop())
+
 // Il browser integrato mantiene i login dopo un riavvio. I cookie con scadenza li tiene già la partizione persistente; quelli "di sessione"
 // (senza scadenza: molti siti li usano per il login) Chromium li butta alla chiusura, quindi si rendono persistenti, con una scadenza di 30 giorni.
 const SESSION_COOKIE_DAYS = 30
@@ -1651,6 +1664,7 @@ app.whenReady().then(async () => {
   await loadProject()
   createWindow()
   buildMenu()
+  mcpBridge.start()
   for (const filePath of markdownArguments(process.argv)) openExternalDocument(filePath)
 
   app.on('activate', () => {
