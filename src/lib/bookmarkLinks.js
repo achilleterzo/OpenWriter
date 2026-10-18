@@ -1,4 +1,5 @@
 import { buildTextIndex, locateQuote } from './anchoring.js'
+import { CASE_INSENSITIVE } from './pathCompare.js'
 
 /**
  * Link ai segnalibri: `file.md#nome` (o `#nome` nello stesso documento). Il frammento indica un segnalibro del documento;
@@ -32,13 +33,24 @@ export function findFragmentTarget(editor, bookmarks, fragment) {
 }
 
 const splitPath = (value) => String(value).replace(/\\/g, '/').split('/').filter(Boolean)
+const isDrive = (segment) => /^[A-Za-z]:$/.test(segment || '')
+// Le maiuscole contano solo dove il file system le distingue (vedi pathCompare.js).
+const sameSegment = (left, right) => (CASE_INSENSITIVE ? String(left).toLowerCase() === String(right).toLowerCase() : left === right)
+
+// Indirizzo assoluto equivalente quando non esiste un percorso relativo: file:///E:/cartella/file.md (con gli spazi codificati).
+const fileLink = (file) => {
+  const normalized = String(file).replace(/\\/g, '/')
+  return `file://${normalized.startsWith('/') ? '' : '/'}${encodeURI(normalized)}`
+}
 
 // Percorso relativo per un link da un documento a un altro: ("D:/p/a/uno.md", "D:/p/b/due.md") → "../b/due.md".
+// Tra unità diverse di Windows ("D:" e "E:") un percorso relativo non esiste: il link diventa un indirizzo assoluto (file:///E:/…).
 export function relativeLink(fromFile, toFile) {
   const from = splitPath(fromFile).slice(0, -1)
   const to = splitPath(toFile)
+  if ((isDrive(from[0]) || isDrive(to[0])) && !sameSegment(from[0] ?? '', to[0] ?? '')) return fileLink(toFile)
   let shared = 0
-  while (shared < from.length && shared < to.length - 1 && from[shared].toLowerCase() === to[shared].toLowerCase()) shared += 1
+  while (shared < from.length && shared < to.length - 1 && sameSegment(from[shared], to[shared])) shared += 1
   const up = Array(from.length - shared).fill('..')
   return [...up, ...to.slice(shared)].join('/') || to.at(-1)
 }
