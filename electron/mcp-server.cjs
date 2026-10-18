@@ -4,9 +4,10 @@
  *
  * Mette a disposizione degli agenti esterni (Claude Code, Codex, OpenCode, client integrati negli IDE…) ciò che i soli file non mostrano:
  * contesto e istruzioni del progetto, skill, note, segnalibri, memoria, oltre a elenco, lettura e ricerca dei documenti.
- * Non modifica mai i documenti. Può però aggiungere note, correzioni proposte (note con testo sostitutivo) e segnalibri, che l'utente rivede
- * in OpenWriter e accetta o rifiuta: è il modo di "mettere mano" alla documentazione senza saltare la revisione. Con `--read-only` questi
- * strumenti non esistono. Non dipende da Electron, quindi funziona anche con l'app chiusa.
+ * Non scrive mai nei file dei documenti. Può aggiungere note, correzioni proposte (note con testo sostitutivo) e segnalibri, che l'utente rivede
+ * in OpenWriter e accetta o rifiuta, e, con l'app aperta, modificare i documenti aperti nell'editor (replace_text, insert_text, replace_document):
+ * le modifiche arrivano come "da rivedere", con accetta/rifiuta, tramite un ponte locale verso l'app (vedi mcp-bridge.cjs). Con `--read-only`
+ * gli strumenti di scrittura non esistono. Il resto non dipende da Electron, quindi funziona anche con l'app chiusa.
  *
  * Il progetto è, in ordine: `--project <cartella>` (o OPENWRITER_PROJECT); la `.ow` più vicina risalendo dalla cartella in cui parte l'agente;
  * il progetto aperto nell'app (workspace.json nei dati dell'app, riletto a ogni chiamata). `--data <cartella>` indica i dati dell'app.
@@ -14,6 +15,7 @@
  * Protocollo: JSON-RPC 2.0 con un messaggio per riga su stdin/stdout. Su stdout passano solo messaggi del protocollo; i diagnostici vanno su stderr.
  */
 const fs = require('node:fs')
+const http = require('node:http')
 const os = require('node:os')
 const path = require('node:path')
 const readline = require('node:readline')
@@ -329,6 +331,12 @@ const TOOLS = [
     },
   },
   {
+    name: 'read_open_document',
+    description: 'Reads a document as the user sees it right now in OpenWriter: with unsaved changes and edits waiting for review included, while read_document returns the saved file (possibly older). Use it before editing a document that is open (project_info shows activeDocument and its unsavedChanges). Needs the OpenWriter app running.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter)' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, description: 'maximum characters (default 20000, max 40000)' } }, additionalProperties: false },
+    run: (args) => bridgeCall('read_open_document', args),
+  },
+  {
     name: 'search_documents',
     description: 'Case-insensitive text search in the project Markdown and text files (sub-projects included). Returns file, line number and the line.',
     inputSchema: { type: 'object', properties: { query: { type: 'string' }, path: { type: 'string', description: 'optional: limit to a folder relative to the project root' }, maxResults: { type: 'integer', minimum: 1, maximum: MAX_SEARCH_RESULTS } }, required: ['query'], additionalProperties: false },
@@ -471,7 +479,52 @@ function addOneNote(document, plain, item) {
   return `Note ${note.id} added (${note.kind}) on “${anchor.quote.slice(0, 80)}”.`
 }
 
+// Chiamata al ponte dell'app aperta (porta e token in mcp-bridge.json nei dati dell'app). Lancia con un messaggio chiaro se l'app non c'è.
+function bridgeCall(tool, args) {
+  let bridge
+  try { bridge = JSON.parse(fs.readFileSync(path.join(dataDirectory, 'mcp-bridge.json'), 'utf8')) } catch { bridge = null }
+  const notRunning = 'OpenWriter does not seem to be running (or this install has no editing bridge). Open the app with this project to edit documents in the editor; meanwhile you can leave notes and suggestions (add_note, suggest_insertion), which do not need the app.'
+  if (!bridge?.port || !bridge?.token) return Promise.reject(new Error(notRunning))
+  const payload = JSON.stringify({ project: projectPath(), tool, arguments: args })
+  return new Promise((resolve, reject) => {
+    const request = http.request({ host: '127.0.0.1', port: bridge.port, path: '/call', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), Authorization: `Bearer ${bridge.token}` }, timeout: 130000 }, (response) => {
+      let body = ''
+      response.setEncoding('utf8')
+      response.on('data', (chunk) => { body += chunk })
+      response.on('end', () => {
+        let parsed
+        try { parsed = JSON.parse(body) } catch { reject(new Error(`Unexpected answer from OpenWriter (${response.statusCode})`)); return }
+        if (parsed.ok) resolve(String(parsed.text ?? ''))
+        else reject(new Error(parsed.error || `OpenWriter refused the request (${response.statusCode})`))
+      })
+    })
+    request.on('timeout', () => request.destroy(new Error('OpenWriter did not answer in time')))
+    request.on('error', (error) => reject(error.code === 'ECONNREFUSED' || error.code === 'ECONNRESET' ? new Error(notRunning) : error))
+    request.end(payload)
+  })
+}
+
+const EDIT_NOTE = 'It happens in the OpenWriter editor: the change is marked for the user to accept or reject (standard review), can be undone with Ctrl+Z, and NOTHING is written to the file until the user saves. The document must belong to the project (a document that is not open is opened in a tab). Needs the OpenWriter app running. For remarks, doubts or suggestions that do not need to be applied now, prefer add_note.'
+
 const WRITE_TOOLS = [
+  {
+    name: 'replace_text',
+    description: `Replaces one passage of a document, directly in the editor. "find" is the EXACT text to replace as read_document / read_open_document show it (plain text or Markdown source, for example a whole link [text](url)) and must appear only once: use a longer passage if it does not. "replace" is the new Markdown (empty to delete). Open notes on the replaced passage are marked resolved. ${EDIT_NOTE}`,
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter)' }, find: { type: 'string' }, replace: { type: 'string', description: 'new text, empty string to delete' } }, required: ['find', 'replace'], additionalProperties: false },
+    run: (args) => bridgeCall('replace_text', args),
+  },
+  {
+    name: 'insert_text',
+    description: `Inserts Markdown into a document, directly in the editor: at the "end" (default) or "start", or "after"/"before" an anchor passage given as EXACT text that appears only once. ${EDIT_NOTE}`,
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter)' }, text: { type: 'string', description: 'Markdown to insert' }, position: { type: 'string', enum: ['after', 'before', 'start', 'end'] }, anchor: { type: 'string', description: 'with after/before: exact text next to which to insert' } }, required: ['text'], additionalProperties: false },
+    run: (args) => bridgeCall('insert_text', args),
+  },
+  {
+    name: 'replace_document',
+    description: `Rewrites the WHOLE document in the editor with the given Markdown. Only for real rewrites: read the document first and write it complete (a much shorter text is refused unless allow_shrink is true). For small changes use replace_text. ${EDIT_NOTE}`,
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document path relative to the project root (default: the document in front in OpenWriter)' }, content: { type: 'string', description: 'the complete new text, in Markdown' }, allow_shrink: { type: 'boolean', description: 'true only if the new text is meant to be much shorter' } }, required: ['content'], additionalProperties: false },
+    run: (args) => bridgeCall('replace_document', args),
+  },
   {
     name: 'add_note',
     description: 'Adds a note to a Markdown document of the project, anchored to a passage. The user sees it highlighted in OpenWriter and decides. Without "replacement" it is a remark (also the way to record a doubt, a TODO or a development note about the document). To PROPOSE A CHANGE to the text, give "replacement": it is a suggestion that the user can accept (the passage is replaced) or reject. "quote" is the passage as plain words (no Markdown markers), unique in the document and within one paragraph or heading; for a suggestion it must be the WHOLE passage to replace and "replacement" the COMPLETE new passage, in Markdown (with its syntax: # for headings, - for lists), ready to apply. A passage that spans several blocks (a heading and what follows, a whole list) is quoted with its blocks on separate lines and must start and end at block boundaries; do not quote a part of a list. Several notes can go in one call with "notes" (up to 20). The document file itself is never modified.',
@@ -583,7 +636,7 @@ const WRITE_TOOLS = [
       checkLength(quote, MAX_BOOKMARK_QUOTE, 'The quote')
       const anchor = locateUnique(plain, quote)
       const bookmark = bookmarksStore.add(file, { ...anchor, name: text(name), label: text(label), note: text(note), flagged: isTrue(flagged), author: 'ai' })
-      return `Bookmark "${bookmark.name}" added on “${anchor.quote.slice(0, 80)}”. Link to it as [text](${relativeTo(projectPath(), file)}#${bookmark.name}) (the path is relative to the project root: adjust it to the document that contains the link).`
+      return `Bookmark "${bookmark.name}" added on “${anchor.quote.slice(0, 80)}”. Link to it as [text](${(() => { const target = `${relativeTo(projectPath(), file)}#${bookmark.name}`; return /\s/.test(target) ? `<${target}>` : target })()}) (angle brackets are needed when the path has spaces; the path is relative to the project root: adjust it to the document that contains the link).`
     },
   },
   {
@@ -625,7 +678,7 @@ const ACTIVE_TOOLS = READ_ONLY ? TOOLS : [...TOOLS, ...WRITE_TOOLS]
 
 const INSTRUCTIONS = READ_ONLY
   ? 'Read-only access to an OpenWriter project (a local Markdown workspace): call project_info first (it says which document the user has in front: the tools that take a document default to it), then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never edits anything: edit the files with your own tools.'
-  : 'Access to an OpenWriter project (a local Markdown workspace): call project_info first (it says which document the user has in front: the tools that take a document default to it), then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never edits a document\'s text. To work on the user\'s documentation (for example development documents) while you code, leave notes (add_note), propose changes (add_note with "replacement", suggest_insertion) and set bookmarks: the user reviews them in OpenWriter and accepts or rejects each one. Check list_notes first so you do not repeat open notes.'
+  : 'Access to an OpenWriter project (a local Markdown workspace): call project_info first (it says which document the user has in front: the tools that take a document default to it), then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never writes to the document files. To work on the user\'s documentation (for example development documents) while you code: leave notes (add_note), propose changes as suggestions (add_note with "replacement", suggest_insertion) and set bookmarks, or, when the user asks you to change a document directly, edit it in the OpenWriter editor with replace_text / insert_text (read it first with read_open_document, which includes unsaved changes). Every one of these is reviewed by the user in OpenWriter, who accepts or rejects it; direct edits need the app running. Check list_notes first so you do not repeat open notes.'
 
 function textResult(value, isError = false) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
