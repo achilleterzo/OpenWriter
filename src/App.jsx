@@ -26,6 +26,7 @@ import { setBookmarks } from './lib/bookmarkExtension.js'
 import { findFragmentTarget } from './lib/bookmarkLinks.js'
 import { foldText, noteIsShown } from './lib/anchoring.js'
 import { relativeToProject } from './lib/aiTools.js'
+import { handleMcpRequest } from './lib/mcpRequests.js'
 import { PANELS, clampWidth, fitLayout, loadLayout, maxWidthFor, saveLayout } from './lib/layout.js'
 import { AFTER_LANGUAGE_RELOAD_KEY, t } from './i18n/index.js'
 import { setProjectEditor, updateAppearance } from './appearance.js'
@@ -847,6 +848,26 @@ export default function App() {
     }
     return toolBridge
   }, [])
+
+  // Un agente esterno (server MCP) chiede di modificare un documento: si esegue sull'editor, con le modifiche "da rivedere" (accetta/rifiuta).
+  useEffect(() => {
+    if (!electronAPI?.onMcpRequest) return undefined
+    return electronAPI.onMcpRequest(async ({ id, tool, args }) => {
+      try {
+        const text = await handleMcpRequest({ tool, args }, {
+          api: electronAPI,
+          toolBridge,
+          project: latest.current.project,
+          activate: setActiveId,
+          notify: (title) => setStatus(t('An agent proposed changes to “{title}”: review them in the document', { title })),
+          refreshNotes: () => setNotesVersion((value) => value + 1),
+        })
+        electronAPI.answerMcp(id, { ok: true, text })
+      } catch (error) {
+        electronAPI.answerMcp(id, { ok: false, error: error.message || String(error) })
+      }
+    })
+  }, [toolBridge])
 
   // Note del documento di contesto: lette dal disco e mostrate come evidenziazioni nell'editor.
   useEffect(() => {
