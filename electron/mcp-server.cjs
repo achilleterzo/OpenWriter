@@ -281,7 +281,7 @@ const TOOLS = [
   },
   {
     name: 'read_project',
-    description: 'The whole project in ONE call: every folder and file, recursively, as an indented tree (folders end with "/", sub-projects are marked, files show size and last-modified date). Use it instead of listing folder after folder. Hidden folders, .ow, .git and node_modules are left out. Large projects are cut at maxEntries (the answer says so): then narrow it with "path" or "documentsOnly", or lower "maxDepth".',
+    description: 'PREFERRED way to explore the project. The whole project in ONE call: every folder and file, recursively, as an indented tree (folders end with "/", sub-projects are marked, files show size and last-modified date). Always use it instead of listing folder after folder with list_documents: call it once, then read_document what you need. Hidden folders, .ow, .git and node_modules are left out. Large projects are cut at maxEntries (the answer says so): then narrow it with "path" or "documentsOnly", or lower "maxDepth".',
     inputSchema: {
       type: 'object',
       properties: {
@@ -348,7 +348,7 @@ const TOOLS = [
   },
   {
     name: 'list_documents',
-    description: 'Lists ONE folder of the project (default: the root), folders first, with sizes and times as numbers; folders that are sub-projects are flagged. To see the whole project use read_project instead of calling this folder after folder.',
+    description: 'Lists ONE folder of the project (default: the root), folders first, with sizes and times as numbers; folders that are sub-projects are flagged. Do NOT use it to explore the project or to descend folder by folder: to see which files exist call read_project, which returns every folder and file in one call. Use this only to look at a single folder with numeric sizes/times or sorted by date.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'folder relative to the project root (default ".")' }, sort: { type: 'string', enum: ['name', 'date'], description: '"date" lists the most recently modified first' } }, additionalProperties: false },
     run: ({ path: folder, sort }) => projectTools.listDirectory(folder || '.', { sort: sort === 'date' ? 'date' : 'name' }),
   },
@@ -736,9 +736,12 @@ const WRITE_TOOLS = [
 const READ_ONLY = args.readOnly === true || /^(1|true)$/i.test(process.env.OPENWRITER_READ_ONLY || '')
 const ACTIVE_TOOLS = READ_ONLY ? TOOLS : [...TOOLS, ...WRITE_TOOLS]
 
-const INSTRUCTIONS = READ_ONLY
+// Rinforzo: gli agenti tendono a esplorare con list_documents una cartella alla volta anche quando potrebbero vedere tutto in una chiamata.
+const EXPLORE_RULE = 'EXPLORING THE PROJECT: to know what files exist, ALWAYS call read_project (the whole tree in ONE call, every folder and file). Do not walk the project with list_documents folder after folder: that costs one call per folder for what read_project returns at once. Call read_project once at the start, keep its tree in mind and go straight to read_document for the files you need. Use list_documents only for a single folder when you need its sizes/times as numbers or sorted by date, or to check one folder again after you created or moved files. If read_project says the tree was CUT, narrow it (path, documentsOnly, maxDepth) and call read_project again, still not list_documents.'
+
+const INSTRUCTIONS = (READ_ONLY
   ? 'Read-only access to an OpenWriter project (a local Markdown workspace): call project_info first (it says which document the user has in front: the tools that take a document default to it), then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never edits anything: edit the files with your own tools.'
-  : 'Access to an OpenWriter project (a local Markdown workspace): call project_info first (it says which document the user has in front: the tools that take a document default to it), then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never writes to the document files. To work on the user\'s documentation (for example development documents) while you code: leave notes (add_note), propose changes as suggestions (add_note with "replacement", suggest_insertion) and set bookmarks, create new documents and folders (create_file, create_folder), or, when the user asks you to change a document directly, edit it in the OpenWriter editor with replace_text / insert_text (read it first with read_open_document, which includes unsaved changes). Every one of these is reviewed by the user in OpenWriter, who accepts or rejects it; direct edits need the app running. Check list_notes first so you do not repeat open notes.'
+  : 'Access to an OpenWriter project (a local Markdown workspace): call project_info first (it says which document the user has in front: the tools that take a document default to it), then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never writes to the document files. To work on the user\'s documentation (for example development documents) while you code: leave notes (add_note), propose changes as suggestions (add_note with "replacement", suggest_insertion) and set bookmarks, create new documents and folders (create_file, create_folder), or, when the user asks you to change a document directly, edit it in the OpenWriter editor with replace_text / insert_text (read it first with read_open_document, which includes unsaved changes). Every one of these is reviewed by the user in OpenWriter, who accepts or rejects it; direct edits need the app running. Check list_notes first so you do not repeat open notes.') + ' ' + EXPLORE_RULE
 
 function textResult(value, isError = false) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
