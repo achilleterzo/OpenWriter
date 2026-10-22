@@ -127,7 +127,7 @@ function toModelMessages(messages, context, native, loaded = new Map()) {
       const entries = message.images || []
       const attached = entries.map((entry) => loaded.get(imageKey(entry))).filter(Boolean)
       const omitted = entries.length - attached.length
-      const content = `${message.content}${omitted ? `\n(${omitted === 1 ? 'image no longer attached' : `${omitted} images no longer attached`} to save tokens)` : ''}`
+      const content = `${message.content}${omitted ? `\n(${omitted === 1 ? 'image no longer attached' : `${omitted} images no longer attached`} to save tokens: call describe_image right after looking at an image so that view_image returns the saved description instead of the image; do not view ${omitted === 1 ? 'it' : 'them'} again without one)` : ''}`
       if (native) {
         const result = { role: 'tool', tool_name: message.name, content }
         return attached.length ? [result, { role: 'user', content: `[Image returned by ${message.name}]`, images: attached.map((image) => image.data) }] : [result]

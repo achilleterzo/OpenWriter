@@ -14,7 +14,7 @@ const READ_ONLY_MESSAGE = 'This document is the read-only original of a converte
 const optionSchema = { anyOf: [{ type: 'string' }, { type: 'object', properties: { label: { type: 'string' }, description: { type: 'string' } }, required: ['label'] }] }
 
 export const TOOL_DEFINITIONS = [
-  { group: 'files', name: 'list_directory', required: [], description: 'Lists the files and folders of a project directory (the .ow folder is excluded), with size and last modification date and time. Folders first by default; with sort=date the most recently modified come first. The date of a file is when it was last saved on disk, not the unsaved changes in an open tab.', parameters: { path: 'optional: path relative to the project root (default: the root); "@name/…" lists a reference folder (read-only, see the root listing)', sort: 'optional: "name" (default: folders first, then files by name) or "date" (most recently modified first, folders and files together)' } },
+  { group: 'files', name: 'list_directory', required: [], description: 'Lists the files and folders of a project directory (the .ow folder is excluded), with size and last modification date and time. RECURSIVE by default: one call returns the whole hierarchy below the folder (indented), so do not list sub-folders one by one; pass recursive=false to see only that folder. Folders first by default; with sort=date (flat listing) the most recently modified come first. The date of a file is when it was last saved on disk, not the unsaved changes in an open tab.', parameters: { path: 'optional: path relative to the project root (default: the root); "@name/…" lists a reference folder (read-only, see the root listing)', sort: 'optional: "name" (default: folders first, then files by name) or "date" (most recently modified first, folders and files together; it lists one folder only, as with recursive=false)', recursive: 'optional, true by default: include everything below the folder (up to 12 levels and 1000 entries); false: only the folder itself' } },
   { group: 'files', name: 'read_file', required: ['path'], description: 'Reads the text of a project file (.md, .txt, .docx, .pdf, …). Long files are read in chunks. If the file is open in a tab it returns the CURRENT editor text, including unsaved changes (yours too).', parameters: { path: 'path relative to the project root, or "@name/file.md" for a file in a reference folder (read-only)', offset: 'optional: character to start from', limit: 'optional: maximum number of characters' } },
   { group: 'files', name: 'list_versions', required: [], description: 'Lists the saved versions (history) of a project document, newest first, with id, date, kind (manual or automatic), label and size. Versions are archived before the assistant edits a document and at every save. Use it to see how a document changed or to find an earlier text.', parameters: { path: 'optional: document path relative to the project root (default: the active document)' } },
   { group: 'files', name: 'read_version', required: ['id'], description: 'Reads the text of a saved version of a document (id from list_versions). Read-only: it never changes the document; if the user wants an earlier text back, use it to rewrite or restore the passage with the editing tools. Long versions are read in chunks.', parameters: { id: 'version id from list_versions', path: 'optional: document path relative to the project root (default: the active document)', offset: 'optional: character to start from', limit: 'optional: maximum number of characters' } },
@@ -49,7 +49,8 @@ export const TOOL_DEFINITIONS = [
   { group: 'web', name: 'web_read', required: [], description: 'Keeps reading the page of a tab beyond the first characters, after web_open or browser_read.', parameters: { offset: 'character to resume from (given in the previous result)', tab: 'optional: tab number or id' } },
   { group: 'vision', name: 'screenshot_document', required: [], description: 'Takes a screenshot of the open document as the user sees it (the visible part: layout, highlights, notes). Useful to judge its visual look.', parameters: { path: 'optional: document (default: the active one)' } },
   { group: 'vision', name: 'screenshot_browser', required: [], description: 'Takes a screenshot of a browser tab: the page as rendered, with images, charts and layout.', parameters: { tab: 'optional: tab number or id (default: the foreground one or the last used)' } },
-  { group: 'vision', name: 'view_image', required: [], description: 'Looks at an image: from a page (number in the "Images" list of browser_read or web_open), from an address (also a direct link to an image) or from a project file. Give exactly one source.', parameters: { image: 'number in the Images list of the page you read', url: 'http(s) address of the image', path: 'image file of the project (png, jpg, gif, webp, bmp)', tab: 'optional, with image: tab number or id' } },
+  { group: 'vision', name: 'describe_image', required: ['path', 'description'], description: 'Saves a description of an image of the project (what it shows, the text and numbers in it, what matters for the work). It is kept in the project and view_image returns it instead of the image from then on, so you never have to look at the same image twice. Write it complete enough to work from it.', parameters: { path: 'image file of the project', description: 'the description, in Markdown' } },
+  { group: 'vision', name: 'view_image', required: [], description: 'Looks at an image: from a page (number in the "Images" list of browser_read or web_open), from an address (also a direct link to an image) or from a project file. Give exactly one source.', parameters: { image: 'number in the Images list of the page you read', url: 'http(s) address of the image', path: 'image file of the project (png, jpg, gif, webp, bmp): if it has a saved description, you get the description instead of the image', again: 'true to look at the image itself even if a description is saved', tab: 'optional, with image: tab number or id' } },
   { group: 'ask', name: 'ask_choice', required: [], description: 'Asks the user one or more questions with clickable choices in the chat (paged, with "Other" for a free answer) and WAITS for the answers, which come back as the tool result. For ONE question use question + options. For several questions to ask one after the other (a small questionnaire) use "questions": the user goes through them one at a time and can go back; the questions are fixed, so if one depends on the previous answer ask them in separate calls. Pass ALL the choices in a single call: the interface splits them into pages. With "ordered" the user picks several items and the order of picking matters (a sequence). Use it instead of listing the options in the text.', parameters: {
     question: 'the question, short and clear (for a single question)',
     options: { type: 'array', description: 'the proposed choices (2-60): each a string or an object {"label": "...", "description": "..."}', items: optionSchema },
@@ -62,7 +63,7 @@ export const TOOL_DEFINITIONS = [
 ]
 
 // Without a project folder (`enabled.loose`) the assistant works on the documents open in tabs only: no tool that browses, creates or moves files.
-const NEEDS_FOLDER = new Set(['list_directory', 'create_directory', 'create_file', 'move_file', 'delete_file', 'open_document'])
+const NEEDS_FOLDER = new Set(['list_directory', 'create_directory', 'create_file', 'move_file', 'delete_file', 'open_document', 'describe_image'])
 // create_project exists only without a project folder: it is how the assistant gets one.
 const ONLY_LOOSE = new Set(['create_project'])
 export const toolAvailable = (tool, enabled) => Boolean(enabled[tool.group]) && (enabled.loose ? !NEEDS_FOLDER.has(tool.name) : !ONLY_LOOSE.has(tool.name))
@@ -118,7 +119,7 @@ export function toolsPrompt(enabled, { documentPath, native = false, maxSteps = 
   const bookmarksHint = enabled.notes ? 'The user can set bookmarks in documents (named anchors, linked as file.md#name) and flag some to point things out to you: when the user mentions flagged points, or when you start working on a document, look at list_bookmarks (only_flagged=true) — a flagged bookmark\'s note is a remark or instruction for you. To create a link target use add_bookmark, then link with [text](relative/path.md#name).' : ''
   const notesHint = enabled.notes ? "If the user asks to review or reconsider the notes: read them with list_notes, update YOUR still-open notes with update_note (text and proposed correction) and answer the user's notes by adding new ones with add_note. Accepting or rejecting a suggestion is always up to the user. When reviewing, add few, meaningful notes, all in ONE add_note call (\"notes\"), and give each correction as the complete rewritten passage in \"replacement\". If the user asks you to fix or rewrite the text, edit it directly with replace_text instead of leaving notes. Notes you have dealt with must not stay open: replace_text closes the open notes on the passage it replaces, and for any other note you have addressed (for example after replace_document or a different edit) call update_note with status \"resolved\"." : ''
   const webHint = enabled.web ? 'To know what the user is looking at in the browser use browser_tabs and then browser_read on the tab concerned; to search or open pages use web_search and web_open, choosing the tab with the tab parameter. To follow a link of a page use browser_follow_link (link number or text). To find again a page you already opened in this project use browser_history.' : ''
-  const visionHint = enabled.vision ? 'You can look at images and screenshots with view_image, screenshot_document and screenshot_browser: use them when the visual look matters (layout, charts, images in pages). Images arrive as attachments: describe only what you really see.' : ''
+  const visionHint = enabled.vision ? 'You can look at images and screenshots with view_image, screenshot_document and screenshot_browser: use them when the visual look matters (layout, charts, images in pages). Images arrive as attachments: describe only what you really see. Only the last few images stay attached to the conversation, older ones are dropped: right after looking at an image, if its details may be needed later (for example to write a new document), save a description with describe_image (the project files only) and never view the same image again: view_image returns the saved description.' : ''
   const askHint = enabled.ask ? 'When you need a decision or a piece of information that boils down to a few alternatives (which topic to cover, which way to go, which variant to prefer), use ask_choice instead of listing the options in the text, then go on according to the answer. Do not ask for needless confirmations.' : ''
   const activeDocument = documentPath === undefined ? '' : `Active document: ${documentPath || 'not saved yet'}.`
   const looseHint = enabled.loose ? 'No project folder is open: you can only work on the documents open in tabs, which are identified by their full path (pass that path as "path"). You cannot list, create, move or delete files, nor open documents that are not already open. If the task needs a project folder, you can offer to create one with create_project (linking the documents that matter: they are not copied): the user confirms and chooses where, and the conversation continues in the new project.' : ''
@@ -276,6 +277,7 @@ export function describeCall(name, args = {}) {
     case 'screenshot_document': return t('Looking at the document')
     case 'screenshot_browser': return t('Looking at the browser tab')
     case 'view_image': return t('Looking at an image')
+    case 'describe_image': return t('Saving an image description')
     case 'ask_choice': return Array.isArray(args.questions) ? t('Asking you {count} questions', { count: args.questions.length }) : t('Asking you: {question}', { question: short(args.question, 50) })
     case 'browser_follow_link': return t('Following link {link}', { link: short(args.link, 40) })
     case 'browser_navigate': return t('Browser: {action}', { action: args.action || 'navigate' })
@@ -514,6 +516,7 @@ export function createToolRunner(context) {
       needFolder()
       const sort = text(args.sort).toLowerCase() === 'date' ? 'date' : 'name'
       const { path, entries, truncated, linked = [], references = [] } = await api.listDirectoryForAi(text(args.path), { sort })
+      const recursive = sort === 'name' && !/^(false|0)$/i.test(String(args.recursive ?? 'true'))
       // Last modification in the user's local time, minute precision.
       const when = (modified) => {
         if (!Number.isFinite(modified)) return ''
@@ -527,7 +530,31 @@ export function createToolRunner(context) {
       const referenceLines = references.length ? ['', 'Reference folders (outside the project, READ-ONLY: list and read them with list_directory / read_file using the path @name/…; you cannot change them):', ...references.map((reference) => `  @${reference.name}/  (${reference.path}${reference.missing ? ' — folder not found: the user has to relink it' : ''})`)] : []
       if (!entries.length) return [`${path}: empty folder`, ...linkedLines, ...referenceLines].join('\n')
       const header = sort === 'date' ? `${path} (most recently modified first):` : `${path}:`
-      return [header, ...entries.map((entry) => (entry.type === 'directory' ? `  ${entry.name}/  (${[entry.project ? 'sub-project: it has its own instructions, notes and history' : '', entry.modified ? `modified ${when(entry.modified)}` : ''].filter(Boolean).join('; ') || 'folder'})` : `  ${entry.name} (${entry.size ?? '?'} B${entry.modified ? `, modified ${when(entry.modified)}` : ''})`)), truncated ? '… list truncated' : ''].filter(Boolean).concat(linkedLines, referenceLines).join('\n')
+      const line = (entry, indent) => (entry.type === 'directory' ? `${indent}${entry.name}/  (${[entry.project ? 'sub-project: it has its own instructions, notes and history' : '', entry.modified ? `modified ${when(entry.modified)}` : ''].filter(Boolean).join('; ') || 'folder'})` : `${indent}${entry.name} (${entry.size ?? '?'} B${entry.modified ? `, modified ${when(entry.modified)}` : ''})`)
+      // The whole hierarchy below the folder in one answer, so the assistant does not descend folder by folder.
+      const MAX_TREE_ENTRIES = 1000
+      const MAX_TREE_DEPTH = 12
+      let count = 0
+      let cut = false
+      const tree = async (folder, items, depth) => {
+        const out = []
+        for (const entry of items) {
+          if (count >= MAX_TREE_ENTRIES) { cut = true; break }
+          count += 1
+          out.push(line(entry, '  '.repeat(depth + 1)))
+          if (entry.type !== 'directory') continue
+          const inner = folder === '.' ? entry.name : `${folder}/${entry.name}`
+          if (depth + 1 >= MAX_TREE_DEPTH) { out.push(`${'  '.repeat(depth + 2)}…`); continue }
+          try {
+            const child = await api.listDirectoryForAi(inner, { sort: 'name' })
+            out.push(...await tree(inner, child.entries, depth + 1))
+            if (child.truncated) out.push(`${'  '.repeat(depth + 2)}… list truncated`)
+          } catch { /* folder gone in the meantime */ }
+        }
+        return out
+      }
+      const body = recursive ? await tree(text(args.path).trim().replace(/^\/+|\/+$/g, '') || '.', entries, 0) : entries.map((entry) => line(entry, '  '))
+      return [header, ...body, truncated ? '… list truncated' : '', cut ? `… CUT at ${MAX_TREE_ENTRIES} entries: list a deeper folder with its path, or use recursive=false` : ''].filter(Boolean).concat(linkedLines, referenceLines).join('\n')
     },
 
     async read_file(args) {
@@ -1064,6 +1091,12 @@ export function createToolRunner(context) {
       if (args.path) {
         needProject()
         label = text(args.path)
+        if (!/^(true|1)$/i.test(String(args.again ?? ''))) {
+          const saved = await api.readImageDescription?.(label).catch(() => null)
+          if (saved) return `Saved description of “${label.slice(0, 120)}” (you looked at it before; pass again=true to see the image itself):
+
+${saved}`
+        }
         image = await api.readImageFile(label)
       } else if (args.url) {
         label = text(args.url).trim()
@@ -1081,6 +1114,15 @@ export function createToolRunner(context) {
         image = await api.fetchImage(entry.url)
       }
       return { text: `Image “${label.slice(0, 120)}” (${image.width}x${image.height}) attached.`, images: [{ ...image, label: label.slice(0, 120) }] }
+    },
+
+    async describe_image(args) {
+      needProject()
+      const file = text(args.path).trim()
+      if (!file) throw new Error('Missing parameter "path"')
+      if (!text(args.description).trim()) throw new Error('Missing parameter "description"')
+      await api.writeImageDescription(file, text(args.description))
+      return `Description of ${file} saved: view_image will return it instead of the image.`
     },
 
     async browser_follow_link(args) {
