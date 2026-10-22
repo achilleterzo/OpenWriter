@@ -71,7 +71,11 @@ const dataDirectory = path.resolve(args.data || process.env.OPENWRITER_DATA || d
 const isDirectory = (target) => { try { return fs.statSync(target).isDirectory() } catch { return false } }
 
 // Progetto da usare, e come è stato scelto. Si rilegge a ogni chiamata solo nel caso dell'app (può cambiare progetto mentre il server gira).
+// Progetto scelto dall'agente con open_project / create_project: da lì in poi tutti gli strumenti lavorano su quello (e l'app lo ha aperto).
+let switchedProject = null
+
 function resolveProject() {
+  if (switchedProject && isDirectory(switchedProject)) return { path: switchedProject, source: 'switched-by-agent' }
   const explicit = args.project || process.env.OPENWRITER_PROJECT
   if (explicit) {
     const target = path.resolve(explicit)
@@ -594,10 +598,32 @@ const WRITE_TOOLS = [
     run: (args) => bridgeCall('open_document', args),
   },
   {
+    name: 'ask_agent',
+    description: 'Hands a task to the OpenWriter writing assistant, which works in the app IN PARALLEL with you: it starts a chat (a new one by default) with your prompt as a normal user request, and the user follows it in OpenWriter. Use it once your own work is done, or while you go on, to delegate the writing side: update or create documentation, write documents, reorganise or edit documents. (To open a project or a document use open_project / open_document yourself.) The assistant has the instructions, skills and memory, and its own tools (read and write files, notes, browser). Write the prompt as complete instructions (what to do, which files, what changed in the code, the tone), because the assistant has no access to your conversation. The call returns as soon as the request is sent: the result is not returned, the user reviews it in the app. Needs the OpenWriter app running with this project open and the assistant configured.',
+    inputSchema: { type: 'object', properties: { prompt: { type: 'string', description: 'the complete instructions for the assistant' }, newChat: { type: 'boolean', description: 'true by default: start a new chat; false: continue in the chat currently open in the app' } }, required: ['prompt'], additionalProperties: false },
+    run: (args) => bridgeCall('ask_agent', args),
+  },
+  {
     name: 'open_project',
-    description: 'Opens a project folder in the OpenWriter app (the current session is saved and the app switches to that project). The path is the absolute path of the folder. Needs the OpenWriter app running. This server keeps working on the project it was started with (--project, or the folder the agent started in); only when it follows the project open in the app (no --project and no .ow in the working directory) does it move to the new project too.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'absolute path of the project folder' } }, required: ['path'], additionalProperties: false },
-    run: (args) => bridgeCall('open_project', args),
+    description: 'Opens a project folder in the OpenWriter app (the current session is saved and the app switches to that project, so the user sees its documents and chats). The path is the absolute path of the folder. With create=true it creates a NEW project there first: the parent folder must exist and the folder must not exist or must be empty (it gets its .ow folder); without create the folder must exist. Needs the OpenWriter app running (when it is not, a project created with create=true still exists on disk). After it succeeds, all the tools of this server (read, notes, ask_agent…) work on that project.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'absolute path of the project folder' }, create: { type: 'boolean', description: 'true to create a new project at this path (default false: open an existing one)' } }, required: ['path'], additionalProperties: false },
+    async run({ path: folder, create }) {
+      if (!path.isAbsolute(text(folder))) throw new Error('Give the absolute path of the project folder')
+      const target = path.resolve(text(folder))
+      if (isTrue(create)) {
+        if (!isDirectory(path.dirname(target))) throw new Error(`The parent folder does not exist: ${path.dirname(target)}`)
+        if (fs.existsSync(target) && (!isDirectory(target) || fs.readdirSync(target).length)) throw new Error('The folder already exists and is not empty: open it without create=true')
+        fs.mkdirSync(path.join(target, '.ow'), { recursive: true })
+      } else if (!isDirectory(target)) throw new Error(`The project folder does not exist: ${target} (pass create=true to create a new project there)`)
+      try {
+        const result = await bridgeCall('open_project', { path: target })
+        switchedProject = target
+        return `${isTrue(create) ? `Project created at ${target}. ` : ''}${result} This server now works on it.`
+      } catch (error) {
+        if (isTrue(create)) return `Project created at ${target}, but it was not opened in OpenWriter: ${error.message}`
+        throw error
+      }
+    },
   },
   {
     name: 'replace_text',

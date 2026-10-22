@@ -866,6 +866,13 @@ export default function App() {
           refreshNotes: () => setNotesVersion((value) => value + 1),
           openProject: (directory) => latest.current.openProject(directory),
           setStatus,
+          askAgent: ({ prompt, newChat }) => {
+            setAssistantOpen(true)
+            setChatRequest({ id: Date.now(), text: prompt, newChat, attachment: { label: t('Request from an external agent (MCP)'), detail: 'This request was sent by an external coding agent through the OpenWriter MCP server. Carry it out with your tools, then reply with a short summary of what you did.' } })
+            return newChat
+              ? 'The request was sent to the OpenWriter assistant in a new chat. It runs in the app in the background (as soon as the assistant is free), and the user follows it there. Its result is not returned here.'
+              : 'The request was sent to the OpenWriter assistant in the current chat. It runs in the app in the background (as soon as the assistant is free), and the user follows it there. Its result is not returned here.'
+          },
         })
         electronAPI.answerMcp(id, { ok: true, text })
       } catch (error) {

@@ -32,7 +32,7 @@ async function authorizeDocument(given, { api, toolBridge, project }) {
 
 const OPENABLE_DOCUMENT = /\.(md|markdown|mdown|txt|docx|pdf)$/i
 
-export async function handleMcpRequest({ tool, args = {} }, { api, toolBridge, project, activate, notify, refreshNotes, openProject, setStatus }) {
+export async function handleMcpRequest({ tool, args = {} }, { api, toolBridge, project, activate, notify, refreshNotes, openProject, setStatus, askAgent }) {
   // Cambiare progetto non richiede un progetto aperto, né che sia quello dell'agente.
   if (tool === 'open_project') {
     const directory = String(args.path ?? '').trim()
@@ -43,6 +43,12 @@ export async function handleMcpRequest({ tool, args = {} }, { api, toolBridge, p
     return `Project ${opened} is now open in OpenWriter.`
   }
   if (!project) throw new Error('No project is open in OpenWriter')
+  // Una richiesta all'assistente di OpenWriter: parte in una chat dell'app, in parallelo al lavoro dell'agente che l'ha inviata.
+  if (tool === 'ask_agent') {
+    const prompt = String(args.prompt ?? '').trim()
+    if (!prompt) throw new Error('Missing parameter "prompt"')
+    return askAgent({ prompt, newChat: !(args.newChat === false || args.newChat === 'false') })
+  }
   const given = String(args.path ?? '').trim()
   // Aprire un documento è l'unico modo per un agente di portare nell'area di lavoro un file fuori dal progetto: l'utente lo vede aprirsi in una scheda.
   if (tool === 'open_document') {
