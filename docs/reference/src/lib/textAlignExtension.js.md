@@ -13,7 +13,7 @@ Text **centred**
 ```
 
 - `TextAlign`: the `align` attribute on paragraphs and headings (`data-align` and `style="text-align: …"` in the HTML, read back from `data-align`, `style` or `align`), the `setTextAlign(align)` and `unsetTextAlign()` commands and the shortcuts `Mod-Shift-l` (left), `Mod-Shift-e` (centre), `Mod-Shift-r` (right), `Mod-Shift-j` (justify). It aligns only the paragraphs and headings the selection really touches: a triple click reaches the start of the following paragraph and a selection starting at the end of a line begins in the previous one.
-- `AlignedParagraph` and `AlignedHeading`: write an aligned block inside `<div align="…">`, and leave `&nbsp;` for an empty paragraph that follows another one.
+- `AlignedParagraph` and `AlignedHeading`: write an aligned block inside `<div align="…">`, and leave `&nbsp;` for an empty paragraph that follows another one. A paragraph holding nothing but an image inside a link — the badge `[![alt](img)](url)` — is read as the block image itself, so that no extra empty line is left in the file (the linked image is a block node, see [DocumentLink in DocumentPane.jsx](../components/pages/DocumentPane.jsx.md)).
 - `AlignedBlocks`: reads `<div align="…">` blocks (only when they contain nothing but paragraphs and headings) and also `<p align="center">…</p>` and `<h2 align="right">…</h2>`, with `style="text-align:…"` allowed, writing them back as a `<div>` block. Tags with other attributes (`class`, `id`…) are not touched and stay raw HTML, written back identical, without losing the alignment.
 
 The accepted values are those of `ALIGNMENTS` (`left`, `center`, `right`, `justify`).

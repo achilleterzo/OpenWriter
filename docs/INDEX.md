@@ -23,7 +23,8 @@ The project is built with Electron, React, Vite, Tailwind CSS, and Tiptap.
 - Exports to DOCX and PDF, and a self-contained Markdown export with the images embedded as `data:` URIs ([markdown-embed.cjs](reference/electron/markdown-embed.cjs.md)).
 - Find and replace with live highlighting, a match counter, match-case, whole-word and regular-expression options, and `$1` capture groups in replacements.
 - Replace all is handled as a single undoable operation.
-- Images of a document (in its `images/` folder) follow it when it is moved, and a shared image is copied instead ([document-images.cjs](reference/electron/document-images.cjs.md)).
+- Images of a document (in its `images/` folder) follow it when it is moved, and a shared image is copied instead ([document-images.cjs](reference/electron/document-images.cjs.md)). The images a document uses are found through the Markdown tokens, so the examples inside a code block are left alone ([markdown-images.cjs](reference/electron/markdown-images.cjs.md), [markdown-tokens.cjs](reference/electron/markdown-tokens.cjs.md)).
+- Links and images are written with the right syntax: a destination with spaces or brackets goes between `<…>` with the escapes it needs, and a text or a title with `[`, `]` or `"` cannot break the line ([markdownSyntax.js](reference/src/lib/markdownSyntax.js.md)).
 - Editor fonts: a bundled set of Google Fonts plus the ones installed from the catalog, kept in the application data so they also work offline ([fonts.js](reference/src/lib/fonts.js.md), [fonts.cjs](reference/electron/fonts.cjs.md)).
 - Files can be copied or cut in OpenWriter and pasted in the system file manager, and the other way round ([file-clipboard.cjs](reference/electron/file-clipboard.cjs.md)).
 
@@ -51,9 +52,6 @@ When a folder is opened, an `.ow` directory is created or reused at the project 
 
 ```text
 .ow/
-  
-```
-
   project.json
   context.md
   links.json
@@ -74,7 +72,6 @@ When a folder is opened, an `.ow` directory is created or reused at the project 
 ```
 
 The directory contains settings, the assistant context, the linked documents and reference folders, the project icon, project memory, conversations, attachments, notes, bookmarks, the browser history, and document versions. Its contents are plain text or JSON and can be committed to Git or ignored, and every write is atomic ([atomic-write.cjs](reference/electron/atomic-write.cjs.md)).
-```
 
 A version is saved when the text changes. Manually labeled versions can also be created. Up to 100 versions are retained per document, with older automatic versions removed first.
 

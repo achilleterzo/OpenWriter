@@ -11,12 +11,13 @@ Secure bridge between the renderer and the main process, exposed as `window.elec
 - Project extras: linked documents (`listLinks`, `updateLink`, `removeLink`, `revealLink`), reference folders (`listReferences`, `addReference`, `updateReference`, `removeReference`, `revealReference`), icons (`getProjectIcon`, `pickProjectIcon`, `saveProjectIcon`, `removeProjectIcon`).
 - History, notes, bookmarks, memory (`list`, `add`, `update`, `delete`), conversations and attachments, skills (the `skills` namespace, including `importFile`), spell checking, i18n locale.
 - Assistant file tools: list, read, create, move, delete, create a directory, create a project.
-- Images: fetch, read a file, pick, import, page and webview screenshots.
+- Images: fetch, read a file, read and write the saved description of an image (`readImageDescription`, `writeImageDescription`), pick, import, page and webview screenshots.
+- Workspace paths: rename, delete one or several (`deletePaths`, for a selection), reveal, create an entry, move a project or a sub-project in and out.
 - Fonts (`fonts` namespace): catalog, list, install, remove.
 - Browser history (`browserHistory` namespace, with `{ agent: true }` for the assistant's own history), and saving a browser screenshot.
 - File clipboard (`copyFilesToClipboard`, `pasteFilesFromClipboard`).
 - Dialogs: `onDialogAsk` and `answerDialog`, so a confirmation asked by the main process is shown in the internal dialog window.
-- `getMcpConfig`: command and arguments to start the MCP server from an agent's client.
+- `getMcpConfig`: command and arguments to start the MCP server from an agent's client. The bridge to the running application: `onMcpRequest` receives a tool the agent asked to run on the open editor, and `answerMcp` sends the result back.
 - The `ai` namespace: settings, status, provider login and code submission, model listing and accepted inputs per model (`listModelInputs`), encrypted API key presence and storage, non-streaming `chat`, `getCapabilities`, chat attachments (`pickAttachments`, `readAttachment`, `prepareImage`), and `chatStream` (per-request id, streamed `text`/`thinking`/`status`/`usage` events, and `cancel()`).
 - Events: `onEditContextMenu`, `onAppCommand`, `onDocumentCommand`, `onExternalDocument`, `onDialogAsk`.
 
