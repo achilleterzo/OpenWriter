@@ -1,5 +1,7 @@
 # OpenWriter
 
+[![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/achilleterzo/badge.svg)](https://hub.xerj.org/contributors/achilleterzo)
+
 OpenWriter is a local-first desktop Markdown editor with an AI writing assistant. It provides a focused writing environment, project-based organization, and control over where documents, conversations, notes, and history are stored.
 
 Built with Electron, React, Vite, Tailwind CSS, and Tiptap.
@@ -91,7 +93,6 @@ OpenWriter includes a Model Context Protocol server, so that the agents you alre
 - **What it can reach.** The documents of the project, the documents linked to it, and the documents open in OpenWriter, also outside the project folder. Any other path on the disk is refused.
 - **What it writes.** Notes, suggested changes (a note with a replacement), and bookmarks, stored in `.ow`; new documents and folders (never overwriting anything); and, with the application running, edits to the documents open in the editor (`replace_text`, `insert_text`, `replace_document`). Those edits are applied to the live editor through a local bridge: they are marked for you to accept or reject, can be undone, and nothing reaches the file until you save.
 - **Control.** `--read-only` (Settings → Agents (MCP) → Read-only) removes every writing tool. "Let agents change the documents open in OpenWriter" turns the editor edits off at any time. The bridge listens only on `127.0.0.1`, requires a token, and accepts a request only for the project that is open.
-
 
 ## Projects and data
 
