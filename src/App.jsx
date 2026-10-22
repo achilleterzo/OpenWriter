@@ -176,7 +176,8 @@ export default function App() {
 
   // Gli ultimi valori restano in un ref: serve a salvare la sessione anche dai timer e da beforeunload.
   const latest = useRef({})
-  latest.current = { ready, tabs, activeId, editors, project, sideTab, expandedPaths, assistantOpen, conversationId, contextPins, contextTabId: contextTab?.id }
+  const openProjectRef = useRef(null)
+  latest.current = { openProject: (directory) => openProjectRef.current?.(directory), ready, tabs, activeId, editors, project, sideTab, expandedPaths, assistantOpen, conversationId, contextPins, contextTabId: contextTab?.id }
   const saveTimer = useRef(null)
 
   const buildSession = useCallback(() => {
@@ -362,6 +363,7 @@ export default function App() {
 
   const chooseProject = useCallback(() => switchProject(() => electronAPI.chooseProject()), [switchProject])
   const openProject = useCallback((directory) => switchProject(() => electronAPI.openProject(directory)), [switchProject])
+  openProjectRef.current = openProject
   const createProject = useCallback((name) => switchProject(() => electronAPI.createProject(name)), [switchProject])
 
   // Nuova versione: controllo all'avvio (e a richiesta dalla finestra Informazioni), confronto con la versione in uso.
@@ -862,6 +864,8 @@ export default function App() {
           activate: setActiveId,
           notify: (title) => setStatus(t('An agent proposed changes to “{title}”: review them in the document', { title })),
           refreshNotes: () => setNotesVersion((value) => value + 1),
+          openProject: (directory) => latest.current.openProject(directory),
+          setStatus,
         })
         electronAPI.answerMcp(id, { ok: true, text })
       } catch (error) {

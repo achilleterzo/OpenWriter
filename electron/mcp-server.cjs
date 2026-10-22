@@ -207,6 +207,77 @@ function contextChain(document) {
   return projectFile.getContextChain(file || null)
 }
 
+// Albero del progetto in una sola chiamata: lo restituiscono read_project e list_documents (che di default scende nelle sottocartelle).
+function projectTree({ path: folder, maxDepth, documentsOnly, maxEntries }) {
+  const project = projectPath()
+  const start = folder && folder !== '.' ? projectPathInside(folder) : project
+  const depthLimit = Math.min(30, Math.max(1, Number(maxDepth) || 12))
+  const limit = Math.min(TREE_MAX_ENTRIES, Math.max(1, Number(maxEntries) || TREE_DEFAULT_ENTRIES))
+  const onlyDocuments = isTrue(documentsOnly)
+  const lines = []
+  let files = 0
+  let folders = 0
+  let cut = false
+  let visited = 0
+  const describe = (stats) => `${stats.size < 1024 ? `${stats.size} B` : stats.size < 1048576 ? `${Math.round(stats.size / 1024)} KB` : `${(stats.size / 1048576).toFixed(1)} MB`}, ${new Date(stats.mtimeMs).toISOString().slice(0, 10)}`
+
+  // Restituisce le righe di una cartella (senza aggiungerle) per poter omettere le cartelle senza documenti con documentsOnly.
+  const walk = (directory, depth) => {
+    let entries = []
+    try { entries = fs.readdirSync(directory, { withFileTypes: true }) } catch { return [] }
+    entries = entries.filter((entry) => !SKIPPED_NAMES.has(entry.name) && !entry.name.startsWith('.'))
+    entries.sort((left, right) => Number(right.isDirectory()) - Number(left.isDirectory()) || left.name.localeCompare(right.name, 'it', { sensitivity: 'base' }))
+    const out = []
+    for (const entry of entries) {
+      visited += 1
+      if (visited > TREE_MAX_ENTRIES * 4) break
+      const full = path.join(directory, entry.name)
+      const indent = '  '.repeat(depth)
+      if (entry.isDirectory()) {
+        const marker = isDirectory(path.join(full, '.ow')) ? ' [sub-project]' : ''
+        const inner = depth + 1 < depthLimit ? walk(full, depth + 1) : [{ line: `${'  '.repeat(depth + 1)}…`, file: false, note: true, content: true }]
+        const hasContent = inner.some((item) => item.file || item.content)
+        if (onlyDocuments && !hasContent) continue
+        out.push({ line: `${indent}${entry.name}/${marker}`, file: false }, ...inner)
+      } else {
+        if (onlyDocuments && !DOCUMENT_EXTENSIONS.test(entry.name)) continue
+        let detail = ''
+        try { detail = ` (${describe(fs.statSync(full))})` } catch { /* file sparito nel frattempo */ }
+        out.push({ line: `${indent}${entry.name}${detail}`, file: true })
+      }
+    }
+    return out
+  }
+
+  for (const item of walk(start, 0)) {
+    if (lines.length >= limit) { cut = true; break }
+    lines.push(item.line)
+    if (item.file) files += 1
+    else if (!item.note) folders += 1
+  }
+  const where = relativeTo(project, start)
+  return [
+    `${where === '.' ? path.basename(project) : where}/  — ${folders} folders, ${files} files${onlyDocuments ? ' (documents only)' : ''}${cut ? `, CUT at ${limit} entries: narrow it with "path" or "documentsOnly"` : ''}`,
+    ...lines.map((line) => `  ${line}`),
+  ].join('\n')
+}
+
+const PROJECT_TREE_TOOL = {
+  name: 'read_project',
+  description: 'Alias of list_documents (which is recursive by default): the whole project in ONE call, every folder and file, as an indented tree (folders end with "/", sub-projects are marked, files show size and last-modified date). Hidden folders, .ow, .git and node_modules are left out. Large projects are cut at maxEntries (the answer says so): then narrow it with "path" or "documentsOnly", or lower "maxDepth".',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'folder relative to the project root (default: the whole project)' },
+      maxDepth: { type: 'integer', minimum: 1, maximum: 30, description: 'how many folder levels to descend (default 12)' },
+      documentsOnly: { type: 'boolean', description: 'only documents (.md, .markdown, .txt, .docx, .pdf), and the folders that contain them' },
+      maxEntries: { type: 'integer', minimum: 1, maximum: TREE_MAX_ENTRIES, description: `maximum number of entries (default ${TREE_DEFAULT_ENTRIES})` },
+    },
+    additionalProperties: false,
+  },
+  run: projectTree,
+}
+
 const TOOLS = [
   {
     name: 'project_info',
@@ -279,78 +350,25 @@ const TOOLS = [
       return { id, scope: skill.scope, owner: found.owner || '', markdown: skill.markdown }
     },
   },
+  PROJECT_TREE_TOOL,
   {
-    name: 'read_project',
-    description: 'PREFERRED way to explore the project. The whole project in ONE call: every folder and file, recursively, as an indented tree (folders end with "/", sub-projects are marked, files show size and last-modified date). Always use it instead of listing folder after folder with list_documents: call it once, then read_document what you need. Hidden folders, .ow, .git and node_modules are left out. Large projects are cut at maxEntries (the answer says so): then narrow it with "path" or "documentsOnly", or lower "maxDepth".',
+    name: 'list_documents',
+    description: 'Lists the files and folders of the project: by default RECURSIVE, so one call returns the whole hierarchy below the folder (default: the root) as an indented tree with sizes and dates; folders that are sub-projects are flagged. Call it once and read_document what you need: do not descend folder by folder. Pass recursive=false to see only ONE folder (folders first, sizes/times as numbers, optionally sort=date). Large projects are cut at maxEntries (the answer says so): narrow it with "path" or "documentsOnly", or lower "maxDepth".',
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'folder relative to the project root (default: the whole project)' },
-        maxDepth: { type: 'integer', minimum: 1, maximum: 30, description: 'how many folder levels to descend (default 12)' },
-        documentsOnly: { type: 'boolean', description: 'only documents (.md, .markdown, .txt, .docx, .pdf), and the folders that contain them' },
-        maxEntries: { type: 'integer', minimum: 1, maximum: TREE_MAX_ENTRIES, description: `maximum number of entries (default ${TREE_DEFAULT_ENTRIES})` },
+        path: { type: 'string', description: 'folder relative to the project root (default ".")' },
+        recursive: { type: 'boolean', description: 'true by default: include everything below the folder. false: only the folder itself' },
+        sort: { type: 'string', enum: ['name', 'date'], description: 'only with recursive=false: "date" lists the most recently modified first' },
+        maxDepth: { type: 'integer', minimum: 1, maximum: 30, description: 'recursive: how many folder levels to descend (default 12)' },
+        documentsOnly: { type: 'boolean', description: 'recursive: only documents (.md, .markdown, .txt, .docx, .pdf), and the folders that contain them' },
+        maxEntries: { type: 'integer', minimum: 1, maximum: TREE_MAX_ENTRIES, description: `recursive: maximum number of entries (default ${TREE_DEFAULT_ENTRIES})` },
       },
       additionalProperties: false,
     },
-    run({ path: folder, maxDepth, documentsOnly, maxEntries }) {
-      const project = projectPath()
-      const start = folder && folder !== '.' ? projectPathInside(folder) : project
-      const depthLimit = Math.min(30, Math.max(1, Number(maxDepth) || 12))
-      const limit = Math.min(TREE_MAX_ENTRIES, Math.max(1, Number(maxEntries) || TREE_DEFAULT_ENTRIES))
-      const onlyDocuments = isTrue(documentsOnly)
-      const lines = []
-      let files = 0
-      let folders = 0
-      let cut = false
-      let visited = 0
-      const describe = (stats) => `${stats.size < 1024 ? `${stats.size} B` : stats.size < 1048576 ? `${Math.round(stats.size / 1024)} KB` : `${(stats.size / 1048576).toFixed(1)} MB`}, ${new Date(stats.mtimeMs).toISOString().slice(0, 10)}`
-
-      // Restituisce le righe di una cartella (senza aggiungerle) per poter omettere le cartelle senza documenti con documentsOnly.
-      const walk = (directory, depth) => {
-        let entries = []
-        try { entries = fs.readdirSync(directory, { withFileTypes: true }) } catch { return [] }
-        entries = entries.filter((entry) => !SKIPPED_NAMES.has(entry.name) && !entry.name.startsWith('.'))
-        entries.sort((left, right) => Number(right.isDirectory()) - Number(left.isDirectory()) || left.name.localeCompare(right.name, 'it', { sensitivity: 'base' }))
-        const out = []
-        for (const entry of entries) {
-          visited += 1
-          if (visited > TREE_MAX_ENTRIES * 4) break
-          const full = path.join(directory, entry.name)
-          const indent = '  '.repeat(depth)
-          if (entry.isDirectory()) {
-            const marker = isDirectory(path.join(full, '.ow')) ? ' [sub-project]' : ''
-            const inner = depth + 1 < depthLimit ? walk(full, depth + 1) : [{ line: `${'  '.repeat(depth + 1)}…`, file: false, note: true, content: true }]
-            const hasContent = inner.some((item) => item.file || item.content)
-            if (onlyDocuments && !hasContent) continue
-            out.push({ line: `${indent}${entry.name}/${marker}`, file: false }, ...inner)
-          } else {
-            if (onlyDocuments && !DOCUMENT_EXTENSIONS.test(entry.name)) continue
-            let detail = ''
-            try { detail = ` (${describe(fs.statSync(full))})` } catch { /* file sparito nel frattempo */ }
-            out.push({ line: `${indent}${entry.name}${detail}`, file: true })
-          }
-        }
-        return out
-      }
-
-      for (const item of walk(start, 0)) {
-        if (lines.length >= limit) { cut = true; break }
-        lines.push(item.line)
-        if (item.file) files += 1
-        else if (!item.note) folders += 1
-      }
-      const where = relativeTo(project, start)
-      return [
-        `${where === '.' ? path.basename(project) : where}/  — ${folders} folders, ${files} files${onlyDocuments ? ' (documents only)' : ''}${cut ? `, CUT at ${limit} entries: narrow it with "path" or "documentsOnly"` : ''}`,
-        ...lines.map((line) => `  ${line}`),
-      ].join('\n')
-    },
-  },
-  {
-    name: 'list_documents',
-    description: 'Lists ONE folder of the project (default: the root), folders first, with sizes and times as numbers; folders that are sub-projects are flagged. Do NOT use it to explore the project or to descend folder by folder: to see which files exist call read_project, which returns every folder and file in one call. Use this only to look at a single folder with numeric sizes/times or sorted by date.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'folder relative to the project root (default ".")' }, sort: { type: 'string', enum: ['name', 'date'], description: '"date" lists the most recently modified first' } }, additionalProperties: false },
-    run: ({ path: folder, sort }) => projectTools.listDirectory(folder || '.', { sort: sort === 'date' ? 'date' : 'name' }),
+    run: (args) => (args.recursive === false || args.recursive === 'false'
+      ? projectTools.listDirectory(args.path || '.', { sort: args.sort === 'date' ? 'date' : 'name' })
+      : projectTree(args)),
   },
   {
     name: 'read_document',
@@ -527,7 +545,9 @@ function bridgeCall(tool, args) {
   try { bridge = JSON.parse(fs.readFileSync(path.join(dataDirectory, 'mcp-bridge.json'), 'utf8')) } catch { bridge = null }
   const notRunning = 'OpenWriter does not seem to be running (or this install has no editing bridge). Open the app with this project to edit documents in the editor; meanwhile you can leave notes and suggestions (add_note, suggest_insertion), which do not need the app.'
   if (!bridge?.port || !bridge?.token) return Promise.reject(new Error(notRunning))
-  const payload = JSON.stringify({ project: projectPath(), tool, arguments: args })
+  let project = null
+  try { project = projectPath() } catch { /* open_project funziona anche senza un progetto */ }
+  const payload = JSON.stringify({ project, tool, arguments: args })
   return new Promise((resolve, reject) => {
     const request = http.request({ host: '127.0.0.1', port: bridge.port, path: '/call', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), Authorization: `Bearer ${bridge.token}` }, timeout: 130000 }, (response) => {
       let body = ''
@@ -566,6 +586,18 @@ const WRITE_TOOLS = [
       const result = await projectTools.createDirectory(text(folder))
       return result.created ? `Created the folder ${result.path}.` : `The folder ${result.path} already exists.`
     },
+  },
+  {
+    name: 'open_document',
+    description: 'Opens a document in a tab of the OpenWriter editor and brings it in front, so the user sees it. The path is relative to the project root, or the absolute path of a file OUTSIDE the project (.md, .txt, .docx, .pdf): opening it makes it part of the active workspace, so afterwards you can read it (read_open_document, read_document) and annotate it. Needs the OpenWriter app running with this project open.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'path relative to the project root, or absolute path of a document outside the project' } }, required: ['path'], additionalProperties: false },
+    run: (args) => bridgeCall('open_document', args),
+  },
+  {
+    name: 'open_project',
+    description: 'Opens a project folder in the OpenWriter app (the current session is saved and the app switches to that project). The path is the absolute path of the folder. Needs the OpenWriter app running. This server keeps working on the project it was started with (--project, or the folder the agent started in); only when it follows the project open in the app (no --project and no .ow in the working directory) does it move to the new project too.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'absolute path of the project folder' } }, required: ['path'], additionalProperties: false },
+    run: (args) => bridgeCall('open_project', args),
   },
   {
     name: 'replace_text',
@@ -737,7 +769,7 @@ const READ_ONLY = args.readOnly === true || /^(1|true)$/i.test(process.env.OPENW
 const ACTIVE_TOOLS = READ_ONLY ? TOOLS : [...TOOLS, ...WRITE_TOOLS]
 
 // Rinforzo: gli agenti tendono a esplorare con list_documents una cartella alla volta anche quando potrebbero vedere tutto in una chiamata.
-const EXPLORE_RULE = 'EXPLORING THE PROJECT: to know what files exist, ALWAYS call read_project (the whole tree in ONE call, every folder and file). Do not walk the project with list_documents folder after folder: that costs one call per folder for what read_project returns at once. Call read_project once at the start, keep its tree in mind and go straight to read_document for the files you need. Use list_documents only for a single folder when you need its sizes/times as numbers or sorted by date, or to check one folder again after you created or moved files. If read_project says the tree was CUT, narrow it (path, documentsOnly, maxDepth) and call read_project again, still not list_documents.'
+const EXPLORE_RULE = 'EXPLORING THE PROJECT: list_documents is recursive by default (read_project is an alias): ONE call returns every folder and file below the folder, so call it once at the start, keep the tree in mind and go straight to read_document for the files you need. Do not walk the project folder by folder. Pass recursive=false only to look at a single folder with numeric sizes/times or sorted by date. If the answer says the tree was CUT, narrow it (path, documentsOnly, maxDepth) and call it again.'
 
 const INSTRUCTIONS = (READ_ONLY
   ? 'Read-only access to an OpenWriter project (a local Markdown workspace): call project_info first (it says which document the user has in front: the tools that take a document default to it), then read_project to see every file in one call, get_context for the instructions written for the assistant and list_skills / get_skill for the project skills. Notes, bookmarks and memory record the workflow around the documents. This server never edits anything: edit the files with your own tools.'
