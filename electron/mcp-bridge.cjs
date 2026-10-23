@@ -13,7 +13,9 @@ const { samePath } = require('./path-compare.cjs')
  * Il server MCP legge quel file e chiama POST /call con il token. Ogni richiesta passa all'interfaccia (renderer), che esegue lo strumento
  * sull'editor e risponde. Si accettano solo gli strumenti elencati in ALLOWED e solo per il progetto aperto nell'app.
  */
-const ALLOWED = new Set(['read_open_document', 'replace_text', 'insert_text', 'replace_document'])
+const ALLOWED = new Set(['read_open_document', 'replace_text', 'insert_text', 'replace_document', 'open_document', 'open_project', 'ask_agent'])
+// Strumenti che non dipendono dal progetto aperto nell'app (anzi, lo cambiano).
+const ANY_PROJECT = new Set(['open_project'])
 const MAX_BODY_BYTES = 8 * 1024 * 1024
 const REQUEST_TIMEOUT_MS = 120_000
 
@@ -85,8 +87,8 @@ function createMcpBridge({ directory, getWindow, getProjectPath, isEnabled = () 
     if (!ALLOWED.has(message.tool)) { reply(response, 400, { ok: false, error: `Unknown tool: ${message.tool}` }); return }
     if (!isEnabled()) { reply(response, 403, { ok: false, error: 'Editing by agents is turned off in OpenWriter (Settings > Agents (MCP))' }); return }
     const open = getProjectPath()
-    if (!open) { reply(response, 409, { ok: false, error: 'No project is open in OpenWriter' }); return }
-    if (!sameProject(message.project, open)) { reply(response, 409, { ok: false, error: `The project open in OpenWriter is "${open}", not the one this agent is working on: open the right project in OpenWriter first` }); return }
+    if (!open && !ANY_PROJECT.has(message.tool)) { reply(response, 409, { ok: false, error: 'No project is open in OpenWriter' }); return }
+    if (!ANY_PROJECT.has(message.tool) && !sameProject(message.project, open)) { reply(response, 409, { ok: false, error: `The project open in OpenWriter is "${open}", not the one this agent is working on: open the right project in OpenWriter first` }); return }
     try {
       const text = await dispatch(message.tool, message.arguments && typeof message.arguments === 'object' ? message.arguments : {})
       reply(response, 200, { ok: true, text })

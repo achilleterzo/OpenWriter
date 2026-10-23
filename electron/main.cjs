@@ -930,6 +930,20 @@ ipcMain.handle('tools:read-file', async (_event, { path: relativePath, offset, l
 ipcMain.handle('ai:capabilities', (_event, model) => aiProviders.getCapabilities(model))
 ipcMain.handle('images:fetch', (_event, url) => images.fetchImage(String(url)))
 ipcMain.handle('images:read-file', async (_event, relativePath) => { const { tools, relative } = toolsFor(relativePath); return images.prepareBuffer(await tools.readImage(relative)) })
+// Descrizione di un'immagine del progetto, salvata dall'assistente in .ow/image-descriptions/ (un file .md per immagine) e riletta al posto
+// dell'immagine: evita di riguardarla ogni volta. L'utente può modificarla o cancellarla a mano.
+function imageDescriptionFile(relativePath) {
+  if (!projectPath) throw new Error(t('No project open'))
+  const relative = String(relativePath || '').replace(/[\\]/g, '/').replace(/^\/+/, '')
+  if (!relative || relative.split('/').some((part) => part === '..' || part === '.ow')) throw new Error(t('Invalid name'))
+  return path.join(projectPath, '.ow', 'image-descriptions', `${relative.replace(/\//g, '__')}.md`)
+}
+ipcMain.handle('images:read-description', async (_event, relativePath) => fs.readFile(imageDescriptionFile(relativePath), 'utf8').catch(() => null))
+ipcMain.handle('images:write-description', async (_event, relativePath, description) => {
+  const target = imageDescriptionFile(relativePath)
+  await fs.mkdir(path.dirname(target), { recursive: true })
+  writeFileAtomic(target, String(description ?? '').trim().slice(0, 20000))
+})
 // Schermate: solo la finestra dell'app o le sue schede browser (webview), mai altro.
 ipcMain.handle('images:capture-page', async (_event, rect) => {
   const area = { x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)), width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)) }

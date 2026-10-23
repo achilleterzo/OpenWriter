@@ -23,6 +23,14 @@ const wrap = (align, body) => `<div align="${align}">\n\n${body}\n\n</div>`
 
 // Come il Paragraph di tiptap, ma un paragrafo allineato si scrive dentro il blocco <div align>.
 export const AlignedParagraph = Paragraph.extend({
+  // Un paragrafo che contiene solo un'immagine con link (il badge `[![alt](img)](url)`) diventa l'immagine a blocchi: in un paragrafo vuoto di troppo
+  // altrimenti resterebbe una riga vuota (il link-immagine è un nodo a blocchi, vedi DocumentLink).
+  parseMarkdown(token, helpers) {
+    const only = token.tokens?.length === 1 ? token.tokens[0] : null
+    if (only?.type === 'link' && only.tokens?.length === 1 && only.tokens[0].type === 'image') return helpers.parseChildren([only])
+    return this.parent?.(token, helpers)
+  },
+
   renderMarkdown(node, helpers, context) {
     if (!node) return ''
     const content = Array.isArray(node.content) ? node.content : []

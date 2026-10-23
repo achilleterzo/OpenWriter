@@ -19,3 +19,4 @@ A quick way to check that the reference pages still match the source tree.
 - Every page has an H1 equal to the module path and a `Source:` line linking the physical file.
 - Every page listed in `docs/INDEX.md` exists, and every existing page is listed there.
 - `docs/reference/src/lib/lib.md` and `docs/reference/src/components/components.md` list the same pages as `docs/INDEX.md`.
+

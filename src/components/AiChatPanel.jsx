@@ -127,7 +127,7 @@ function toModelMessages(messages, context, native, loaded = new Map()) {
       const entries = message.images || []
       const attached = entries.map((entry) => loaded.get(imageKey(entry))).filter(Boolean)
       const omitted = entries.length - attached.length
-      const content = `${message.content}${omitted ? `\n(${omitted === 1 ? 'image no longer attached' : `${omitted} images no longer attached`} to save tokens)` : ''}`
+      const content = `${message.content}${omitted ? `\n(${omitted === 1 ? 'image no longer attached' : `${omitted} images no longer attached`} to save tokens: call describe_image right after looking at an image so that view_image returns the saved description instead of the image; do not view ${omitted === 1 ? 'it' : 'them'} again without one)` : ''}`
       if (native) {
         const result = { role: 'tool', tool_name: message.name, content }
         return attached.length ? [result, { role: 'user', content: `[Image returned by ${message.name}]`, images: attached.map((image) => image.data) }] : [result]
@@ -777,10 +777,18 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
 
   // Richiesta arrivata da fuori (es. "Applica correzione…" di una nota): parte appena l'assistente è pronto e libero.
   const handledRequest = useRef(null)
+  const resetFor = useRef(null)
   useEffect(() => {
     if (!request || handledRequest.current === request.id || busy || !enabled || !settings) return
     // Ripresa dopo il cambio di progetto: aspetta che la conversazione sia stata caricata.
     if (request.resume && current.id !== request.conversationId) return
+    // Richiesta in una chat nuova: prima si azzera la conversazione, poi (al render successivo) si invia.
+    if (request.newChat && resetFor.current !== request.id) {
+      resetFor.current = request.id
+      setCurrent(blankConversation())
+      onConversationChange(null)
+      return
+    }
     handledRequest.current = request.id
     // Consumata: altrimenti, rimontando il pannello (es. dopo le impostazioni), la stessa richiesta ripartirebbe da sola.
     onRequestHandled?.()

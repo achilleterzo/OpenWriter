@@ -136,11 +136,15 @@ function createChatStore({ getProjectPath }) {
   const attachmentExtension = (mime) => ATTACHMENT_TYPES.find(([, known]) => known === attachmentMime(mime))[0]
 
   function saveAttachment({ mime, data }) {
-    const id = crypto.randomUUID()
     const buffer = Buffer.from(String(data || ''), 'base64')
     if (!buffer.length) throw new Error(t('Empty attachment'))
-    fs.mkdirSync(attachmentsDirectory(), { recursive: true })
-    fs.writeFileSync(path.join(attachmentsDirectory(), `${id}.${attachmentExtension(mime)}`), buffer)
+    // L'id deriva dal contenuto: la stessa immagine riguardata più volte (o riallegata) è un solo file.
+    const id = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 32)
+    const file = path.join(attachmentsDirectory(), `${id}.${attachmentExtension(mime)}`)
+    if (!fs.existsSync(file)) {
+      fs.mkdirSync(attachmentsDirectory(), { recursive: true })
+      fs.writeFileSync(file, buffer)
+    }
     return { id, mime: attachmentMime(mime) }
   }
 
@@ -170,7 +174,26 @@ function createChatStore({ getProjectPath }) {
         for (const [extension] of ATTACHMENT_TYPES) fs.rmSync(path.join(attachmentsDirectory(), `${attachment}.${extension}`), { force: true })
       }
     }
+    sweepAttachments()
     return true
+  }
+
+  // Toglie gli allegati che nessuna conversazione cita più (restano quando una chat viene modificata o troncata, o con versioni vecchie).
+  // Quelli recenti si lasciano: potrebbero appartenere a una conversazione non ancora salvata.
+  function sweepAttachments() {
+    if (!fs.existsSync(attachmentsDirectory())) return
+    const used = new Set()
+    for (const name of fs.existsSync(directory()) ? fs.readdirSync(directory()) : []) {
+      if (!name.endsWith('.json')) continue
+      try { for (const attachment of attachmentIds(JSON.parse(fs.readFileSync(path.join(directory(), name), 'utf8')))) used.add(attachment) } catch { return } // un JSON illeggibile: meglio non togliere nulla
+    }
+    const limit = Date.now() - 10 * 60 * 1000
+    for (const name of fs.readdirSync(attachmentsDirectory())) {
+      const file = path.join(attachmentsDirectory(), name)
+      try {
+        if (!used.has(path.parse(name).name) && fs.statSync(file).mtimeMs < limit) fs.rmSync(file, { force: true })
+      } catch { /* file già sparito */ }
+    }
   }
 
   // Copia una conversazione (e gli allegati che usa) nella chat di un altro progetto: serve a proseguirla lì.

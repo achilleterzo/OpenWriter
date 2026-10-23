@@ -96,6 +96,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteBookmark: (request) => ipcRenderer.invoke('bookmarks:delete', request),
   fetchImage: (url) => ipcRenderer.invoke('images:fetch', url),
   readImageFile: (path) => ipcRenderer.invoke('images:read-file', path),
+  readImageDescription: (path) => ipcRenderer.invoke('images:read-description', path),
+  writeImageDescription: (path, description) => ipcRenderer.invoke('images:write-description', path, description),
   captureRect: (rect) => ipcRenderer.invoke('images:capture-page', rect),
   captureWebview: (contentsId) => ipcRenderer.invoke('images:capture-webview', contentsId),
   browserHistory: {
