@@ -14,6 +14,15 @@ A quick way to check that the reference pages still match the source tree.
 - `src/app.js`: an empty placeholder file.
 - `src/assets/provider-logos/`: the SVG logos of the AI providers, used as images.
 
+## Last review of the pages
+
+The pages were read against the source again after the latest changes, so they now also describe:
+
+- the MCP tools `open_document`, `open_project` (with `create`), `ask_agent`, `list_documents` recursive by default and `read_project` as its alias ([mcp-server.cjs.md](electron/mcp-server.cjs.md)), the tools allowed through the bridge ([mcp-bridge.cjs.md](electron/mcp-bridge.cjs.md)) and their execution in the app ([mcpRequests.js.md](src/lib/mcpRequests.js.md), [App.jsx.md](src/App.jsx.md));
+- `list_directory` recursive by default and the `describe_image` / `view_image` pair with its saved descriptions in `.ow/image-descriptions/` ([aiTools.js.md](src/lib/aiTools.js.md), [main.cjs.md](electron/main.cjs.md));
+- the attachments of a conversation named after the SHA-256 of their content and the clean-up of the orphan ones ([chat-store.cjs.md](electron/chat-store.cjs.md));
+- the aligned paragraph that holds nothing but a linked image ([textAlignExtension.js.md](src/lib/textAlignExtension.js.md)).
+
 ## Checks
 
 - Every page has an H1 equal to the module path and a `Source:` line linking the physical file.

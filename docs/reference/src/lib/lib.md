@@ -25,7 +25,7 @@ Non-React helpers used by the editor and the assistant.
 - [markdownSyntax.js](markdownSyntax.js.md) — Destination, text and title of links and images, written correctly
 - [markExtensions.js](markExtensions.js.md) — Safe writing of the Markdown marks and italic delimiters
 - [mathExtensions.js](mathExtensions.js.md) — LaTeX formulas (`$…$`, `$$…$$`) kept as written
-- [mcpRequests.js](mcpRequests.js.md) — Agent requests applied to the open editor
+- [mcpRequests.js](mcpRequests.js.md) — Agent requests applied to the open editor, and to the workspace (opening a document or a project, a task for the assistant)
 - [pathCompare.js](pathCompare.js.md) — Platform-aware path comparison in the interface
 - [pendingChangesExtension.js](pendingChangesExtension.js.md) — Assistant edits marked for review, with accept and reject
 - [preferences.js](preferences.js.md) — Interface preferences stored in the application data

@@ -2,7 +2,7 @@
 
 Source: [`src/components/McpSettings.jsx`](../../../../../src/components/McpSettings.jsx)
 
-Settings section for the MCP server ([mcp-server.cjs](../../../electron/mcp-server.cjs.md)): it explains what an external agent can do — read the project context, skills, notes, bookmarks and memory, search and read the documents (of the project, the linked ones and those open in OpenWriter), add notes, suggested changes and bookmarks, and change the documents open in the editor with the changes marked for the user to accept or reject; it never writes to the files — and lists the tool names.
+Settings section for the MCP server ([mcp-server.cjs](../../../electron/mcp-server.cjs.md)): it explains what an external agent can do — read the project context, skills, notes, bookmarks and memory, search and read the documents (of the project, the linked ones and those open in OpenWriter), open a project or a document in the application, add notes, suggested changes and bookmarks, hand a task to the built-in assistant, and change the documents open in the editor with the changes marked for the user to accept or reject (it never writes to the files) — and lists the read tools and the writing ones.
 
 A separate "Agent edits" box (preference `openwriter.mcpEdit`) turns the editor edits through the bridge ([mcp-bridge.cjs](../../../electron/mcp-bridge.cjs.md)) on and off at any time, without regenerating the client configuration.
 
