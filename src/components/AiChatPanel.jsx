@@ -1,5 +1,5 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { Brain, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Copy, CornerDownLeft, FileText, FolderOpen, GitBranch, Loader2, Paperclip, Pencil, Pin, Plus, RotateCcw, Send, Settings, Sparkles, Square, Trash2, Wand2, Wrench, X } from 'lucide-react'
+import { Brain, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Copy, CornerDownLeft, FileText, FolderOpen, GitBranch, Loader2, Paperclip, Pencil, Pin, Plus, Quote, RotateCcw, Send, Settings, Sparkles, Square, Trash2, Wand2, Wrench, X } from 'lucide-react'
 import MarkdownMessage from './MarkdownMessage.jsx'
 import { useDialogs } from './Dialogs.jsx'
 import { GenerateSkillDialog, SkillEditor } from './SkillsManager.jsx'
@@ -7,6 +7,7 @@ import ModelPicker from './ModelPicker.jsx'
 import { reasoningByProvider, toolLabels } from '../lib/aiOptions.js'
 import { formatDateTime, languageEnglishName } from '../i18n/index.js'
 import { quickActionsOf } from '../lib/quickActions.js'
+import { selectedText } from '../lib/selectionText.js'
 import { DEFAULT_MAX_TOOL_STEPS, TOOL_DEFINITIONS, createToolRunner, describeCall, parseToolCall, splitNextPrompt, toolAvailable, toolSchemas, toolsPrompt, visibleText } from '../lib/aiTools.js'
 import { t } from '../i18n/index.js'
 import { activeSkillIds, skillsPromptText } from '../lib/skills.js'
@@ -73,7 +74,7 @@ function userAttachmentParts(message, loaded) {
 
 // Titoli lunghi: nelle liste a discesa si abbreviano, il titolo completo resta nel tooltip.
 const ellipsize = (value, limit) => (value.length > limit ? `${value.slice(0, limit - 1).trimEnd()}…` : value)
-const blankConversation = () => ({ id: null, title: '', parentId: null, branchedAt: null, contextFrom: [], skillOverrides: { add: [], remove: [] }, messages: [] })
+const blankConversation = () => ({ id: null, title: '', parentId: null, branchedAt: null, contextFrom: [], skillOverrides: { add: [], remove: [] }, passages: [], messages: [] })
 const noSkills = { skills: [], defaults: [], problems: [], chain: [] }
 // Skill attive in una conversazione, come oggetti completi (istruzioni, esempi, azioni), nell'ordine di attivazione.
 const activeSkillsOf = (data, overrides) => {
@@ -148,11 +149,6 @@ function toModelMessages(messages, context, native, loaded = new Map()) {
     }
     return [{ role: message.role, content: message.content }]
   })
-}
-
-function selectedText(editor) {
-  const { from, to, empty } = editor.state.selection
-  return empty ? '' : editor.state.doc.textBetween(from, to, '\n\n')
 }
 
 const actionClass = 'flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-slate-800 hover:text-slate-200'
@@ -701,6 +697,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       parentId: current.id,
       branchedAt: index,
       contextFrom: current.contextFrom,
+      passages: current.passages || [],
       messages: current.messages.slice(0, index + 1),
     }
     setCurrent(await persist(branch))
@@ -792,6 +789,16 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     handledRequest.current = request.id
     // Consumata: altrimenti, rimontando il pannello (es. dopo le impostazioni), la stessa richiesta ripartirebbe da sola.
     onRequestHandled?.()
+    // Brano da discutere: entra nel contesto della conversazione e non parte nulla; la domanda la scrive l'utente.
+    if (request.passage) {
+      const passages = current.passages || []
+      if (!passages.some((item) => item.text === request.passage.text && item.filePath === request.passage.filePath)) {
+        const untitled = !current.title && !current.messages.length
+        updateConversation({ passages: [...passages, request.passage], ...(untitled ? { title: `“${ellipsize(request.passage.text.replace(/\s+/g, ' '), 50)}”` } : {}) })
+      }
+      composer.current?.focus()
+      return
+    }
     send(request.text || '', request.attachment, request.resume ? { resume: true } : {})
   })
 
@@ -959,9 +966,11 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       let limit = maxSteps
       for (let step = 0; ; step += 1) {
         // Documento e selezione sono riletti a ogni passaggio: dopo una modifica il modello vede il testo aggiornato.
-        const selection = editor ? selectedText(editor) : ''
+        // Con dei brani in discussione al modello vanno loro, non il documento attivo né la selezione (restano i documenti fissati a mano).
+        const passages = conversation.passages || []
+        const selection = editor && !passages.length ? selectedText(editor) : ''
         const documents = []
-        if (editor && (includeDocument || pinnedIds.includes(contextTab?.id))) documents.push({ title: contextTab?.title, text: abbreviateEmbeddedImages(editor.getMarkdown()) })
+        if (editor && ((includeDocument && !passages.length) || pinnedIds.includes(contextTab?.id))) documents.push({ title: contextTab?.title, text: abbreviateEmbeddedImages(editor.getMarkdown()) })
         for (const id of pinnedIds) {
           if (id === contextTab?.id) continue
           const text = toolBridge.documentMarkdown(id)
@@ -974,8 +983,11 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
           : `Document "${title}" (Markdown):\n"""\n${text.slice(0, perDocument)}\n"""`))
         // Se la scheda attiva è un'immagine, l'assistente lo sa e può guardarla con view_image.
         const imageTab = toolsOn.vision ? toolBridge.activeImagePath?.() : null
+        const passageBlocks = passages.map(({ text, title }) => `Passage under discussion${title ? ` from "${title}"` : ''} (as it was when the user attached it: the document may have changed since):\n"""\n${text}\n"""`)
+        if (passageBlocks.length) passageBlocks.push('The conversation is about the passage(s) above: the full document is not included. Read it with read_file only if you really need more context; to change a passage in the document use replace_text.')
         const context = [
           ...documentBlocks,
+          ...passageBlocks,
           selection && `Text selected by the user:\n"""\n${selection}\n"""`,
           imageTab && `The user has the image "${imageTab}" open in a tab: you can look at it with view_image (path "${imageTab}").`,
         ].filter(Boolean).join('\n\n')
@@ -1216,6 +1228,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     pendingAskRef.current?.({ answers: [], cancelled: true })
   }
 
+  const hasPassages = (current.passages || []).length > 0
   const attachable = conversations.filter((item) => item.id !== current.id && !current.contextFrom.includes(item.id))
   const titleOf = (id) => conversations.find((item) => item.id === id)?.title || t('Deleted conversation')
   const iconButton = 'rounded p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-50 disabled:opacity-40'
@@ -1353,12 +1366,24 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
                 <button key={`${skill.id}:${action.label}`} type="button" disabled={busy} title={`${skill.name}: ${action.prompt}`} className="flex items-center gap-1 rounded-full border border-accent-500/40 px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50" onClick={() => send(action.prompt)}><Wand2 size={11} className="text-accent-400" /> {action.label}</button>
               )))}
             </div>
+            {hasPassages && (
+              <div className="mb-2 flex flex-wrap gap-1" aria-label={t('Passages under discussion')}>
+                {current.passages.map((passage, index) => (
+                  <span key={`${index}:${passage.text.slice(0, 20)}`} className="flex max-w-full items-center gap-1 rounded-full border border-accent-500/50 bg-accent-500/10 py-0.5 pl-2 pr-1 text-xs text-slate-200" title={passage.title ? `${passage.title}\n\n${passage.text}` : passage.text}>
+                    <Quote size={11} className="shrink-0 text-accent-400" />
+                    <span className="truncate">{ellipsize(passage.text.replace(/\s+/g, ' '), 60)}</span>
+                    <button type="button" aria-label={t('Remove the passage')} title={t('Remove the passage')} disabled={busy} className="rounded-full p-0.5 text-slate-400 hover:bg-slate-700 hover:text-slate-50" onClick={() => updateConversation({ passages: current.passages.filter((_, item) => item !== index) })}><X size={11} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
             {openDocuments.length > 0 && (
               <div className="mb-2 flex flex-wrap gap-1" aria-label={t('Context documents')}>
                 {openDocuments.map((doc) => {
                   const active = doc.id === contextTab?.id
                   const pinned = pinnedIds.includes(doc.id)
-                  const automatic = active && includeDocument && !pinned
+                  // Con dei brani in discussione il documento attivo non entra da solo: si può comunque fissarlo.
+                  const automatic = active && includeDocument && !pinned && !hasPassages
                   const change = (changes) => onContextPinsChange({ ...contextPins, ...changes })
                   const pin = () => change({ pinnedIds: [...pinnedIds, doc.id] })
                   const unpin = () => change({ pinnedIds: pinnedIds.filter((id) => id !== doc.id) })
@@ -1385,7 +1410,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
                     )
                   }
                   return (
-                    <button key={doc.id} type="button" className="flex max-w-full items-center gap-1 rounded-full border border-dashed border-slate-700 px-2 py-0.5 text-xs text-slate-500 transition hover:border-accent-400 hover:text-slate-200" title={t('Add to the context')} onClick={() => (active ? change({ includeActive: true }) : pin())}>
+                    <button key={doc.id} type="button" className="flex max-w-full items-center gap-1 rounded-full border border-dashed border-slate-700 px-2 py-0.5 text-xs text-slate-500 transition hover:border-accent-400 hover:text-slate-200" title={t('Add to the context')} onClick={() => (active && !hasPassages ? change({ includeActive: true }) : pin())}>
                       <Pin size={11} className="shrink-0" />
                       <span className="truncate">{doc.title}</span>
                     </button>

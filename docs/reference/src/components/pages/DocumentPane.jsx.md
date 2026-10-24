@@ -12,7 +12,7 @@ The editor is configured with the content and content type of the tab (Markdown,
 - Assistant edits still on hold in an earlier session are restored as soon as the editor is ready; accepting or rejecting one is also saved to the session, so the review does not come back.
 - Markdown source view ([SourceEditor.jsx](SourceEditor.jsx.md)): the raw Markdown, applied to the editor after a pause in typing (and re-read when the document changes elsewhere, for instance through the assistant), with "Copy all"; notes, the assistant and find stay on the visual editor.
 - Find bar (`Ctrl+F` / `Ctrl+H` or the toolbar button) opens only in the active document, in find or replace mode, and receives the focus on each new request.
-- A banner above the editor counts the assistant edits still to review and offers "Accept all" and "Reject all"; [ChangeMarkers.jsx](ChangeMarkers.jsx.md) shows their position along the side, and [SelectionToolbar.jsx](SelectionToolbar.jsx.md) floats above the selection.
+- A banner above the editor counts the assistant edits still to review and offers "Accept all" and "Reject all"; [ChangeMarkers.jsx](ChangeMarkers.jsx.md) shows their position along the side, and [SelectionToolbar.jsx](SelectionToolbar.jsx.md) floats above the selection (its "discuss with AI" buttons pass the passage, with the tab title and path, to `onDiscuss`).
 - The toolbar also runs the AI-likelihood check and shows its result (`tab.aiScore`).
 
 A pinned tab whose document was closed shows `ClosedDocumentPane` instead: an icon, the title, the source path, and the button that reopens it.

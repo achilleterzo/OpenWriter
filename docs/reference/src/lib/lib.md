@@ -34,6 +34,7 @@ Non-React helpers used by the editor and the assistant.
 - [rawMarkdownExtensions.js](rawMarkdownExtensions.js.md) — Front matter and HTML kept as raw text through the round trip
 - [readerMode.js](readerMode.js.md) — Article extraction, reading view, and save as Markdown
 - [searchExtension.js](searchExtension.js.md) — Tiptap extension powering live find highlight and match counting
+- [selectionText.js](selectionText.js.md) — Text of the editor selection, blocks separated by a blank line
 - [skills.js](skills.js.md) — Writing skills: serialization, active skills, system-prompt block, AI generation prompts
 - [smartDashesExtension.js](smartDashesExtension.js.md) — Dashes and ellipsis typed in the editor
 - [textAlignExtension.js](textAlignExtension.js.md) — Text alignment saved as aligned HTML blocks
