@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { getMarkRange } from '@tiptap/core'
 import { useEditorState } from '@tiptap/react'
-import { Asterisk, Bold, Check, Code, ExternalLink, Image as ImageIcon, Italic, Link as LinkIcon, Pencil, Strikethrough, Trash2, Unlink, X } from 'lucide-react'
+import { Asterisk, Bold, Check, Code, ExternalLink, Image as ImageIcon, Italic, Link as LinkIcon, MessageSquarePlus, MessageSquareText, Pencil, Strikethrough, Trash2, Unlink, X } from 'lucide-react'
 import FloatingToolbar, { FloatingButton, FloatingDivider } from './FloatingToolbar.jsx'
 import { resolveDocumentLink } from '../lib/imagePaths.js'
+import { selectedText } from '../lib/selectionText.js'
 import { t } from '../i18n/index.js'
 
 const SETTLE_MS = 350
@@ -61,8 +62,10 @@ function useSettledSelection(editor) {
  * Barra fluttuante della selezione: appare quando la selezione si ferma. Con del testo selezionato offre grassetto, corsivo, barrato e codice
  * e il collegamento; dentro un collegamento mostra dove punta (modifica, apri, togli). Ctrl+K, o il pulsante della barra del documento
  * (`request` cambia a ogni richiesta), apre la modifica del collegamento anche a cursore vuoto, per inserirne uno nuovo.
+ * `onDiscuss(text, { newChat })`, se c'è (assistente attivo), aggiunge i pulsanti per discutere il testo selezionato con l'assistente,
+ * in una chat nuova o in quella aperta.
  */
-export default function SelectionToolbar({ editor, containerRef, request, documentPath, onOpenLink, onReplaceImage }) {
+export default function SelectionToolbar({ editor, containerRef, request, documentPath, onOpenLink, onReplaceImage, onDiscuss }) {
   const state = useEditorState({
     editor,
     selector: ({ editor: current }) => (current
@@ -279,7 +282,18 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
         </>
       )
       : <FloatingButton label={t('Add link (Ctrl+K)')} onClick={startEdit}><LinkIcon size={14} /></FloatingButton>
-    content = <>{formatting}{link}</>
+    const discuss = (newChat) => {
+      const text = selectedText(editor).trim()
+      if (text) onDiscuss(text, { newChat })
+    }
+    const ai = onDiscuss && !state.empty && (
+      <>
+        <FloatingDivider />
+        <FloatingButton label={t('Discuss with AI in a new chat')} onClick={() => discuss(true)}><MessageSquarePlus size={14} /></FloatingButton>
+        <FloatingButton label={t('Discuss with AI in the current chat')} onClick={() => discuss(false)}><MessageSquareText size={14} /></FloatingButton>
+      </>
+    )
+    content = <>{formatting}{link}{ai}</>
   }
 
   return <FloatingToolbar editor={editor} containerRef={containerRef} open={open} label={t('Selection')}>{content}</FloatingToolbar>

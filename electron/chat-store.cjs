@@ -7,17 +7,20 @@ const { writeFileAtomic } = require('./atomic-write.cjs')
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/
 const MAX_TITLE_CHARS = 200
 const MAX_MESSAGE_CHARS = 200000
+const MAX_PASSAGES = 10
+const MAX_PASSAGE_CHARS = 20000
 const SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,59}$/
 const tokenCount = (value) => (Number.isInteger(value) && value >= 0 ? value : 0)
 const skillIds = (value) => [...new Set((Array.isArray(value) ? value : []).filter((id) => typeof id === 'string' && SKILL_ID_PATTERN.test(id)))].slice(0, 50)
 
 /**
  * Le conversazioni con l'assistente vivono in `<progetto>/.ow/chat/<id>.json`:
- *   { id, title, createdAt, updatedAt, parentId, branchedAt, contextFrom: [id…], skillOverrides: { add: [id…], remove: [id…] }, messages: [{ role, content, at, error?, thinking?, name?, toolCall?, images?, files?, usage? }] }
+ *   { id, title, createdAt, updatedAt, parentId, branchedAt, contextFrom: [id…], skillOverrides: { add: [id…], remove: [id…] }, passages: [{ text, title, filePath }], messages: [{ role, content, at, error?, thinking?, name?, toolCall?, images?, files?, usage? }] }
  * `role` può essere 'tool': il risultato di uno strumento (`name`) chiamato dall'assistente (`toolCall` nel messaggio precedente).
  * `parentId` e `branchedAt` descrivono un ramo (indice dell'ultimo messaggio copiato dalla conversazione di origine);
  * `contextFrom` elenca altre conversazioni da fornire come contesto precedente; `skillOverrides` aggiunge o toglie skill di scrittura
- * rispetto a quelle attive di default nel progetto.
+ * rispetto a quelle attive di default nel progetto; `passages` sono brani del documento in discussione: se ci sono, al modello vanno
+ * loro al posto del documento intero.
  * Sono JSON leggibili: servono anche da log e possono essere versionati con il progetto.
  */
 function createChatStore({ getProjectPath }) {
@@ -51,6 +54,10 @@ function createChatStore({ getProjectPath }) {
       branchedAt: Number.isInteger(input.branchedAt) ? input.branchedAt : null,
       contextFrom: [...new Set((Array.isArray(input.contextFrom) ? input.contextFrom : []).map(optionalId).filter(Boolean))].filter((id) => id !== input.id),
       skillOverrides: { add: skillIds(input.skillOverrides?.add), remove: skillIds(input.skillOverrides?.remove) },
+      passages: (Array.isArray(input.passages) ? input.passages : [])
+        .filter((passage) => passage && typeof passage.text === 'string' && passage.text.trim())
+        .slice(0, MAX_PASSAGES)
+        .map((passage) => ({ text: text(passage.text, MAX_PASSAGE_CHARS), title: text(passage.title, MAX_TITLE_CHARS), filePath: typeof passage.filePath === 'string' ? passage.filePath : null })),
       messages: (Array.isArray(input.messages) ? input.messages : [])
         .filter((message) => message && ['user', 'assistant', 'tool'].includes(message.role))
         .map((message) => ({

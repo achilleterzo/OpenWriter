@@ -61,7 +61,7 @@ const DocumentLink = Link.configure({ openOnClick: false }).extend({
   },
 })
 
-function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onPendingRestored, onPendingChange, onNoteSelect, onBookmarkSelect, onStatus, onOpenLink, onSave }) {
+function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onPendingRestored, onPendingChange, onNoteSelect, onBookmarkSelect, onStatus, onOpenLink, onSave, onDiscuss }) {
   // Vista sorgente: il Markdown grezzo del documento in un campo di testo. È solo un modo di lavorare o copiare il testo:
   // note, assistente e ricerca restano sull'editor visuale, che si aggiorna man mano che si scrive.
   const [sourceOpen, setSourceOpen] = useState(false)
@@ -323,7 +323,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
           <EditorContent editor={editor} className="document-editor mx-auto" />
         </div>
         {!sourceOpen && <ChangeMarkers editor={editor} containerRef={editorArea} onSelectNote={onNoteSelect} />}
-        {!sourceOpen && <SelectionToolbar editor={editor} containerRef={editorArea} request={linkRequest} documentPath={tab.filePath || null} onOpenLink={onOpenLink} onReplaceImage={pickImage} />}
+        {!sourceOpen && <SelectionToolbar editor={editor} containerRef={editorArea} request={linkRequest} documentPath={tab.filePath || null} onOpenLink={onOpenLink} onReplaceImage={pickImage} onDiscuss={onDiscuss && ((text, options) => onDiscuss({ text, title: tab.title, filePath: tab.filePath || null }, options))} />}
       </div>
     </div>
   )
