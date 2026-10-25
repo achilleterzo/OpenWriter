@@ -29,6 +29,7 @@ import { relativeToProject } from './lib/aiTools.js'
 import { handleMcpRequest } from './lib/mcpRequests.js'
 import InfoPanel from './components/InfoPanel.jsx'
 import { isInsidePath, samePath } from './lib/pathCompare.js'
+import { selectedText } from './lib/selectionText.js'
 import { PANELS, clampWidth, fitLayout, loadLayout, maxWidthFor, saveLayout } from './lib/layout.js'
 import { AFTER_LANGUAGE_RELOAD_KEY, t } from './i18n/index.js'
 import { setProjectEditor, updateAppearance } from './appearance.js'
@@ -292,6 +293,21 @@ export default function App() {
       items.push({ label: t('Copy'), hint: `${modKey}C`, disabled: !info.flags.canCopy, onClick: () => electronAPI.editAction('copy') })
       if (info.isEditable) {
         items.push({ label: t('Paste'), hint: `${modKey}V`, disabled: !info.flags.canPaste, onClick: () => electronAPI.editAction('paste') }, { separator: true }, { label: t('Select all'), hint: `${modKey}A`, onClick: () => electronAPI.editAction('selectAll') })
+      }
+      // Clic destro su del testo selezionato nel documento: lo si può discutere con l'assistente, come dalla barra della selezione.
+      const { editors: openEditors, tabs: openTabs, activeId: currentId } = latest.current
+      const tab = openTabs.find((item) => item.id === currentId)
+      const editor = openEditors[currentId]
+      if (tab && editor && !editor.isDestroyed && editor.view.dom.contains(document.elementFromPoint(info.x, info.y))) {
+        const text = selectedText(editor).trim()
+        if (text) {
+          const passage = { text, title: tab.title, filePath: tab.filePath || null }
+          items.push(
+            { separator: true },
+            { label: t('Discuss with AI in a new chat'), onClick: () => discussPassage(passage, { newChat: true }) },
+            { label: t('Discuss with AI in the current chat'), onClick: () => discussPassage(passage, { newChat: false }) },
+          )
+        }
       }
       setContextMenu({ x: info.x, y: info.y, items })
     })
@@ -948,6 +964,12 @@ export default function App() {
     setSideTab('notes')
   }, [])
 
+  // Brano selezionato da discutere con l'assistente: entra nel contesto della chat (nuova o aperta) senza partire, la domanda la scrive l'utente.
+  const discussPassage = useCallback((passage, { newChat }) => {
+    setAssistantOpen(true)
+    setChatRequest({ id: Date.now(), passage, newChat })
+  }, [])
+
   useDocumentFileCommands({ activeTab, getEditor, workspace, onStatusChange: setStatus })
 
   const openFileRef = useRef(null)
@@ -1096,7 +1118,7 @@ export default function App() {
               ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab.id} onStatus={setStatus} onInteract={workspace.promoteTab} onNavigate={workspace.changeImage} />
               : tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
-              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} />))}
+              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />))}
           </section>
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>

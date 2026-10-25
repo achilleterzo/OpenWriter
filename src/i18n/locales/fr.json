@@ -1094,5 +1094,9 @@
   "Open notes": "Notes ouvertes",
   "less than a minute": "moins d’une minute",
   "{count} min": "{count} min",
-  "{hours} h {minutes} min": "{hours} h {minutes} min"
+  "{hours} h {minutes} min": "{hours} h {minutes} min",
+  "Discuss with AI in a new chat": "En discuter avec l'IA dans une nouvelle conversation",
+  "Discuss with AI in the current chat": "En discuter avec l'IA dans la conversation actuelle",
+  "Passages under discussion": "Passages en discussion",
+  "Remove the passage": "Retirer le passage"
 }
