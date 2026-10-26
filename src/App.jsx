@@ -304,6 +304,7 @@ export default function App() {
           const passage = { text, title: tab.title, filePath: tab.filePath || null }
           items.push(
             { separator: true },
+            { label: t('Search the web'), onClick: () => searchInBrowser(text) },
             { label: t('Discuss with AI in a new chat'), onClick: () => discussPassage(passage, { newChat: true }) },
             { label: t('Discuss with AI in the current chat'), onClick: () => discussPassage(passage, { newChat: false }) },
           )
@@ -511,6 +512,16 @@ export default function App() {
         setStatus(t('Could not open the file'))
       }
     },
+    // Salvataggio chiesto dall'utente: con modifiche dell'assistente ancora da rivedere chiede conferma e le accetta tutte, altrimenti resterebbero
+    // segnate "da rivedere" in un file già salvato. Annullando non si salva e non si accetta nulla.
+    async saveWithReview(id, options) {
+      const editor = latest.current.editors[id]
+      if (editor && !editor.isDestroyed && getPending(editor.state).length) {
+        if (!(await dialogsRef.current.confirm(t('This document has edits by the assistant still to review: saving accepts them all. Save and accept them?'), { confirmLabel: t('Save and accept all') }))) return false
+        acceptAll(editor)
+      }
+      return workspaceRef.current.saveTab(id, options)
+    },
     // Salva una scheda: se ha già un file lo sovrascrive, altrimenti (o con "salva con nome") chiede dove. Restituisce true se salvata.
     async saveTab(id, { saveAs = false } = {}) {
       const { tabs: currentTabs, editors: currentEditors } = latest.current
@@ -539,7 +550,7 @@ export default function App() {
           { value: 'cancel', label: t('Cancel') },
         ])
         if (!choice || choice === 'cancel') return
-        if (choice === 'save' && !(await workspaceRef.current.saveTab(id))) return
+        if (choice === 'save' && !(await workspaceRef.current.saveWithReview(id))) return
       }
       // Una scheda fissata con un file non sparisce: resta al suo posto senza documento, con il pulsante "Apri".
       if (tab.pinned && tab.sourcePath && !tab.closed) {
@@ -718,6 +729,11 @@ export default function App() {
       const editor = tab && currentEditors[tab.id]
       return editor ? { text: editor.getMarkdown(), dirty: tab.dirty } : null
     },
+    // Documenti aperti con modifiche non salvate, col testo dell'editor: la ricerca li usa al posto del file su disco, che è più vecchio.
+    getDirtyDocuments() {
+      const { tabs: currentTabs, editors: currentEditors } = latest.current
+      return currentTabs.filter((tab) => isLive(tab) && tab.dirty && tab.filePath && currentEditors[tab.id]).map((tab) => ({ path: tab.filePath, text: currentEditors[tab.id].getMarkdown() }))
+    },
     // Imagine che l'utente ha aperta nella scheda attiva (percorso relativo al progetto), se la scheda attiva è un'immagine.
     activeImagePath() {
       const { tabs: currentTabs, project: currentProject, activeId: currentActive } = latest.current
@@ -882,13 +898,28 @@ export default function App() {
           refreshNotes: () => setNotesVersion((value) => value + 1),
           openProject: (directory) => latest.current.openProject(directory),
           setStatus,
-          askAgent: ({ prompt, newChat }) => {
+          // La richiesta parte nella chat dell'assistente, firmata col nome dell'agente (messaggio riconoscibile come non scritto dall'utente);
+          // si risponde quando il messaggio è salvato, con l'id della chat e l'indice del messaggio.
+          askAgent: ({ prompt, newChat, agent }) => new Promise((resolve) => {
+            const timer = setTimeout(() => resolve('The request was sent but the assistant has not started yet (it is busy, or not configured in OpenWriter). It starts as soon as it is free: look for the chat with list_chats / read_chat.'), 60_000)
+            const onStarted = ({ conversationId: chatId, messageIndex }) => {
+              clearTimeout(timer)
+              resolve(JSON.stringify({ started: true, chatId: chatId || null, messageIndex, note: 'The assistant is working in the app in the background. Follow it with read_chat (id = chatId; from = messageIndex shows the request and what comes after) and list_chats: lastRole "assistant" means it has answered.' }, null, 2))
+            }
             setAssistantOpen(true)
-            setChatRequest({ id: Date.now(), text: prompt, newChat, attachment: { label: t('Request from an external agent (MCP)'), detail: 'This request was sent by an external coding agent through the OpenWriter MCP server. Carry it out with your tools, then reply with a short summary of what you did.' } })
-            return newChat
-              ? 'The request was sent to the OpenWriter assistant in a new chat. It runs in the app in the background (as soon as the assistant is free), and the user follows it there. Its result is not returned here.'
-              : 'The request was sent to the OpenWriter assistant in the current chat. It runs in the app in the background (as soon as the assistant is free), and the user follows it there. Its result is not returned here.'
-          },
+            setChatRequest({
+              id: Date.now(),
+              text: prompt,
+              newChat,
+              onStarted,
+              attachment: {
+                label: t('Request from {agent} (MCP)', { agent }),
+                detail: `This request was sent by an external coding agent (${agent}) through the OpenWriter MCP server, not written by the user. Carry it out with your tools, then reply with a short summary of what you did.`,
+                source: 'mcp',
+                agent,
+              },
+            })
+          }),
         })
         electronAPI.answerMcp(id, { ok: true, text })
       } catch (error) {
@@ -1001,10 +1032,21 @@ export default function App() {
     }
   }
 
+  // Ricerca sul web nel browser integrato (la scheda in primo piano o l'ultima usata, altrimenti una nuova): l'assistente può poi leggere la pagina e agire.
+  async function searchInBrowser(query) {
+    try {
+      const browser = await toolBridge.getBrowser({ create: true, activate: true })
+      const words = String(query).trim().replace(/\s+/g, ' ').slice(0, 300)
+      if (words) await browser.controller.open(`https://duckduckgo.com/?q=${encodeURIComponent(words)}`)
+    } catch (reason) {
+      setStatus(reason.message || String(reason))
+    }
+  }
   function openLink(target) {
     if (target.kind === 'anchor') goToFragment(null, target.fragment)
     else if (target.kind === 'file') openFromExplorer(target.path).then(() => goToFragment(target.path, target.fragment))
     else if (target.kind === 'external') electronAPI.openLink(target.url)
+    else if (target.kind === 'search') searchInBrowser(target.query)
     else if (target.kind === 'unresolved') setStatus(t('Save the document first to follow relative links'))
   }
   const workspaceRef = useRef(null)
@@ -1118,7 +1160,7 @@ export default function App() {
               ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab.id} onStatus={setStatus} onInteract={workspace.promoteTab} onNavigate={workspace.changeImage} />
               : tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
-              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />))}
+              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />))}
           </section>
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>
