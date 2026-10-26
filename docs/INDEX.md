@@ -86,7 +86,7 @@ History can compare a version with the current text, restore it, or delete it. B
 
 ## AI Assistant
 
-The assistant is available in a side panel and can work on the current selection or the entire document.
+The assistant is available in a side panel and can work on the current selection or the entire document. A selected passage can also be discussed on its own: the buttons of the selection bar, or the right-click menu, attach it to a new or the current conversation, and from then on the model receives the passage instead of the whole document.
 
 Quick actions (proofread, rewrite, summarize, lengthen, review) can be edited in Settings, and you can add your own; by default Review leaves its remarks as notes in the document. Conversations are saved in the project and can be renamed, deleted, or branched.
 
@@ -238,6 +238,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [readerMode.js.md](reference/src/lib/readerMode.js.md) ([readerMode.js](../src/lib/readerMode.js)) — Article extraction, reading view, save as Markdown
     - [searchExtension.js.md](reference/src/lib/searchExtension.js.md) ([searchExtension.js](../src/lib/searchExtension.js)) — Find and replace engine
     - [skills.js.md](reference/src/lib/skills.js.md) ([skills.js](../src/lib/skills.js)) — Writing skills helpers
+    - [selectionText.js.md](reference/src/lib/selectionText.js.md) ([selectionText.js](../src/lib/selectionText.js)) — Text of the editor selection
     - [smartDashesExtension.js.md](reference/src/lib/smartDashesExtension.js.md) ([smartDashesExtension.js](../src/lib/smartDashesExtension.js)) — Dashes and ellipsis typed in the editor
     - [textAlignExtension.js.md](reference/src/lib/textAlignExtension.js.md) ([textAlignExtension.js](../src/lib/textAlignExtension.js)) — Text alignment saved as aligned blocks
     - [updateSchedule.js.md](reference/src/lib/updateSchedule.js.md) ([updateSchedule.js](../src/lib/updateSchedule.js)) — When the app checks for a new version
