@@ -4,10 +4,11 @@ import { t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
 
-const TOOL_NAMES = 'project_info, read_project, get_context, list_skills, get_skill, list_documents, read_document, search_documents, list_notes, list_bookmarks, list_memory'
+const TOOL_NAMES = 'project_info, read_project, get_context, list_skills, get_skill, list_documents, read_document, search_files, list_notes, list_bookmarks, list_memory'
 const READ_EDITOR_TOOL = 'read_open_document'
-const WRITE_TOOL_NAMES = 'add_note, suggest_insertion, update_note, add_bookmark, update_bookmark, create_file, create_folder, replace_text, insert_text, replace_document'
+const WRITE_TOOL_NAMES = 'open_document, open_project, ask_agent, add_note, suggest_insertion, update_note, add_bookmark, update_bookmark, create_file, create_folder, replace_text, insert_text, replace_document'
 const EDIT_PREFERENCE = 'openwriter.mcpEdit'
+const HTTP_READ_ONLY_PREFERENCE = 'openwriter.mcpHttpReadOnly'
 
 // Virgolette per una riga di comando: i percorsi con spazi vanno racchiusi.
 const shell = (value) => (/[\s"\\]/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value)
@@ -53,6 +54,83 @@ function snippets({ command, args, env, platform }) {
 }
 
 /** Server MCP di OpenWriter: spiega cosa offre e dà la configurazione da copiare nel client dell'agente. */
+// Server MCP via HTTP, per i client che non possono avviare un processo: solo su questo computer (127.0.0.1), protetto da un token.
+function HttpServer() {
+  const [status, setStatus] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [readOnly, setReadOnly] = useState(() => electronAPI.preferences?.values?.[HTTP_READ_ONLY_PREFERENCE] === 'on')
+  const [copied, setCopied] = useState('')
+  const [showToken, setShowToken] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    electronAPI.getMcpHttp().then((value) => { if (!cancelled) setStatus(value) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  async function apply(request) {
+    setBusy(true)
+    try { setStatus(await electronAPI.setMcpHttp(request)) } catch (reason) { setStatus((current) => ({ ...current, running: false, error: reason.message })) } finally { setBusy(false) }
+  }
+
+  function changeReadOnly(value) {
+    setReadOnly(value)
+    electronAPI.preferences?.set(HTTP_READ_ONLY_PREFERENCE, value ? 'on' : 'off')
+    if (status?.running) apply({ enabled: true })
+  }
+
+  async function copy(id, value) {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(id)
+      setTimeout(() => setCopied(''), 1500)
+    } catch { /* senza appunti si può selezionare il testo a mano */ }
+  }
+
+  const snippets = status?.url ? [
+    { id: 'claude', label: 'Claude Code', text: `claude mcp add --scope user --transport http openwriter ${status.url} --header "Authorization: Bearer ${status.token}"` },
+    { id: 'json', label: t('Other clients (JSON)'), text: JSON.stringify({ mcpServers: { openwriter: { type: 'http', url: status.url, headers: { Authorization: `Bearer ${status.token}` } } } }, null, 2) },
+  ] : []
+
+  return (
+    <section className="grid grid-cols-1 gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+      <h2 className="text-lg font-semibold">{t('HTTP server')}</h2>
+      <p className="max-w-2xl text-sm leading-6 text-slate-400">{t('For agents that cannot start a program. The server listens only on this computer (127.0.0.1) and every request needs the token below. It works while OpenWriter is running.')}</p>
+      <label className="flex items-start gap-2 text-sm text-slate-300">
+        <input type="checkbox" className="mt-1" disabled={busy || !status} checked={Boolean(status?.running)} onChange={(event) => apply({ enabled: event.target.checked })} />
+        <span>{t('Turn on the HTTP server')}</span>
+      </label>
+      <label className="flex items-start gap-2 text-sm text-slate-300">
+        <input type="checkbox" className="mt-1" checked={readOnly} onChange={(event) => changeReadOnly(event.target.checked)} />
+        <span>{t('Read-only: the agent cannot add notes, suggestions or bookmarks')}</span>
+      </label>
+      {status?.error && <p className="text-sm text-red-400">{status.error}</p>}
+      {status?.running && (
+        <>
+          <p className="break-all font-mono text-xs text-slate-300">{status.url}</p>
+          <p className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+            <span className="break-all font-mono">{showToken ? status.token : '•'.repeat(24)}</span>
+            <button type="button" className="rounded px-2 py-0.5 hover:bg-slate-800" onClick={() => setShowToken((value) => !value)}>{showToken ? t('Hide') : t('Show')}</button>
+            <button type="button" className="rounded px-2 py-0.5 hover:bg-slate-800 disabled:opacity-50" disabled={busy} onClick={() => apply({ enabled: true, renewToken: true })}>{t('New token')}</button>
+          </p>
+          {snippets.map((item) => (
+            <div key={item.id} className="grid gap-1">
+              <p className="text-sm text-slate-400">{item.label}</p>
+              <div className="relative">
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-slate-800 bg-slate-950 p-3 pr-12 font-mono text-xs leading-5 text-slate-200">{showToken ? item.text : item.text.split(status.token).join('•'.repeat(12))}</pre>
+                <button type="button" aria-label={copied === item.id ? t('Copied') : t('Copy')} title={copied === item.id ? t('Copied') : t('Copy')} className="absolute right-2 top-2 rounded-md p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-slate-50" onClick={() => copy(item.id, item.text)}>
+                  {copied === item.id ? <Check size={15} /> : <Copy size={15} />}
+                </button>
+              </div>
+            </div>
+          ))}
+          <p className="text-xs text-slate-500">{t('The server follows the project open in OpenWriter. Anyone with the token can read your documents: do not share it.')}</p>
+        </>
+      )}
+    </section>
+  )
+}
+
 export default function McpSettings({ project }) {
   const [config, setConfig] = useState(null)
   const [pinProject, setPinProject] = useState(false)
@@ -134,6 +212,8 @@ export default function McpSettings({ project }) {
           </>
         )}
       </section>
+
+      <HttpServer />
     </div>
   )
 }

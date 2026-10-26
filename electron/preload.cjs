@@ -60,6 +60,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   answerDialog: (id, answer) => ipcRenderer.send('dialog:answer', id, answer),
   // Comando e argomenti per avviare il server MCP (sola lettura) da un client di agenti.
   getMcpConfig: () => ipcRenderer.invoke('mcp:get-config'),
+  getMcpHttp: () => ipcRenderer.invoke('mcp:http-status'),
+  setMcpHttp: (request) => ipcRenderer.invoke('mcp:http-set', request),
   // Richieste di modifica dal server MCP (un agente): l'interfaccia le esegue sull'editor e risponde con answerMcp.
   onMcpRequest: (callback) => {
     const listener = (_event, request) => callback(request)
@@ -96,6 +98,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteBookmark: (request) => ipcRenderer.invoke('bookmarks:delete', request),
   fetchImage: (url) => ipcRenderer.invoke('images:fetch', url),
   readImageFile: (path) => ipcRenderer.invoke('images:read-file', path),
+  searchFilesForAi: (args) => ipcRenderer.invoke('tools:search-files', args),
   readImageDescription: (path) => ipcRenderer.invoke('images:read-description', path),
   writeImageDescription: (path, description) => ipcRenderer.invoke('images:write-description', path, description),
   captureRect: (rect) => ipcRenderer.invoke('images:capture-page', rect),
@@ -196,7 +199,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
       const listener = (_event, payload) => { if (payload.requestId === requestId) onEvent(payload.event) }
       ipcRenderer.on('ai:stream', listener)
-      const promise = ipcRenderer.invoke('ai:chat-stream', { requestId, messages, tools: options.tools }).then((result) => {
+      const promise = ipcRenderer.invoke('ai:chat-stream', { requestId, messages, tools: options.tools, reasoningCap: options.reasoningCap }).then((result) => {
         if (result === null) throw new Error('Richiesta interrotta')
         return result
       }).finally(() => ipcRenderer.removeListener('ai:stream', listener))

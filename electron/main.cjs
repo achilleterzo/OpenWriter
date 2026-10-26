@@ -11,6 +11,8 @@ const { createProjectsStore } = require('./projects.cjs')
 const { createChatStore } = require('./chat-store.cjs')
 const { createMemoryStore } = require('./memory-store.cjs')
 const { createMcpBridge } = require('./mcp-bridge.cjs')
+const { createMcpHttp } = require('./mcp-http.cjs')
+const { formatSearch } = require('./project-search.cjs')
 const { isSameOrInside, samePath } = require('./path-compare.cjs')
 const { fetchLatestRelease } = require('./updates.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
@@ -888,13 +890,14 @@ ipcMain.handle('project:save-settings', (_event, settings) => {
   return saved
 })
 // Chat in streaming: gli eventi (testo, ragionamento, stato) arrivano al renderer man mano, e la richiesta si può interrompere.
-ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools }) => {
+ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools, reasoningCap }) => {
   const controller = new AbortController()
   aiRequests.set(requestId, controller)
   try {
     return await aiProviders.chatStream(messages, {
       signal: controller.signal,
       tools: Array.isArray(tools) ? tools : [],
+      reasoningCap: reasoningCap === 'low' || reasoningCap === 'instant' ? reasoningCap : null,
       onEvent: (payload) => { if (!event.sender.isDestroyed()) event.sender.send('ai:stream', { requestId, event: payload }) },
     })
   } catch (error) {
@@ -906,6 +909,13 @@ ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools }) =
   }
 })
 ipcMain.handle('ai:cancel', (_event, requestId) => { aiRequests.get(requestId)?.abort(); return true })
+// Ricerca nei file per l'assistente: vale anche per le cartelle di riferimento (`@sigla/…`), i cui percorsi tornano con il prefisso.
+ipcMain.handle('tools:search-files', async (_event, args = {}) => {
+  const { tools, relative, prefix } = toolsFor(String(args.path || ''))
+  const result = await tools.search({ ...args, path: relative || '.' })
+  if (prefix && result.results) result.results = result.results.map((entry) => ({ ...entry, path: withPrefix(prefix, entry.path) }))
+  return formatSearch(result)
+})
 // Gli strumenti di lettura valgono anche per le cartelle di riferimento: un percorso `@sigla/…` si legge dentro quella cartella (e solo lì).
 function toolsFor(given) {
   const reference = projectPath ? referencesStore.resolve(given) : null
@@ -918,12 +928,19 @@ ipcMain.handle('tools:list-directory', async (_event, relativePath, options = {}
   const { tools, relative, prefix } = toolsFor(relativePath)
   const result = await tools.listDirectory(relative, { sort: options?.sort === 'date' ? 'date' : 'name' })
   if (prefix) result.path = withPrefix(prefix, result.path)
-  else if (result.path === '.') { result.linked = linksStore.list(); result.references = referencesStore.list() }
+  else {
+    // Immagini con una descrizione salvata (describe_image): l'assistente, anche in un'altra chat, sa che può leggerla.
+    for (const entry of result.entries) {
+      if (entry.type !== 'file' || !/\.(png|jpe?g|gif|webp|bmp)$/i.test(entry.name)) continue
+      try { if (fsSync.existsSync(imageDescriptionFile(result.path === '.' ? entry.name : `${result.path}/${entry.name}`))) entry.described = true } catch { /* nome non valido */ }
+    }
+  }
+  if (!prefix && result.path === '.') { result.linked = linksStore.list(); result.references = referencesStore.list() }
   return result
 })
-ipcMain.handle('tools:read-file', async (_event, { path: relativePath, offset, limit } = {}) => {
+ipcMain.handle('tools:read-file', async (_event, { path: relativePath, offset, limit, startLine, endLine } = {}) => {
   const { tools, relative, prefix } = toolsFor(relativePath)
-  const result = await tools.readFile(relative, { offset, limit, absolute: !prefix && linksStore.has(relativePath) })
+  const result = await tools.readFile(relative, { offset, limit, startLine, endLine, absolute: !prefix && linksStore.has(relativePath) })
   if (prefix) result.path = withPrefix(prefix, result.path)
   return result
 })
@@ -1629,6 +1646,21 @@ const mcpBridge = createMcpBridge({
   isEnabled: () => loadPreferences()['openwriter.mcpEdit'] !== 'off',
 })
 ipcMain.on('mcp:response', (_event, id, payload) => mcpBridge.answer(id, payload))
+
+// Trasporto HTTP del server MCP (vedi mcp-http.cjs): spento di default, lo attiva l'utente dalle impostazioni. Preferenze: openwriter.mcpHttp = "on",
+// openwriter.mcpHttpReadOnly = "on" (senza strumenti di scrittura).
+const mcpHttp = createMcpHttp({ directory: app.getPath('userData'), serverPath: path.join(__dirname, 'mcp-server.cjs'), packaged: app.isPackaged, execPath: process.execPath })
+const startMcpHttp = (options = {}) => mcpHttp.start({ readOnly: loadPreferences()['openwriter.mcpHttpReadOnly'] === 'on', ...options })
+ipcMain.handle('mcp:http-status', () => mcpHttp.status())
+ipcMain.handle('mcp:http-set', async (_event, { enabled, renewToken } = {}) => {
+  const preferencesNow = loadPreferences()
+  if (enabled === false) { mcpHttp.stop(); preferencesNow['openwriter.mcpHttp'] = 'off'; flushPreferences(); return mcpHttp.status() }
+  preferencesNow['openwriter.mcpHttp'] = 'on'
+  flushPreferences()
+  return startMcpHttp({ renewToken: renewToken === true })
+})
+app.on('will-quit', () => mcpHttp.stop())
+if (loadPreferences()['openwriter.mcpHttp'] === 'on') app.whenReady().then(() => startMcpHttp()).catch((error) => console.error('Server MCP HTTP non avviato:', error.message))
 app.on('will-quit', () => mcpBridge.stop())
 
 // Il browser integrato mantiene i login dopo un riavvio. I cookie con scadenza li tiene già la partizione persistente; quelli "di sessione"
