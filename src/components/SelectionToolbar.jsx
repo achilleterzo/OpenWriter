@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getMarkRange } from '@tiptap/core'
 import { useEditorState } from '@tiptap/react'
-import { Asterisk, Bold, Check, Code, ExternalLink, Image as ImageIcon, Italic, Link as LinkIcon, MessageSquarePlus, MessageSquareText, Pencil, Strikethrough, Trash2, Unlink, X } from 'lucide-react'
+import { Asterisk, Bold, Check, Code, ExternalLink, Image as ImageIcon, Italic, Link as LinkIcon, MessageSquarePlus, MessageSquareText, Pencil, Search, Strikethrough, Trash2, Unlink, X } from 'lucide-react'
 import FloatingToolbar, { FloatingButton, FloatingDivider } from './FloatingToolbar.jsx'
 import { resolveDocumentLink } from '../lib/imagePaths.js'
 import { selectedText } from '../lib/selectionText.js'
@@ -282,15 +282,26 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
         </>
       )
       : <FloatingButton label={t('Add link (Ctrl+K)')} onClick={startEdit}><LinkIcon size={14} /></FloatingButton>
+    // Cerca sul web il testo selezionato: nel browser di OpenWriter, dove poi anche l'assistente può leggere la pagina e agire (vedi App.openLink).
+    const searchWeb = () => {
+      const query = selectedText(editor).trim().replace(/\s+/g, ' ').slice(0, 300)
+      if (query) onOpenLink?.({ kind: 'search', query })
+    }
     const discuss = (newChat) => {
       const text = selectedText(editor).trim()
       if (text) onDiscuss(text, { newChat })
     }
-    const ai = onDiscuss && !state.empty && (
+    // Ultimo blocco: la ricerca sul web, poi gli strumenti dell'assistente.
+    const ai = !state.empty && (onOpenLink || onDiscuss) && (
       <>
         <FloatingDivider />
+        {onOpenLink && <FloatingButton label={t('Search the web')} onClick={searchWeb}><Search size={14} /></FloatingButton>}
+        {onDiscuss && (
+          <>
         <FloatingButton label={t('Discuss with AI in a new chat')} onClick={() => discuss(true)}><MessageSquarePlus size={14} /></FloatingButton>
         <FloatingButton label={t('Discuss with AI in the current chat')} onClick={() => discuss(false)}><MessageSquareText size={14} /></FloatingButton>
+          </>
+        )}
       </>
     )
     content = <>{formatting}{link}{ai}</>

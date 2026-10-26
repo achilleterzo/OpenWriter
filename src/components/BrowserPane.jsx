@@ -129,6 +129,8 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
     }).then(() => sleep(SETTLE_MS))
 
     onRegister(tab.id, {
+      // Apertura chiesta dall'utente (per esempio "Cerca sul web" dal testo selezionato): non conta come navigazione dell'assistente nella cronologia.
+      open: async (target) => { await whenReady(); view.loadURL(target).catch(() => {}) },
       navigate: (target) => byAgent(async () => {
         await whenReady()
         await settle(() => view.loadURL(target).catch(() => {}))
