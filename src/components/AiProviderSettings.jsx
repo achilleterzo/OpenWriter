@@ -344,6 +344,15 @@ export default function AiProviderSettings() {
                 {[...new Set([5, 8, 10, 15, 20, 30, 50, settings.maxToolSteps])].sort((left, right) => left - right).map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
             </label>
+            <label className="flex items-start justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
+              <span>{t('Reasoning with the tools')}<span className="block text-xs text-slate-500">{t('After the result of a tool the plan is already made: reasoning less makes the work faster. The level set above applies to the first step of each request.')}</span>
+              </span>
+              <select className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-100 outline-none focus:border-accent-400" value={settings.toolReasoning || 'reduced'} onChange={(event) => persist({ ...settings, toolReasoning: event.target.value })}>
+                <option value="reduced">{t('Reduced')}</option>
+                <option value="none">{t('Off, where possible')}</option>
+                <option value="same">{t('Same as set')}</option>
+              </select>
+            </label>
             <div className="grid gap-2 border-t border-slate-800 pt-3 text-sm text-slate-300">
               <label className="flex items-start gap-2">
                 <input type="checkbox" className="mt-1 accent-accent-500" checked={Boolean(settings.autoContinue)} onChange={(event) => persist({ ...settings, autoContinue: event.target.checked })} />
