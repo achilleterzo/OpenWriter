@@ -1,6 +1,6 @@
 # src/App.jsx
 
-Source: [`src/App.jsx`](../../src/App.jsx)
+Source: [`src/App.jsx`](../../../src/App.jsx)
 
 Root component and workspace state holder: tabs, active document, project, side panel (`sideTab`), expanded folders, assistant panel, conversation, chat context pins, notes, bookmarks, find requests, context menu, layout, and the settings screen (opened by the app menu or after a language change).
 
@@ -12,7 +12,7 @@ Root component and workspace state holder: tabs, active document, project, side 
 - Note and bookmark integration: loads the notes and bookmarks of the context document, highlights them in the editor through the annotation and bookmark extensions, selects them (opening the corresponding side tab), and forwards "ask AI" requests from a note or a bookmark to the chat panel. A passage to discuss (from the selection bar, or from the right-click menu on text selected in the document, which adds "Discuss with AI in a new chat / in the current chat") opens the assistant and reaches the chat as a `passage` request.
 - The AI-likelihood check asked from the toolbar is kept per tab (`aiScore`), with the score, the confidence and the rationale.
 - Link handling: Ctrl+click opens project files in a tab, external links in the system browser, and explains unresolved relative links; a `#fragment` reaches the bookmark or the heading it names ([bookmarkLinks.js](lib/bookmarkLinks.js.md)).
-- External agents: the requests of the MCP server forwarded by the main process are run through [mcpRequests.js](lib/mcpRequests.js.md) and answered to the bridge. Besides the editor edits and `read_open_document`, this is where an agent opens a document in a tab (`open_document`), switches the application to another project (`open_project`, through the same project switching the app uses, which saves the current session first), and hands a task to the assistant (`ask_agent`, which opens the assistant panel and sends the prompt as a user request, in a new chat or in the current one, with a note saying it comes from an external agent).
+- External agents: the requests of the MCP server forwarded by the main process are run through [mcpRequests.js](lib/mcpRequests.js.md) and answered to the bridge. Besides the editor edits and `read_open_document`, this is where an agent opens a document in a tab (`open_document`), switches the application to another project (`open_project`, through the same project switching the app uses, which saves the current session first), and hands a task to the assistant (`ask_agent`, which opens the assistant panel and sends the prompt as a user request, in a new chat or in the current one, with a label naming the agent that sent it and the message marked as coming through MCP rather than from the user). The request resolves once the message is saved, answering with the chat id and the index of the message — the agent follows the work through the server's `list_chats` / `read_chat` — and after a minute without the assistant starting it says so.
 - Updates: the check can run at startup and then on a schedule chosen in the settings ([updateSchedule.js](lib/updateSchedule.js.md)), and a known release is reported by the update button of the rail.
 - Layout: left side panel and assistant panel widths are clamped and committed to `lib/layout.js`, with a status bar showing the project and last status message.
 

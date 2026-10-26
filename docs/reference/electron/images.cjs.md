@@ -1,6 +1,6 @@
 # electron/images.cjs
 
-Source: [`electron/images.cjs`](../../electron/images.cjs)
+Source: [`electron/images.cjs`](../../../electron/images.cjs)
 
 Image helper for the assistant conversations. Exposed functions: `fetchImage`, `prepareImage`, `prepareBuffer`, `assertPublicUrl`, `isPrivateAddress`, `MAX_DOWNLOAD_BYTES`.
 

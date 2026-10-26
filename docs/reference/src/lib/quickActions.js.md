@@ -1,7 +1,8 @@
 ---
+
 # quickActions.js
 
-Source: [`src/lib/quickActions.js`](../../../src/lib/quickActions.js)
+Source: [`src/lib/quickActions.js`](../../../../src/lib/quickActions.js)
 
 The chat quick actions (the pills above the message box). The default actions have a fixed id (`proofread`, `rewrite`, `summarize`, `lengthen`, `review`) and cannot be deleted, only edited and restored. Settings store only what the user changed (order, edited texts, own actions), so an untouched text follows the interface language and the application updates; `settings.quickActions` absent means all defaults.
 

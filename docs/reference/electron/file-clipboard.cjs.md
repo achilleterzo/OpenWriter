@@ -1,6 +1,6 @@
 # electron/file-clipboard.cjs
 
-Source: [`electron/file-clipboard.cjs`](../../electron/file-clipboard.cjs)
+Source: [`electron/file-clipboard.cjs`](../../../electron/file-clipboard.cjs)
 
 Files in the system clipboard: copy or cut in OpenWriter and paste in the file manager or in other programs, and the other way round. Every operation times out after 15 seconds.
 

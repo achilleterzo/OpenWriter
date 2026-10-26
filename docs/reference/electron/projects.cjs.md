@@ -1,6 +1,6 @@
 # electron/projects.cjs
 
-Source: [`electron/projects.cjs`](../../electron/projects.cjs)
+Source: [`electron/projects.cjs`](../../../electron/projects.cjs)
 
 Persistent list of known working directories (projects), stored by the main process in the Electron user data directory as `projects.json` as `[{ path, openedAt }]`, most recent first, capped at 100 entries.
 

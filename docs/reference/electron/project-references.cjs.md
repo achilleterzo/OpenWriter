@@ -1,6 +1,6 @@
 # electron/project-references.cjs
 
-Source: [`electron/project-references.cjs`](../../electron/project-references.cjs)
+Source: [`electron/project-references.cjs`](../../../electron/project-references.cjs)
 
 Reference folders of a project: folders outside the project, linked without being copied, which the assistant can only read. They are listed in `<project>/.ow/references.json` as `[{ name, path, addedAt }]`, up to 20.
 

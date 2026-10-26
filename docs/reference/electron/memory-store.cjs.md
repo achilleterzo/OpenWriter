@@ -2,7 +2,7 @@
 
 # electron/memory-store.cjs
 
-Source: [`electron/memory-store.cjs`](../../electron/memory-store.cjs)
+Source: [`electron/memory-store.cjs`](../../../electron/memory-store.cjs)
 
 Project memory persistence in `.ow/memory.json`.
 

@@ -1,6 +1,6 @@
 # electron/ai-providers.cjs
 
-Source: [`electron/ai-providers.cjs`](../../electron/ai-providers.cjs)
+Source: [`electron/ai-providers.cjs`](../../../electron/ai-providers.cjs)
 
 AI provider layer for six backends: Ollama, Ollama Cloud, OpenRouter, Codex CLI, Claude CLI, and Gemini.
 

@@ -1,12 +1,12 @@
 # aiTools.js
 
-Source: [`src/lib/aiTools.js`](../../../src/lib/aiTools.js)
+Source: [`src/lib/aiTools.js`](../../../../src/lib/aiTools.js)
 
 Renderer-side tool layer of the assistant: defines the tool catalog (`TOOL_DEFINITIONS`, grouped by `files`, `create`, `notes`, `memory`, `edit`, `web`, `vision`, `ask`), builds the tool prompts and function-calling schemas, parses tool calls, and executes them through `createToolRunner`.
 
 Tools implemented here:
 
-- Read: `list_directory` (recursive by default, one call returning the whole hierarchy below the folder with file dates; `recursive=false` for a single folder in name or date order, and `@name/…` for a reference folder), `read_file` (open documents are read from the live editor, including unsaved changes; disk files through the project tools), `list_versions`, `read_version`.
+- Read: `list_directory` (recursive by default, one call returning the whole hierarchy below the folder with file dates; `recursive=false` for a single folder in name or date order, and `@name/…` for a reference folder; an image with a saved description is marked as such, so the assistant knows it can read the description instead of looking at it), `read_file` (open documents are read from the live editor, including unsaved changes; disk files through the project tools), `list_versions`, `read_version`.
 - Create: `create_directory`, `create_file` (never overwrites; optional same-name allowance and `open` in a tab), `create_project` (only with no project open: creates the folder where the user chooses and links the open documents instead of copying them), `move_file`, `delete_file` (trash, with user confirmation dialog).
 - Notes: `add_note` (single or batched up to 20; suggestions anchored to exact quotes through the anchoring helpers), `set_ai_score` (the AI-likelihood result shown in the document toolbar), `list_notes` (status filter, all-project option), `update_note` (assistant-authored notes only; re-anchoring after text edits; a `resolution` explains a closure; only open/resolved status changes — accepting and rejecting stay with the user).
 - Bookmarks: `list_bookmarks` (also only the flagged ones), `add_bookmark` (a named anchor to link as `file.md#name`, with label, note and flag), `update_bookmark` (name, label, note, flag, re-anchoring), `remove_bookmark`.

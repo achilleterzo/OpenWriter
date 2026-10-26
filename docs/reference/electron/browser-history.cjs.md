@@ -1,6 +1,6 @@
 # electron/browser-history.cjs
 
-Source: [`electron/browser-history.cjs`](../../electron/browser-history.cjs)
+Source: [`electron/browser-history.cjs`](../../../electron/browser-history.cjs)
 
 History of the addresses visited in the built-in browser, one per project, in `.ow/browser-history.json` as `[{ url, title, visitedAt }]`, most recent first and one entry per address, up to 500.
 

@@ -1,6 +1,6 @@
 # annotationExtension.js
 
-Source: [`src/lib/annotationExtension.js`](../../../src/lib/annotationExtension.js)
+Source: [`src/lib/annotationExtension.js`](../../../../src/lib/annotationExtension.js)
 
 Tiptap extension (`Annotations`, plugin key `owAnnotations`) that renders anchored notes over the document as decorations, without modifying its text.
 

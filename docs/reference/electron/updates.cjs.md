@@ -1,7 +1,8 @@
 ---
+
 # electron/updates.cjs
 
-Source: [`electron/updates.cjs`](../../electron/updates.cjs)
+Source: [`electron/updates.cjs`](../../../electron/updates.cjs)
 
 Checks for a new version through the public GitHub releases of `achilleterzo/OpenWriter`. The application does not update itself: it opens the download page.
 

@@ -1,6 +1,6 @@
 # electron/project-file.cjs
 
-Source: [`electron/project-file.cjs`](../../electron/project-file.cjs)
+Source: [`electron/project-file.cjs`](../../../electron/project-file.cjs)
 
 Owns the `.ow` project directory (format version 1). Its layout:
 

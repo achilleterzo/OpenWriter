@@ -1,6 +1,6 @@
 # electron/mcp-bridge.cjs
 
-Source: [`electron/mcp-bridge.cjs`](../../electron/mcp-bridge.cjs)
+Source: [`electron/mcp-bridge.cjs`](../../../electron/mcp-bridge.cjs)
 
 The bridge between the MCP server ([mcp-server.cjs](mcp-server.cjs.md), another process started by the agent) and the running application: it is what lets an agent change the documents open in the editor, so that the changes arrive as edits to review (accept/reject) instead of touching the file, and what lets it open a project or a document in the application or hand a task to the built-in assistant.
 

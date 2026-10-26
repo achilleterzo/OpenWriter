@@ -1,6 +1,6 @@
 # electron/atomic-write.cjs
 
-Source: [`electron/atomic-write.cjs`](../../electron/atomic-write.cjs)
+Source: [`electron/atomic-write.cjs`](../../../electron/atomic-write.cjs)
 
 `writeFileAtomic(file, content)`: the content goes first to `<file>.tmp` and then replaces the file, so a crash halfway does not leave a truncated file. It is the write used by the stores in `.ow`.
 

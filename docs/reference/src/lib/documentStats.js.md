@@ -1,6 +1,6 @@
 # documentStats.js
 
-Source: [`src/lib/documentStats.js`](../../../src/lib/documentStats.js)
+Source: [`src/lib/documentStats.js`](../../../../src/lib/documentStats.js)
 
 The statistics of a document, for the [Info panel](../components/pages/InfoPanel.jsx.md). Words and sentences are counted with `Intl.Segmenter`, which knows the rules of the language (the apostrophe of "l'anno", hyphens, abbreviations), not by splitting on spaces.
 
@@ -9,3 +9,4 @@ The statistics of a document, for the [Info panel](../components/pages/InfoPanel
 - `sentenceTextOf(doc)`: only the paragraphs and list items, without headings, tables, code, formulas and footnote definitions.
 - `structureOf(doc)`: headings, paragraphs, list items, tables, images, links (a link that crosses several pieces of text counts once), code blocks, footnotes and formulas.
 - `durationParts(minutes)`: a duration as `short` (under a minute), minutes, or hours and minutes, to be translated by the caller.
+

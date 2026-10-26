@@ -1,7 +1,8 @@
 ---
+
 # keepSelectionExtension.js
 
-Source: [`src/lib/keepSelectionExtension.js`](../../../src/lib/keepSelectionExtension.js)
+Source: [`src/lib/keepSelectionExtension.js`](../../../../src/lib/keepSelectionExtension.js)
 
 Tiptap extension (`KeepSelection`) that keeps the selection visible when the editor loses focus, for instance while writing a note or using the toolbar or the chat. Without it the browser selection disappears, even though it is still in the editor state.
 

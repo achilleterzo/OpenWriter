@@ -1,6 +1,6 @@
 # textAlignExtension.js
 
-Source: [`src/lib/textAlignExtension.js`](../../../src/lib/textAlignExtension.js)
+Source: [`src/lib/textAlignExtension.js`](../../../../src/lib/textAlignExtension.js)
 
 Text alignment (left, centre, right, justified) for paragraphs and headings. Markdown has no syntax for it, so it is saved in the form GitHub and many other renderers understand, an HTML block with empty lines around it, so the text inside stays Markdown (bold, links…):
 

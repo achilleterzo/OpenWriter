@@ -1,6 +1,6 @@
 # electron/project-tools.cjs
 
-Source: [`electron/project-tools.cjs`](../../electron/project-tools.cjs)
+Source: [`electron/project-tools.cjs`](../../../electron/project-tools.cjs)
 
 File tools used by the AI assistant (and by the MCP server). Every path is resolved against the project root, and `.ow`, `.git` and `node_modules` are excluded everywhere (any path segment), with errors for paths outside the project or inside excluded directories. A path starting with `@` is a reference folder, which is read-only and cannot be opened as a project path.
 

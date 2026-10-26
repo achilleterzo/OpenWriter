@@ -1,6 +1,6 @@
 # electron/skills-store.cjs
 
-Source: [`electron/skills-store.cjs`](../../electron/skills-store.cjs)
+Source: [`electron/skills-store.cjs`](../../../electron/skills-store.cjs)
 
 Writing skills: reusable packs of style, tone of voice and rules given to the assistant. Each skill is one Markdown file, editable by hand.
 
