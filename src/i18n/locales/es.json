@@ -1039,6 +1039,7 @@
   "Always use this project, whatever the folder the agent starts in": "Usar siempre este proyecto, sea cual sea la carpeta donde arranque el agente",
   "Client": "Cliente",
   "Run in a terminal:": "Ejecuta en una terminal:",
+  "Run in a terminal (if you installed Claude Code with npm and PowerShell does not pass the options, use claude.cmd instead of claude):": "Ejecútalo en un terminal (si instalaste Claude Code con npm y PowerShell no pasa las opciones, usa claude.cmd en lugar de claude):",
   "Add to {file}:": "Añade a {file}:",
   "Other clients (JSON)": "Otros clientes (JSON)",
   "The usual \"mcpServers\" format (Claude Desktop, Cursor, Windsurf…). VS Code and PhpStorm use the same fields under \"servers\" in .vscode/mcp.json or in the MCP settings.": "El formato \"mcpServers\" habitual (Claude Desktop, Cursor, Windsurf…). VS Code y PhpStorm usan los mismos campos bajo \"servers\" en .vscode/mcp.json o en los ajustes de MCP.",

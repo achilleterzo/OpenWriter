@@ -20,10 +20,11 @@ function snippets({ command, args, env, platform }) {
     {
       id: 'claude-code',
       label: 'Claude Code',
-      where: t('Run in a terminal:'),
-      // `--env` accetta più valori e inghiottirebbe il nome: va dopo il nome e prima di `--`. Su Windows, in PowerShell `claude` è uno script (claude.ps1) che perde il `--`
-      // e fa scambiare i flag del server (es. --data) per opzioni sue: `claude.cmd` li passa intatti.
-      text: [platform === 'win32' ? 'claude.cmd' : 'claude', 'mcp add --transport stdio openwriter', ...envEntries.map(([key, value]) => `--env ${key}=${value}`), '--', shell(command), ...args.map(shell)].join(' '),
+      where: platform === 'win32' ? t('Run in a terminal (if you installed Claude Code with npm and PowerShell does not pass the options, use claude.cmd instead of claude):') : t('Run in a terminal:'),
+      // `--scope user`: senza, Claude Code registra il server solo per la cartella in cui si lancia il comando (scope "local") e altrove non compare.
+      // `--env` accetta più valori e inghiottirebbe il nome: va dopo il nome e prima di `--`. Con l'installazione nativa `claude` è un eseguibile (claude.exe) e funziona in ogni shell; con npm, in PowerShell,
+      // è uno script (claude.ps1) che perde il `--` e fa scambiare i flag del server (es. --data) per opzioni sue: lì serve `claude.cmd`, che non esiste con l'installazione nativa.
+      text: ['claude', 'mcp add --scope user --transport stdio openwriter', ...envEntries.map(([key, value]) => `--env ${key}=${value}`), '--', shell(command), ...args.map(shell)].join(' '),
     },
     {
       id: 'codex',
