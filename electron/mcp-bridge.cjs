@@ -13,7 +13,7 @@ const { samePath } = require('./path-compare.cjs')
  * Il server MCP legge quel file e chiama POST /call con il token. Ogni richiesta passa all'interfaccia (renderer), che esegue lo strumento
  * sull'editor e risponde. Si accettano solo gli strumenti elencati in ALLOWED e solo per il progetto aperto nell'app.
  */
-const ALLOWED = new Set(['read_open_document', 'replace_text', 'insert_text', 'replace_document', 'open_document', 'open_project', 'ask_agent'])
+const ALLOWED = new Set(['read_open_document', 'replace_text', 'insert_text', 'replace_document', 'open_document', 'open_project', 'ask_agent', 'dirty_documents'])
 // Strumenti che non dipendono dal progetto aperto nell'app (anzi, lo cambiano).
 const ANY_PROJECT = new Set(['open_project'])
 const MAX_BODY_BYTES = 8 * 1024 * 1024

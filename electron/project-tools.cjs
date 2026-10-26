@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
+const { searchFiles } = require('./project-search.cjs')
 
 const EXCLUDED_NAMES = new Set(['.ow', '.git', 'node_modules'])
 const BINARY_DOCUMENT_EXTENSIONS = new Set(['.docx', '.pdf'])
@@ -67,7 +68,8 @@ function createProjectTools({ getProjectPath, readDocument }) {
   }
 
   // `absolute`: il percorso è quello (assoluto) di un documento collegato al progetto, già verificato dal chiamante.
-  async function readFile(relativePath, { offset = 0, limit = DEFAULT_READ_CHARS, absolute = false } = {}) {
+  // `startLine`/`endLine` (da 1, estremi inclusi, numerazione delle ricerche) leggono solo quelle righe: con la sola `startLine` ne seguono 50.
+  async function readFile(relativePath, { offset = 0, limit = DEFAULT_READ_CHARS, absolute = false, startLine, endLine } = {}) {
     const { target, relative } = absolute ? { target: path.resolve(String(relativePath)), relative: path.resolve(String(relativePath)) } : resolveInside(relativePath)
     const stats = await fs.promises.stat(target).catch(() => null)
     if (!stats) throw new Error(t('File not found: {path}', { path: relative }))
@@ -82,6 +84,18 @@ function createProjectTools({ getProjectPath, readDocument }) {
       const buffer = await fs.promises.readFile(target)
       if (buffer.includes(0)) throw new Error(t('The file is binary and cannot be read as text'))
       text = buffer.toString('utf8')
+    }
+
+    const firstLine = Number.parseInt(startLine, 10)
+    if (firstLine > 0) {
+      const lines = text.split(/\r?\n/)
+      const from = Math.min(firstLine, lines.length)
+      const last = Number.parseInt(endLine, 10)
+      const to = Math.min(lines.length, last >= from ? last : from + 49)
+      let content = lines.slice(from - 1, to).join('\n')
+      let stop = to
+      if (content.length > MAX_READ_CHARS) { content = content.slice(0, MAX_READ_CHARS); stop = from + content.split('\n').length - 1 }
+      return { path: relative, totalChars: text.length, totalLines: lines.length, startLine: from, endLine: stop, content, truncated: stop < lines.length, nextLine: stop < lines.length ? stop + 1 : null }
     }
 
     const start = Math.max(0, Number.parseInt(offset, 10) || 0)
@@ -155,7 +169,13 @@ function createProjectTools({ getProjectPath, readDocument }) {
   // Percorso assoluto di un file/cartella del progetto (con gli stessi divieti degli altri strumenti).
   const resolvePath = (relativePath) => resolveInside(relativePath)
 
-  return { listDirectory, readFile, readImage, createDirectory, createFile, resolvePath }
+  // Ricerca di testo o regex nei file (vedi project-search.cjs), dentro una cartella del progetto.
+  async function search(options = {}) {
+    const { target } = resolveInside(options.path || '.')
+    return searchFiles({ ...options, root: getProjectPath(), start: target })
+  }
+
+  return { listDirectory, readFile, readImage, createDirectory, createFile, resolvePath, search }
 }
 
 module.exports = { createProjectTools }
