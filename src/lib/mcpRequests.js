@@ -43,11 +43,13 @@ export async function handleMcpRequest({ tool, args = {} }, { api, toolBridge, p
     return `Project ${opened} is now open in OpenWriter.`
   }
   if (!project) throw new Error('No project is open in OpenWriter')
+  // Testo non salvato dei documenti aperti, per la ricerca del server MCP.
+  if (tool === 'dirty_documents') return JSON.stringify(toolBridge.getDirtyDocuments())
   // Una richiesta all'assistente di OpenWriter: parte in una chat dell'app, in parallelo al lavoro dell'agente che l'ha inviata.
   if (tool === 'ask_agent') {
     const prompt = String(args.prompt ?? '').trim()
     if (!prompt) throw new Error('Missing parameter "prompt"')
-    return askAgent({ prompt, newChat: !(args.newChat === false || args.newChat === 'false') })
+    return askAgent({ prompt, newChat: !(args.newChat === false || args.newChat === 'false'), agent: String(args.agent ?? '').trim().slice(0, 60) || 'an external agent' })
   }
   const given = String(args.path ?? '').trim()
   // Aprire un documento è l'unico modo per un agente di portare nell'area di lavoro un file fuori dal progetto: l'utente lo vede aprirsi in una scheda.
