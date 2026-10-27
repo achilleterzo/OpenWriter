@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useState } from 'react'
-import { FolderOpen, FolderPlus, Settings, X } from 'lucide-react'
+import { FolderOpen, Settings, X } from 'lucide-react'
 import { ContextMenuContext } from './ContextMenu.jsx'
 import { ProjectAvatar } from './ProjectIcon.jsx'
 import ProjectSettingsDialog from './ProjectSettingsDialog.jsx'
@@ -9,33 +9,12 @@ import { samePath } from '../lib/pathCompare.js'
 const electronAPI = window.electronAPI
 const revealLabel = /Win/.test(navigator.platform) ? t('Show in File Explorer') : /Mac/.test(navigator.platform) ? t('Reveal in Finder') : t('Show in file manager')
 
-const fieldClass = 'w-full rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-accent-400'
 const buttonClass = 'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs transition'
 
-/** Home: elenco dei progetti conosciuti, apertura di una cartella esistente e creazione di un nuovo progetto. */
-const languages = ['Italiano', 'English', 'Español', 'Français', 'Deutsch', 'Português']
-
-// Cambia la lingua dei documenti del progetto aperto, lasciando intatte le altre impostazioni.
-async function saveDocumentLanguage(documentLanguage) {
-  const current = await electronAPI.getProjectSettings()
-  await electronAPI.saveProjectSettings({ name: current.name, ai: { context: current.ai.context, language: current.ai.language, documentLanguage }, options: current.options, spellcheck: current.spellcheck })
-}
-
-function LanguageSelect({ id, value, onChange }) {
-  return (
-    <select id={id} value={value} className={fieldClass} onChange={(event) => onChange(event.target.value)}>
-      <option value="">{t('Same as the reply language')}</option>
-      {[...new Set([...languages, value].filter(Boolean))].map((language) => <option key={language} value={language}>{language}</option>)}
-    </select>
-  )
-}
-
-export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onChoose, onCreate, onSettingsChanged }) {
+/** Home: elenco dei progetti conosciuti e apertura di una cartella (se è nuova, diventa un progetto). */
+export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onChoose, onSettingsChanged }) {
   const [projects, setProjects] = useState([])
-  const [creating, setCreating] = useState(false)
-  const [name, setName] = useState('')
   const [error, setError] = useState('')
-  const [newLanguage, setNewLanguage] = useState('')
   const [settingsFor, setSettingsFor] = useState(null)
   const openMenu = useContext(ContextMenuContext)
 
@@ -50,15 +29,6 @@ export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onC
     setError('')
     try { await action() } catch (reason) { setError(reason.message) }
   }
-
-  const create = () => run(async () => {
-    const created = await onCreate(name.trim())
-    if (created) {
-      if (newLanguage) { await saveDocumentLanguage(newLanguage); onSettingsChanged?.() }
-      setCreating(false)
-      setName('')
-    }
-  })
 
   const remove = (item) => run(async () => setProjects(await electronAPI.removeProject(item.path)))
 
@@ -89,23 +59,8 @@ export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onC
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-wrap gap-1.5 px-3 pb-2">
-        <button type="button" className={`${buttonClass} bg-accent-600 text-white hover:bg-accent-500`} onClick={() => { setCreating(true); setError('') }}><FolderPlus size={14} /> {t('New project…')}</button>
-        <button type="button" className={`${buttonClass} bg-slate-800 text-slate-200 hover:bg-slate-700`} onClick={() => run(onChoose)}><FolderOpen size={14} /> {t('Open folder')}</button>
+        <button type="button" className={`${buttonClass} bg-accent-600 text-white hover:bg-accent-500`} onClick={() => run(onChoose)}><FolderOpen size={14} /> {t('Open folder')}</button>
       </div>
-
-      {creating && (
-        <form className="grid gap-1.5 px-3 pb-3" onSubmit={(event) => { event.preventDefault(); if (name.trim()) create() }}>
-          <label className="text-xs text-slate-400" htmlFor="new-project-name">{t('Project name')}</label>
-          <input id="new-project-name" autoFocus value={name} maxLength={120} className={fieldClass} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') setCreating(false) }} />
-          <label className="text-xs text-slate-400" htmlFor="new-project-language">{t('Language of the documents in this project')}</label>
-          <LanguageSelect id="new-project-language" value={newLanguage} onChange={setNewLanguage} />
-          <p className="text-xs text-slate-500">{t('You will choose where to create the folder.')}</p>
-          <div className="flex gap-1.5">
-            <button type="submit" disabled={!name.trim()} className={`${buttonClass} bg-accent-600 text-white hover:bg-accent-500 disabled:opacity-50`}>{t('Create')}</button>
-            <button type="button" className={`${buttonClass} text-slate-400 hover:bg-slate-800 hover:text-slate-50`} onClick={() => setCreating(false)}>{t('Cancel')}</button>
-          </div>
-        </form>
-      )}
 
       {error && <p className="px-3 pb-2 text-xs text-rose-400">{error}</p>}
 

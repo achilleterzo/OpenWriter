@@ -407,6 +407,8 @@ export default function App() {
   const chooseProject = useCallback(() => switchProject(() => electronAPI.chooseProject()), [switchProject])
   const openProject = useCallback((directory) => switchProject(() => electronAPI.openProject(directory)), [switchProject])
   openProjectRef.current = openProject
+  // Scegliendo un progetto dal pannello Progetti si passa subito ai suoi file (se la scelta è annullata non cambia nulla).
+  const showFiles = (picking) => picking.then((chosen) => { if (chosen) setSideTab('files'); return chosen })
   const createProject = useCallback((name) => switchProject(() => electronAPI.createProject(name)), [switchProject])
 
   // Nuova versione: controllo all'avvio (e a richiesta dalla finestra Informazioni), confronto con la versione in uso.
@@ -1309,7 +1311,7 @@ export default function App() {
           <aside style={{ width: widths.left }} className="relative flex shrink-0 flex-col border-r border-slate-800 bg-slate-900/60">
             <PanelResizer side="left" label={t('Side panel width')} width={widths.left} min={PANELS.left.min} max={maxWidthFor('left', resizeContext('left'))} defaultWidth={PANELS.left.default} onChange={resizePanel('left')} onCommit={commitLayout} />
             <h2 className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{sideTabs.find((item) => item.id === sideTab)?.label}</h2>
-            {sideTab === 'projects' && <ProjectsPanel project={project} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onOpen={openProject} onChoose={chooseProject} onCreate={createProject} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
+            {sideTab === 'projects' && <ProjectsPanel project={project} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onOpen={(directory) => showFiles(openProject(directory))} onChoose={() => showFiles(chooseProject())} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
             {sideTab === 'files' && (
               <FileExplorer project={project} activePath={activeTab?.kind === 'image' ? activeTab.imagePath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />
             )}
