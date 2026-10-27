@@ -30,7 +30,7 @@ export default function useDocumentFileCommands({ activeTab, getEditor, workspac
         }
 
         if (command === 'export-docx') {
-          if (await electronAPI.exportDocx(exportableHtml(editor.getHTML()))) onStatusChange(t('DOCX exported'))
+          if (await electronAPI.exportDocx(exportableHtml(editor.getHTML()), { documentPath: activeTab.filePath || activeTab.sourcePath || null, name: activeTab.title })) onStatusChange(t('DOCX exported'))
         }
 
         if (command === 'export-markdown-embedded') {
@@ -48,7 +48,7 @@ export default function useDocumentFileCommands({ activeTab, getEditor, workspac
         }
 
         if (command === 'export-pdf') {
-          if (await electronAPI.exportPdf(exportableHtml(editor.getHTML()))) onStatusChange(t('PDF exported'))
+          if (await electronAPI.exportPdf(exportableHtml(editor.getHTML()), { documentPath: activeTab.filePath || activeTab.sourcePath || null, name: activeTab.title })) onStatusChange(t('PDF exported'))
         }
       } catch (error) {
         console.error(error)

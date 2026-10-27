@@ -172,9 +172,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   extractMarkdownImages: (request) => ipcRenderer.invoke('document:extract-markdown-images', request),
   exportMarkdownEmbedded: (request) => ipcRenderer.invoke('document:export-markdown-embedded', request),
-  exportDocx: (html) => ipcRenderer.invoke('document:export-docx', { html }),
+  exportDocx: (html, options) => ipcRenderer.invoke('document:export-docx', { html, ...options }),
   printDocument: (html) => ipcRenderer.invoke('document:print', { html }),
-  exportPdf: (html) => ipcRenderer.invoke('document:export-pdf', { html }),
+  exportPdf: (html, options) => ipcRenderer.invoke('document:export-pdf', { html, ...options }),
   skills: {
     list: (request) => ipcRenderer.invoke('skills:list', request),
     get: (request) => ipcRenderer.invoke('skills:get', request),

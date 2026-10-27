@@ -567,6 +567,13 @@ async function listDirectory(directory) {
     .sort((left, right) => Number(right.isDirectory) - Number(left.isDirectory) || left.name.localeCompare(right.name, 'it', { sensitivity: 'base' }))
 }
 
+// Percorso iniziale di una finestra di scelta: un nome nella cartella del documento (se si conosce) o, altrimenti, in quella del progetto aperto. Senza un percorso
+// il sistema riparte dall'ultima cartella usata, che può essere quella di un altro progetto.
+function startingPath(name, documentPath) {
+  const directory = documentPath && path.isAbsolute(String(documentPath)) ? path.dirname(String(documentPath)) : projectPath || app.getPath('documents')
+  return path.join(directory, name)
+}
+
 async function chooseSavePath({ filePath, saveAs, filters, defaultPath }) {
   if (filePath && !saveAs) return filePath
 
@@ -823,6 +830,7 @@ const pendingSetups = new Map()
 ipcMain.handle('projects:import-setup-choose', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: t('Import a project setup'),
+    defaultPath: projectPath || undefined,
     properties: ['openFile'],
     filters: [{ name: t('OpenWriter project setup'), extensions: ['json'] }],
   })
@@ -892,7 +900,7 @@ ipcMain.handle('skills:delete', (_event, request) => skillsStore.remove(request 
 ipcMain.handle('skills:parse', (_event, markdown) => skillsStore.parse(markdown))
 // Skill da un file Markdown con le direttive: si legge e si interpreta, il salvataggio avviene dopo la revisione nell'editor.
 ipcMain.handle('skills:import-file', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }] })
+  const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openFile'], filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }] })
   if (result.canceled || !result.filePaths[0]) return null
   const file = result.filePaths[0]
   const stat = await fs.stat(file)
@@ -1067,7 +1075,7 @@ async function readChatAttachment(filePath) {
 ipcMain.handle('chat:pick-attachments', async (_event, { images: allowImages = false, pdf = false } = {}) => {
   const extensions = [...(allowImages ? CHAT_IMAGE_EXTENSIONS : []), ...(pdf ? ['pdf'] : [])]
   if (!extensions.length) return []
-  const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile', 'multiSelections'], filters: [{ name: t('Attachments'), extensions }] })
+  const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openFile', 'multiSelections'], filters: [{ name: t('Attachments'), extensions }] })
   return result.canceled ? [] : result.filePaths
 })
 ipcMain.handle('chat:read-attachment', (_event, filePath) => readChatAttachment(filePath))
@@ -1441,7 +1449,7 @@ ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, sa
     filePath,
     saveAs,
     // `defaultName` (es. il titolo di un articolo salvato dal browser): propone quel nome nella cartella del progetto.
-    defaultPath: defaultName ? path.join(projectPath || '', `${path.basename(String(defaultName))}.md`) : `${t('New document')}.md`,
+    defaultPath: startingPath(`${defaultName ? path.basename(String(defaultName)) : t('New document')}.md`),
     filters: [markdownFilter],
   })
   if (!targetPath) return null
@@ -1456,9 +1464,11 @@ ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, sa
   }
   return markdownPath
 })
-ipcMain.handle('document:export-docx', async (_event, { html }) => {
+// Nome proposto per un'esportazione: il titolo del documento (senza estensione né caratteri non ammessi), o "Nuovo documento".
+const exportName = (name) => String(name || '').replace(/\.[^.]*$/, '').replace(/[\\/:*?"<>|\r\n]+/g, ' ').trim() || t('New document')
+ipcMain.handle('document:export-docx', async (_event, { html, documentPath, name }) => {
   const targetPath = await chooseSavePath({
-    defaultPath: `${t('New document')}.docx`,
+    defaultPath: startingPath(`${exportName(name)}.docx`, documentPath),
     filters: [{ name: 'Word', extensions: ['docx'] }],
   })
   if (!targetPath) return null
@@ -1473,7 +1483,7 @@ ipcMain.handle('document:export-docx', async (_event, { html }) => {
 ipcMain.handle('document:export-markdown-embedded', async (_event, { markdown, documentPath, name } = {}) => {
   const base = String(name || '').replace(/\.[^.]*$/, '').replace(/[\\/:*?"<>|\r\n]+/g, ' ').trim() || t('New document')
   const targetPath = await chooseSavePath({
-    defaultPath: documentPath ? path.join(path.dirname(documentPath), `${base} (embedded).md`) : `${base} (embedded).md`,
+    defaultPath: startingPath(`${base} (embedded).md`, documentPath),
     filters: [markdownFilter],
   })
   if (!targetPath) return null
@@ -1506,9 +1516,9 @@ ipcMain.handle('document:extract-markdown-images', async (_event, { source, dire
   return { path: markdownPath, count: result.count, bytes: result.bytes }
 })
 ipcMain.handle('document:print', (_event, { html }) => printDocument(String(html || '')))
-ipcMain.handle('document:export-pdf', async (_event, { html }) => {
+ipcMain.handle('document:export-pdf', async (_event, { html, documentPath, name }) => {
   const targetPath = await chooseSavePath({
-    defaultPath: `${t('New document')}.pdf`,
+    defaultPath: startingPath(`${exportName(name)}.pdf`, documentPath),
     filters: [{ name: 'PDF', extensions: ['pdf'] }],
   })
   if (!targetPath) return null
