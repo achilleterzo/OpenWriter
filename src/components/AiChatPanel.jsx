@@ -4,6 +4,7 @@ import MarkdownMessage from './MarkdownMessage.jsx'
 import { useDialogs } from './Dialogs.jsx'
 import { GenerateSkillDialog, SkillEditor } from './SkillsManager.jsx'
 import ModelPicker from './ModelPicker.jsx'
+import { runResearch } from '../lib/researchAgent.js'
 import { reasoningByProvider, toolLabels } from '../lib/aiOptions.js'
 import { formatDateTime, languageEnglishName } from '../i18n/index.js'
 import { quickActionsOf } from '../lib/quickActions.js'
@@ -21,9 +22,12 @@ const MAX_PREVIOUS_CHARS = 12000
 const MAX_TOOL_DISPLAY_CHARS = 3000
 // Al modello si rinviano solo le immagini più recenti: le altre pesano molti token e di solito non servono più.
 const MAX_MODEL_IMAGES = 4
-// Potatura dei risultati degli strumenti nel contesto del modello: oltre agli ultimi KEEP_TOOL_RESULTS, i risultati lunghi si riducono all'inizio
-// (la chiamata che li ha prodotti resta visibile). Nella chat si vedono sempre per intero: cambia solo ciò che si rimanda al modello a ogni richiesta.
-const KEEP_TOOL_RESULTS = 8
+// Potatura dei risultati degli strumenti nel contesto del modello: si tengono interi i più recenti, finché stanno in KEEP_TOOL_CHARS caratteri (e comunque
+// gli ultimi KEEP_TOOL_RESULTS); gli altri, se lunghi, si riducono all'inizio (la chiamata che li ha prodotti resta visibile). Un budget a caratteri e non un numero
+// fisso: durante un'indagine il modello non ha altra memoria di ciò che ha letto (il ragionamento non si rinvia) e, potato, rilegge. Nella chat si vedono sempre
+// per intero: cambia solo ciò che si rimanda al modello a ogni richiesta.
+const KEEP_TOOL_RESULTS = 4
+const KEEP_TOOL_CHARS = 80000
 const PRUNE_MIN_CHARS = 1500
 const PRUNED_HEAD_CHARS = 500
 const pruneToolResult = (content) => `${content.slice(0, PRUNED_HEAD_CHARS)}
@@ -130,7 +134,16 @@ function transcriptOf(conversation) {
 function toModelMessages(messages, context, native, loaded = new Map()) {
   const usable = messages.filter((message) => !(message.error && message.role === 'assistant'))
   const lastUser = usable.map((message) => message.role).lastIndexOf('user')
-  const recentTools = new Set(usable.flatMap((message, position) => (message.role === 'tool' && message.name !== 'ask_choice' ? [position] : [])).slice(-KEEP_TOOL_RESULTS))
+  // Dai più recenti, finché il budget lo permette: questi restano interi.
+  const recentTools = new Set()
+  let budget = KEEP_TOOL_CHARS
+  for (let position = usable.length - 1; position >= 0; position -= 1) {
+    const message = usable[position]
+    if (message.role !== 'tool' || message.name === 'ask_choice') continue
+    if (recentTools.size >= KEEP_TOOL_RESULTS && message.content.length > budget) continue
+    recentTools.add(position)
+    budget -= message.content.length
+  }
   return usable.flatMap((message, index) => {
     if (message.role === 'tool') {
       const entries = message.images || []
@@ -997,6 +1010,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       vision: Boolean(toolSettings.vision && capabilities?.vision && project),
       ask: Boolean(toolSettings.ask && project),
       memory: Boolean(toolSettings.memory && project),
+      // Assistente di ricerca (altro modello, chiamato come strumento): acceso e con un modello scelto nelle impostazioni.
+      research: Boolean(settings.researcher?.enabled && settings.researcher.model && project && !loose),
     }
     const anyTool = Object.values(toolsOn).some(Boolean)
     // Strumenti spenti dall'utente nelle impostazioni: il modello lo sa e può chiedere di attivarli.
@@ -1033,6 +1048,19 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       captureDocument: (path) => toolBridge.captureDocument(path),
       captureBrowser: (tab) => toolBridge.captureBrowser(tab),
       askUser,
+      // L'assistente di ricerca lavora a parte (altro modello, soli strumenti di lettura) e restituisce un rapporto breve.
+      research: ({ question, scope }) => runResearch({
+        question,
+        scope,
+        settings,
+        api,
+        chat: ai,
+        project,
+        toolBridge,
+        onStatus: (status) => { liveRef.current = { text: '', thinking: '', status }; scheduleLive() },
+        register: (cancel) => { runRef.current.cancel = cancel },
+        isCancelled: () => runRef.current.cancelled,
+      }),
       createProject: (request) => toolBridge.createProject(request),
       setAiScore: (tab, data) => toolBridge.setAiScore(tab, data),
       onProjectCreated: (created) => { handoff = created },
@@ -1126,11 +1154,15 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
             if (!reply.reply.trim()) reply = await streamReply([...modelMessages, { role: 'user', content: 'Your reply was empty. Reply now, or use a tool.' }], streamOptions)
             // Se il modello parla degli strumenti (ne cita il nome) invece di usarli, si richiama una volta: confronto sui nomi tecnici, non sul testo in lingua.
             if (anyTool && reply.reply.trim() && !parseToolCall(reply.reply)) {
-              const mentioned = TOOL_DEFINITIONS.some((tool) => toolAvailable(tool, toolsOn) && reply.reply.includes(tool.name))
+              // Una risposta lunga che cita uno strumento è una risposta vera (la documentazione parla spesso degli strumenti), non un'intenzione non eseguita.
+              const mentioned = reply.reply.trim().length < 1500 && TOOL_DEFINITIONS.some((tool) => toolAvailable(tool, toolsOn) && reply.reply.includes(tool.name))
               // Dopo il risultato di uno strumento una risposta molto breve senza chiamata è quasi sempre un abbandono prematuro: si richiama una volta.
               const prematureStop = conversation.messages.at(-1)?.role === 'tool' && reply.reply.trim().length < 600
               if (mentioned || prematureStop) {
-                reply = await streamReply([...modelMessages, { role: 'assistant', content: reply.reply }, { role: 'user', content: 'The OpenWriter tools ARE available and working right now: never say otherwise. If the task is not finished, write the <tool_call> block for the next step now. If it is finished, reply with a short summary of what was done, without mentioning tool names.' }], streamOptions, t('The reply looked incomplete: asking again…'))
+                const retry = await streamReply([...modelMessages, { role: 'assistant', content: reply.reply }, { role: 'user', content: 'The OpenWriter tools ARE available and working right now: never say otherwise. If the task is not finished, write the <tool_call> block for the next step now. If it is finished, reply with a short summary of what was done, without mentioning tool names.' }], streamOptions, t('The reply looked incomplete: asking again…'))
+                // La prima risposta si sostituisce solo se il richiamo porta davvero a una chiamata di strumento: altrimenti resta quella, che era la risposta
+                // del modello (prima veniva scartata, e a volte sostituita da una vuota o peggiore: la risposta "spariva").
+                if (retry.reply.trim() && parseToolCall(retry.reply)) reply = retry
               }
             }
             return reply
