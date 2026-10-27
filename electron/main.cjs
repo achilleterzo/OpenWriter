@@ -28,6 +28,7 @@ const { createReferencesStore } = require('./project-references.cjs')
 const projectPack = require('./project-pack.cjs')
 const { createBookmarksStore } = require('./bookmarks-store.cjs')
 const { embedImages } = require('./markdown-embed.cjs')
+const { extractImages } = require('./markdown-extract.cjs')
 const fileClipboard = require('./file-clipboard.cjs')
 const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-links.cjs')
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
@@ -38,6 +39,29 @@ const { t, setLocale, getLocale } = require('./i18n.cjs')
 
 const isDevelopment = !app.isPackaged
 let mainWindow
+
+// Errori e avvisi del processo principale (anche quelli che Electron stampa per un comando IPC fallito): oltre che nel terminale, arrivano alla finestra come
+// notifiche (canale `app:notice`, vedi src/lib/toasts.js). Un errore di un comando diventa "motivo" + comando nel dettaglio.
+const NOTICE_IGNORED = [/^\(node:\d+\)/, /ExperimentalWarning|DeprecationWarning/, /Electron Security Warning/i, /Autofill\./, /Request Autofill/]
+let forwarding = false
+function forwardNotice(level, args) {
+  if (forwarding || !mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+  forwarding = true
+  try {
+    const lines = require('node:util').format(...args).split('\n').map((line) => line.trim()).filter(Boolean)
+    if (!lines.length || NOTICE_IGNORED.some((pattern) => pattern.test(lines[0]))) return
+    const handler = /^Error occurred in handler for '([^']+)':\s*(?:Error:\s*)?(.*)$/.exec(lines[0])
+    const message = (handler ? handler[2] || lines[0] : lines[0]).slice(0, 300)
+    const detail = [handler ? `(${handler[1]})` : '', ...lines.slice(1, 7)].filter(Boolean).join('\n')
+    mainWindow.webContents.send('app:notice', { level, message, detail })
+  } catch { /* le notifiche non devono mai far fallire il resto */ } finally { forwarding = false }
+}
+for (const [method, level] of [['error', 'error'], ['warn', 'warning']]) {
+  const original = console[method].bind(console)
+  console[method] = (...args) => { original(...args); forwardNotice(level, args) }
+}
+// Solo osservare (non cambia il comportamento di Electron davanti a un errore non gestito).
+process.on('uncaughtExceptionMonitor', (error) => { forwardNotice('error', [error?.message || String(error)]) })
 // Le immagini dei documenti (percorsi relativi al documento) si mostrano tramite ow-file://: solo file immagine, in sola lettura.
 protocol.registerSchemesAsPrivileged([{ scheme: 'ow-file', privileges: { standard: true, secure: true } }])
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
@@ -1188,7 +1212,7 @@ ipcMain.handle('tools:move-path', async (_event, { from, to } = {}) => {
   return { from: source.target, to: destination.target, path: destination.relative }
 })
 ipcMain.handle('tools:create-directory', (_event, relativePath) => projectTools.createDirectory(relativePath))
-ipcMain.handle('tools:create-file', (_event, { path: relativePath, content, allowSameName } = {}) => projectTools.createFile(relativePath, content, { allowSameName: allowSameName === true }))
+ipcMain.handle('tools:create-file', (_event, { path: relativePath, content } = {}) => projectTools.createFile(relativePath, content))
 // Dal file manager: nuova cartella o nuovo documento Markdown vuoto dentro `parent`; restituisce il percorso assoluto creato.
 ipcMain.handle('workspace:create-entry', async (_event, { parent, name, type } = {}) => {
   const base = resolveInProject(parent)
@@ -1199,7 +1223,7 @@ ipcMain.handle('workspace:create-entry', async (_event, { parent, name, type } =
   const final = directory || path.extname(clean) ? relative : `${relative}.md`
   if (fsSync.existsSync(path.join(projectPath, final))) throw new Error(t('An item with this name already exists'))
   // Dall'albero il nome lo sceglie l'utente: lo stesso nome in un'altra cartella è lecito (README.md, index.md…); il controllo sui doppioni vale per l'assistente.
-  return (directory ? await projectTools.createDirectory(final) : await projectTools.createFile(final, '', { allowSameName: true })).absolute
+  return (directory ? await projectTools.createDirectory(final) : await projectTools.createFile(final, '')).absolute
 })
 ipcMain.handle('app:open-link', (_event, url) => (/^https?:\/\//i.test(String(url)) ? shell.openExternal(String(url)) : false))
 ipcMain.handle('images:pick', async () => {
@@ -1440,6 +1464,29 @@ ipcMain.handle('document:export-markdown-embedded', async (_event, { markdown, d
   const result = embedImages(String(markdown || ''), documentPath ? String(documentPath) : null)
   await fs.writeFile(markdownPath, result.markdown, 'utf8')
   return { path: markdownPath, embedded: result.embedded, missing: result.missing.length, tooLarge: result.tooLarge.length, remote: result.remote }
+})
+// L'inverso: da un Markdown con le immagini incorporate si ricava un .md leggero e le immagini in images/ accanto. Si lavora sul file su disco (anche decine
+// di MB), senza passare dall'editor; il file originale non cambia. `source`: il file da convertire (altrimenti si sceglie).
+ipcMain.handle('document:extract-markdown-images', async (_event, { source, directory } = {}) => {
+  let file = source ? String(source) : null
+  if (!file) {
+    const picked = await dialog.showOpenDialog(mainWindow, { title: t('Markdown file with embedded images'), defaultPath: directory || projectPath || undefined, properties: ['openFile'], filters: [markdownFilter] })
+    if (picked.canceled || !picked.filePaths[0]) return null
+    file = picked.filePaths[0]
+  }
+  const base = path.basename(file).replace(/\.[^.]*$/, '')
+  const text = await fs.readFile(file, 'utf8')
+  if (!/data:image\/(png|jpe?g|gif|webp|bmp);base64,/i.test(text)) return { path: null, count: 0 }
+  const targetPath = await chooseSavePath({ defaultPath: path.join(path.dirname(file), `${base} (linked images).md`), filters: [markdownFilter] })
+  if (!targetPath) return null
+  const markdownPath = /\.(md|markdown|mdown)$/i.test(targetPath) ? targetPath : `${targetPath}.md`
+  if (path.resolve(markdownPath).toLowerCase() === path.resolve(file).toLowerCase()) throw new Error(t('Choose a different file: the original is not modified'))
+  // Il lavoro blocca questo processo per un po': prima si avvisa la finestra (che ha un processo suo) perché mostri l'attesa.
+  mainWindow.webContents.send('document:extract-markdown-images-start', { name: path.basename(file), size: (text.length / 1048576).toFixed(1) })
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  const result = extractImages(text, { directory: path.join(path.dirname(markdownPath), 'images'), stem: base })
+  await fs.writeFile(markdownPath, result.markdown, 'utf8')
+  return { path: markdownPath, count: result.count, bytes: result.bytes }
 })
 ipcMain.handle('document:print', (_event, { html }) => printDocument(String(html || '')))
 ipcMain.handle('document:export-pdf', async (_event, { html }) => {

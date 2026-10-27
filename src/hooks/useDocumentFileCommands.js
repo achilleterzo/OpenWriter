@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { t } from '../i18n/index.js'
+import { exportableHtml } from '../lib/exportHtml.js'
 
 const electronAPI = window.electronAPI
 
@@ -15,9 +16,11 @@ export default function useDocumentFileCommands({ activeTab, getEditor, workspac
         if (command === 'close-tab') return activeTab && workspace.closeTab(activeTab.id)
         if (command === 'open') {
           const document = await electronAPI.openDocument()
-          if (document) workspace.openDocument(document)
+          if (document) await workspace.openLoaded(document)
           return undefined
         }
+
+        if (command === 'extract-markdown-images') return workspace.extractImages(null, activeTab?.filePath || activeTab?.sourcePath || null)
 
         const editor = activeTab && getEditor(activeTab.id)
         if (!editor) return undefined
@@ -27,7 +30,7 @@ export default function useDocumentFileCommands({ activeTab, getEditor, workspac
         }
 
         if (command === 'export-docx') {
-          if (await electronAPI.exportDocx(editor.getHTML())) onStatusChange(t('DOCX exported'))
+          if (await electronAPI.exportDocx(exportableHtml(editor.getHTML()))) onStatusChange(t('DOCX exported'))
         }
 
         if (command === 'export-markdown-embedded') {
@@ -41,11 +44,11 @@ export default function useDocumentFileCommands({ activeTab, getEditor, workspac
         }
 
         if (command === 'print') {
-          await electronAPI.printDocument(editor.getHTML())
+          await electronAPI.printDocument(exportableHtml(editor.getHTML()))
         }
 
         if (command === 'export-pdf') {
-          if (await electronAPI.exportPdf(editor.getHTML())) onStatusChange(t('PDF exported'))
+          if (await electronAPI.exportPdf(exportableHtml(editor.getHTML()))) onStatusChange(t('PDF exported'))
         }
       } catch (error) {
         console.error(error)

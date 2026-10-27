@@ -164,6 +164,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   chooseProject: () => ipcRenderer.invoke('workspace:choose-project'),
   listDirectory: (directory) => ipcRenderer.invoke('workspace:list-directory', directory),
   saveMarkdown: (payload) => ipcRenderer.invoke('document:save-markdown', payload),
+  onExtractMarkdownImagesStart: (callback) => {
+    const listener = (_event, info) => callback(info)
+    ipcRenderer.on('document:extract-markdown-images-start', listener)
+    return () => ipcRenderer.removeListener('document:extract-markdown-images-start', listener)
+  },
+  extractMarkdownImages: (request) => ipcRenderer.invoke('document:extract-markdown-images', request),
   exportMarkdownEmbedded: (request) => ipcRenderer.invoke('document:export-markdown-embedded', request),
   exportDocx: (html) => ipcRenderer.invoke('document:export-docx', { html }),
   printDocument: (html) => ipcRenderer.invoke('document:print', { html }),
@@ -209,6 +215,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // Documenti aperti dal sistema: quelli arrivati prima che il renderer fosse pronto, poi quelli successivi.
   takeExternalDocuments: () => ipcRenderer.invoke('document:take-external'),
+  // Errori e avvisi del processo principale, da mostrare come notifiche: { level, message, detail }.
+  onAppNotice: (callback) => {
+    const listener = (_event, notice) => callback(notice)
+    ipcRenderer.on('app:notice', listener)
+    return () => ipcRenderer.removeListener('app:notice', listener)
+  },
   onExternalDocument: (callback) => {
     const listener = (_event, document) => callback(document)
     ipcRenderer.on('document:external', listener)

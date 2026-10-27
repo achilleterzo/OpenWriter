@@ -18,6 +18,9 @@ import AboutDialog from './components/AboutDialog.jsx'
 import { useDialogs } from './components/Dialogs.jsx'
 import { acceptAll, getPending, serializePending } from './lib/pendingChangesExtension.js'
 import OutlinePanel from './components/OutlinePanel.jsx'
+import AnchorsPanel from './components/AnchorsPanel.jsx'
+import ToastHost from './components/ToastHost.jsx'
+import { notify } from './lib/toasts.js'
 import PanelResizer from './components/PanelResizer.jsx'
 import SettingsScreen from './components/SettingsScreen.jsx'
 import TabBar from './components/TabBar.jsx'
@@ -62,6 +65,8 @@ let untitledCounter = 0
 // Un Markdown molto grande non si apre nell'editor: costruire il documento (e tutto ciò che lo segue a ogni modifica) per decine di MB blocca l'app per minuti.
 // Si apre come anteprima in sola lettura, con l'inizio del testo; l'avviso sopra il documento permette di aprirlo comunque per intero.
 const LARGE_DOCUMENT_CHARS = 1_500_000
+// Da qui in su l'apertura nell'editor si nota: si mostra il riquadro di attesa.
+const HEAVY_DOCUMENT_CHARS = 150_000
 const PREVIEW_CHARS = 400_000
 
 // L'inizio del testo, tagliato a fine paragrafo (e chiudendo un eventuale blocco di codice rimasto aperto).
@@ -168,7 +173,7 @@ export default function App() {
   // Documenti nel contesto della chat: il documento attivo (di default sì) e gli altri aperti, "pinnati" per id di scheda.
   const [contextPins, setContextPins] = useState({ includeActive: true, pinnedIds: [] })
   const [chatRequest, setChatRequest] = useState(null)
-  // Apertura di un file molto grande in corso: { title, chars } (vedi workspace.openFull).
+  // Operazione lunga in corso (apertura o conversione di un file molto grande): il testo da mostrare nel riquadro di attesa.
   const [largeLoading, setLargeLoading] = useState(null)
   const [conversationId, setConversationId] = useState(null)
   const [settingsVersion, setSettingsVersion] = useState(0)
@@ -524,7 +529,7 @@ export default function App() {
     async openFull(id) {
       const tab = latest.current.tabs.find((item) => item.id === id)
       if (!tab?.largeFile || !tab.sourcePath) return
-      setLargeLoading({ title: tab.title, chars: tab.largeFile.chars })
+      setLargeLoading(t('Opening “{title}” ({size} MB)… the application may not respond for a while.', { title: tab.title, size: (tab.largeFile.chars / 1048576).toFixed(1) }))
       await sleep(80)
       try {
         let document
@@ -535,6 +540,35 @@ export default function App() {
         setStatus(t('Could not open the file'))
       } finally {
         setTimeout(() => setLargeLoading(null), 0)
+      }
+    },
+    // Apre un documento già letto: se è grande, costruire l'editor blocca l'interfaccia per un po', quindi prima si mostra il riquadro di attesa e si lascia
+    // dipingere (due fotogrammi) prima di cominciare; il riquadro sparisce quando l'editor è montato.
+    async openLoaded(document, options) {
+      const heavy = String(document?.content ?? '').length > HEAVY_DOCUMENT_CHARS
+      if (heavy) {
+        setLargeLoading(t('Opening “{name}”…', { name: document.title || baseName(document.filePath || document.sourcePath || '') }))
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      }
+      try { workspaceRef.current.openDocument(document, options) } finally { if (heavy) setTimeout(() => setLargeLoading(null), 0) }
+    },
+    // Estrae le immagini incorporate di un file Markdown in file collegati (anche molto grande: si lavora sul disco, senza editor) e apre il risultato.
+    async extractImages(source = null, near = null) {
+      // Il main avvisa quando, scelti i file, parte la conversione vera (prima ci sono solo le finestre di scelta).
+      const stop = electronAPI.onExtractMarkdownImagesStart?.((info) => setLargeLoading(t('Extracting the images of “{name}” ({size} MB)…', info)))
+      try {
+        const result = await electronAPI.extractMarkdownImages({ source, directory: near ? near.replace(/[\\/][^\\/]*$/, '') : undefined })
+        if (!result) return
+        if (!result.path) { setStatus(t('No embedded images found in this file')); notify('info', t('No embedded images found in this file')); return }
+        setStatus(t('{count} images extracted into the “images” folder', { count: result.count }))
+        notify('success', t('{count} images extracted into the “images” folder', { count: result.count }))
+        await workspaceRef.current.openLoaded(await electronAPI.openDocumentPath(result.path))
+      } catch (error) {
+        console.error(error)
+        setStatus(t('The operation failed'))
+      } finally {
+        stop?.()
+        setLargeLoading(null)
       }
     },
     async reopenTab(id) {
@@ -596,12 +630,12 @@ export default function App() {
       }
       const current = latest.current.tabs
       const remaining = current.filter((item) => item.id !== id)
-      const next = remaining.some(isDocument) ? remaining : [...remaining, createTab()]
-      setTabs(next)
+      // Si può chiudere anche l'ultima scheda: l'editor resta senza documenti, con i pulsanti per crearne o aprirne uno.
+      setTabs(remaining)
       setActiveId((active) => {
         if (active !== id) return active
         const index = current.findIndex((item) => item.id === id)
-        return (next[index] || next[next.length - 1]).id
+        return (remaining[index] || remaining[remaining.length - 1])?.id ?? null
       })
     },
     pathRenamed(from, to) {
@@ -1130,11 +1164,18 @@ export default function App() {
     const { preview, permanent, ...ipcOptions } = options || {}
     // Un'immagine si apre nella scheda di visualizzazione, senza passare dal lettore dei documenti.
     if (isImageFile(filePath)) { workspace.openImage(filePath, { preview, permanent }); return }
+    // Se la lettura (o la conversione di un DOCX/PDF) richiede tempo, dopo un attimo compare il riquadro di attesa.
+    const timer = setTimeout(() => setLargeLoading(t('Opening “{name}”…', { name: baseName(filePath) })), 300)
     try {
-      workspace.openDocument(await electronAPI.openDocumentPath(filePath, ipcOptions), { preview, permanent })
+      const document = await electronAPI.openDocumentPath(filePath, ipcOptions)
+      clearTimeout(timer)
+      await workspace.openLoaded(document, { preview, permanent })
     } catch (error) {
       console.error(error)
       setStatus(t('Could not open the file'))
+    } finally {
+      clearTimeout(timer)
+      setTimeout(() => setLargeLoading(null), 0)
     }
   }
 
@@ -1143,14 +1184,14 @@ export default function App() {
   // Documenti aperti dal sistema (doppio clic su un .md, "Apri con"): quelli arrivati prima dell'avvio, poi quelli successivi.
   useEffect(() => {
     if (!ready || !electronAPI?.onExternalDocument) return undefined
-    const open = (document) => workspaceRef.current.openDocument(document)
+    const open = (document) => workspaceRef.current.openLoaded(document)
     electronAPI.takeExternalDocuments().then((list) => list.forEach(open)).catch((error) => console.error(error))
     return electronAPI.onExternalDocument(open)
   }, [ready])
 
   const openDocuments = useMemo(() => tabs.filter(isLive).map((item) => ({ id: item.id, title: item.title })), [tabs])
 
-  if (!ready || !activeTab) return <div className="h-screen bg-slate-950" />
+  if (!ready) return <div className="h-screen bg-slate-950" />
 
   // Larghezze dei pannelli laterali: quelle scelte dall'utente, ridotte solo se la finestra è troppo stretta.
   const leftVisible = Boolean(sideTab)
@@ -1181,9 +1222,10 @@ export default function App() {
             <h2 className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{sideTabs.find((item) => item.id === sideTab)?.label}</h2>
             {sideTab === 'projects' && <ProjectsPanel project={project} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onOpen={openProject} onChoose={chooseProject} onCreate={createProject} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
             {sideTab === 'files' && (
-              <FileExplorer project={project} activePath={activeTab.kind === 'image' ? activeTab.imagePath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />
+              <FileExplorer project={project} activePath={activeTab?.kind === 'image' ? activeTab.imagePath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />
             )}
             {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} />}
+            {sideTab === 'anchors' && <AnchorsPanel editor={editors[contextTab?.id]} />}
             {sideTab === 'notes' && (editors[contextTab?.id]
               ? <NotesPanel noteView={noteView} onNoteViewChange={(view) => { setNoteView(view); setActiveNoteId(null) }} search={noteSearch} onSearchChange={setNoteSearch} tab={contextTab} editor={editors[contextTab.id]} project={workspaceRoot} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} />
               : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>)}
@@ -1198,19 +1240,29 @@ export default function App() {
           </aside>
         )}
         <main className="flex min-w-0 flex-1 flex-col">
-          <TabBar tabs={tabs} onPromote={workspace.promoteTab} unsavedCount={unsavedTabs(tabs).length} onSaveAll={saveAllTabs} activeId={activeTab.id} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
+          <TabBar tabs={tabs} onPromote={workspace.promoteTab} unsavedCount={unsavedTabs(tabs).length} onSaveAll={saveAllTabs} activeId={activeTab?.id ?? null} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
+            {!tabs.length && (
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-slate-500">
+                <p>{t('No document open.')}</p>
+                <div className="flex gap-2">
+                  <button type="button" className="rounded border border-slate-700 px-3 py-1.5 text-slate-300 transition hover:bg-slate-800" onClick={workspace.newTab}>{t('New document')}</button>
+                  <button type="button" className="rounded border border-slate-700 px-3 py-1.5 text-slate-300 transition hover:bg-slate-800" onClick={async () => { const document = await electronAPI.openDocument(); if (document) await workspace.openLoaded(document) }}>{t('Open…')}</button>
+                </div>
+              </div>
+            )}
             {tabs.map((tab) => (tab.kind === 'image'
-              ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab.id} onStatus={setStatus} onInteract={workspace.promoteTab} onNavigate={workspace.changeImage} />
+              ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onStatus={setStatus} onInteract={workspace.promoteTab} onNavigate={workspace.changeImage} />
               : tab.kind === 'browser'
-              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
-              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onOpenFull={() => workspace.openFull(tab.id)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />))}
+              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
+              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onOpenFull={() => workspace.openFull(tab.id)} onExtractImages={() => workspace.extractImages(tab.sourcePath)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />))}
           </section>
+          <ToastHost />
           {largeLoading && (
             <div role="status" aria-live="polite" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
               <div className="flex max-w-sm items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-5 py-4 text-sm text-slate-200 shadow-xl">
                 <Loader2 size={20} className="shrink-0 animate-spin text-accent-400" />
-                <span>{t('Opening “{title}” ({size} MB)… the application may not respond for a while.', { title: largeLoading.title, size: (largeLoading.chars / 1048576).toFixed(1) })}</span>
+                <span>{largeLoading}</span>
               </div>
             </div>
           )}
