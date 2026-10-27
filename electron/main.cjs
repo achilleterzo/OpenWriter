@@ -670,6 +670,8 @@ function trackWindowState(window, initial) {
 
 function createWindow() {
   const windowState = loadWindowState()
+  // Tasti Indietro / Avanti del mouse e della tastiera multimediale (Windows): navigazione nella cronologia dei salti del documento.
+  const navigationCommand = { 'browser-backward': 'nav-back', 'browser-forward': 'nav-forward' }
   mainWindow = new BrowserWindow({
     width: windowState.width,
     height: windowState.height,
@@ -689,6 +691,7 @@ function createWindow() {
   })
 
   applySpellcheck()
+  mainWindow.on('app-command', (_event, command) => { if (navigationCommand[command]) mainWindow.webContents.send('app:command', navigationCommand[command]) })
   // Se il processo dell'interfaccia muore la finestra resta vuota e la console non dice nulla: si registra il motivo e si riprova a ricaricare (al massimo due volte).
   let reloads = 0
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
@@ -997,6 +1000,20 @@ ipcMain.handle('images:capture-webview', async (_event, contentsId) => {
   const contents = webContents.fromId(Number(contentsId))
   if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) throw new Error(t('Invalid browser tab'))
   return images.prepareImage(await contents.capturePage())
+})
+// Le pagine del browser integrato seguono il tema del sistema operativo, non quello dell'app: con l'app in tema chiaro e il sistema scuro una pagina "scura" mostrava
+// testo chiaro su fondo bianco. Qui si fa sì che dichiarino lo stesso tema dell'app (prefers-color-scheme).
+ipcMain.handle('browser:set-color-scheme', async (_event, { contentsId, dark } = {}) => {
+  const contents = webContents.fromId(Number(contentsId))
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) return false
+  try {
+    if (!contents.debugger.isAttached()) contents.debugger.attach('1.3')
+    await contents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: dark ? 'dark' : 'light' }] })
+    return true
+  } catch (error) {
+    console.warn('Tema della pagina non applicato:', error.message)
+    return false
+  }
 })
 // Schermata della scheda del browser, a piena risoluzione, salvata come PNG in <progetto>/screenshots/. Restituisce il percorso del file.
 ipcMain.handle('browser:save-screenshot', async (_event, { contentsId, title } = {}) => {

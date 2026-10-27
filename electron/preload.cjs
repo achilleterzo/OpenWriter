@@ -111,6 +111,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     remove: (url, options) => ipcRenderer.invoke('browser-history:remove', url, options),
     clear: (options) => ipcRenderer.invoke('browser-history:clear', options),
   },
+  setBrowserColorScheme: (request) => ipcRenderer.invoke('browser:set-color-scheme', request),
   saveBrowserScreenshot: (request) => ipcRenderer.invoke('browser:save-screenshot', request),
   saveAttachment: (attachment) => ipcRenderer.invoke('chat:save-attachment', attachment),
   getAttachment: (id) => ipcRenderer.invoke('chat:get-attachment', id),
