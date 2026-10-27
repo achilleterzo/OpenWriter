@@ -7,7 +7,7 @@ import ModelPicker from './ModelPicker.jsx'
 import { runResearch } from '../lib/researchAgent.js'
 import { reasoningByProvider, toolLabels } from '../lib/aiOptions.js'
 import { formatDateTime, languageEnglishName } from '../i18n/index.js'
-import { quickActionsOf } from '../lib/quickActions.js'
+import { quickActionsFor } from '../lib/quickActions.js'
 import { selectedText } from '../lib/selectionText.js'
 import { DEFAULT_MAX_TOOL_STEPS, TOOL_DEFINITIONS, createToolRunner, describeCall, parseToolCall, splitNextPrompt, toolAvailable, toolSchemas, toolsPrompt, visibleText } from '../lib/aiTools.js'
 import { t } from '../i18n/index.js'
@@ -617,6 +617,12 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const listRef = useRef(null)
   // Lo scorrimento automatico segue il testo che arriva solo se si è in fondo: scorrendo verso l'alto si smette, e un pulsante riporta giù.
   const stickRef = useRef(true)
+  // "Approva per me": a fine lavoro le modifiche dell'assistente si accettano, i documenti si salvano e quelli che ha aperto lui si richiudono (la versione
+  // precedente resta nella cronologia). Preferenza dell'app, valida per tutte le conversazioni.
+  const [autoApprove, setAutoApprove] = useState(() => api.preferences?.values?.['openwriter.autoApprove'] === 'on')
+  const autoApproveRef = useRef(autoApprove)
+  autoApproveRef.current = autoApprove
+  const changeAutoApprove = (value) => { setAutoApprove(value); api.preferences?.set('openwriter.autoApprove', value ? 'on' : 'off') }
   const [showJump, setShowJump] = useState(false)
   const liveRef = useRef({ text: '', thinking: '', status: '' })
   const frameRef = useRef(null)
@@ -1263,6 +1269,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         if (runRef.current.cancelled) break
       }
     } finally {
+      // Con "Approva per me" le modifiche si accettano prima di salvare (senza, un documento con modifiche da rivedere non si salva).
+      if (autoApproveRef.current) for (const id of editedTabs) { try { toolBridge.acceptPending(id) } catch (error) { console.error(error) } }
       for (const id of editedTabs) await toolBridge.saveDocument(id).catch((error) => console.error(error))
       for (const id of openedTabs) await toolBridge.closeDocument(id).catch((error) => console.error(error))
       cancelAnimationFrame(frameRef.current)
@@ -1497,8 +1505,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
               </div>
             )}
             <div className="mb-2 flex flex-wrap gap-1.5">
-              {quickActionsOf(settings).map((action) => (
-                <button key={action.id} type="button" disabled={busy} className="rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50" onClick={() => send(action.prompt)}>{action.label}</button>
+              {quickActionsFor(settings, projectSettings).map((action) => (
+                <button key={action.id} type="button" disabled={busy} title={action.isProject ? `${t('Project action')}: ${action.prompt}` : undefined} className={`rounded-full border px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50 ${action.isProject ? 'flex items-center gap-1 border-slate-500' : 'border-slate-700'}`} onClick={() => send(action.prompt)}>{action.isProject && <FolderOpen size={11} className="shrink-0 text-accent-400" />}{action.label}</button>
               ))}
               {activeSkills.flatMap((skill) => skill.actions.map((action) => (
                 <button key={`${skill.id}:${action.label}`} type="button" disabled={busy} title={`${skill.name}: ${action.prompt}`} className="flex items-center gap-1 rounded-full border border-accent-500/40 px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50" onClick={() => send(action.prompt)}><Wand2 size={11} className="text-accent-400" /> {action.label}</button>
@@ -1581,6 +1589,20 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
                 </select>
               </label>
             </div>
+            {project && !loose && (
+              <label className="mb-2 grid min-w-0 gap-0.5 text-xs text-slate-400">{t('Edits to the documents')}
+                <select
+                  aria-label={t('Edits to the documents')}
+                  title={t('“Approve for me”: when the work is done the assistant\'s edits are accepted and saved, and the documents it opened are closed again. The previous version stays in the history.')}
+                  value={autoApprove ? 'auto' : 'review'}
+                  className="w-full min-w-0 rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs text-slate-100 outline-none focus:border-accent-400"
+                  onChange={(event) => changeAutoApprove(event.target.value === 'auto')}
+                >
+                  <option value="review">{t('I review them')}</option>
+                  <option value="auto">{t('Approve for me')}</option>
+                </select>
+              </label>
+            )}
             {project && (current.contextFrom.length > 0 || attachable.length > 0) && (
               <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                 {current.contextFrom.map((id) => (
