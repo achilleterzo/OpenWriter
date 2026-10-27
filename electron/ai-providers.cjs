@@ -670,6 +670,11 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
         if (line.error) throw Object.assign(new Error(String(line.error)), { fatal: true })
         // L'ultima riga (done) riporta i token letti e generati.
         if (line.done && (line.prompt_eval_count != null || line.eval_count != null)) onEvent({ type: 'usage', input: Number(line.prompt_eval_count) || 0, output: Number(line.eval_count) || 0 })
+        // Tempi del server (nanosecondi): servono a capire se il prefisso del prompt viene riutilizzato (cache): con la cache la valutazione del prompt è breve anche con molti token.
+        if (line.done) {
+          const ms = (value) => (value == null ? '-' : Math.round(Number(value) / 1e6))
+          log(`[AI] ${LABELS[provider]} stats: prompt ${line.prompt_eval_count ?? '-'} tok in ${ms(line.prompt_eval_duration)} ms, output ${line.eval_count ?? '-'} tok in ${ms(line.eval_duration)} ms, load ${ms(line.load_duration)} ms, total ${ms(line.total_duration)} ms`)
+        }
         if (line.message?.thinking) onEvent({ type: 'thinking', delta: line.message.thinking })
         if (line.message?.content) { text += line.message.content; onEvent({ type: 'text', delta: line.message.content }) }
         const call = line.message?.tool_calls?.[0]?.function
