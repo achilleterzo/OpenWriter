@@ -199,7 +199,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
       const listener = (_event, payload) => { if (payload.requestId === requestId) onEvent(payload.event) }
       ipcRenderer.on('ai:stream', listener)
-      const promise = ipcRenderer.invoke('ai:chat-stream', { requestId, messages, tools: options.tools, reasoningCap: options.reasoningCap }).then((result) => {
+      const promise = ipcRenderer.invoke('ai:chat-stream', { requestId, messages, tools: options.tools, reasoningCap: options.reasoningCap, use: options.use }).then((result) => {
         if (result === null) throw new Error('Richiesta interrotta')
         return result
       }).finally(() => ipcRenderer.removeListener('ai:stream', listener))

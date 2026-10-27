@@ -370,6 +370,18 @@ function normalizeQuickActions(value) {
   return result
 }
 
+const RESEARCH_PROVIDERS = ['ollama', 'ollama-cloud', 'openrouter', 'gemini']
+
+function normalizeResearcher(value = {}) {
+  const saved = value && typeof value === 'object' ? value : {}
+  return {
+    enabled: saved.enabled === true,
+    provider: RESEARCH_PROVIDERS.includes(saved.provider) ? saved.provider : 'ollama-cloud',
+    model: String(saved.model || '').trim(),
+    maxSteps: Math.min(30, Math.max(2, Math.round(Number(saved.maxSteps)) || 12)),
+  }
+}
+
 function normalizeSettings(settings = {}) {
   const saved = settings.providers && typeof settings.providers === 'object' ? settings.providers : {}
   return {
@@ -384,6 +396,9 @@ function normalizeSettings(settings = {}) {
     autoContinue: settings.autoContinue === true,
     autoContinueSeconds: Math.min(300, Math.max(5, Math.round(Number(settings.autoContinueSeconds)) || 20)),
     maxToolSteps: Math.min(50, Math.max(1, Math.round(Number(settings.maxToolSteps)) || 30)),
+    // Assistente di ricerca: un secondo modello che l'assistente principale chiama come strumento (research) per esplorare i file e raccogliere contesto.
+    // Solo provider con chiamate native agli strumenti.
+    researcher: normalizeResearcher(settings.researcher),
     // Ragionamento nei passi che seguono il risultato di uno strumento: 'same' (come impostato), 'reduced' (al massimo "low"), 'none' (spento dove si può).
     toolReasoning: ['same', 'reduced', 'none'].includes(settings.toolReasoning) ? settings.toolReasoning : 'reduced',
     // Strumenti messi a disposizione dell'assistente; la navigazione web è opt-in perché invia query all'esterno.
@@ -503,13 +518,14 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     }
   }
 
-  function assertConfigured() {
-    const config = providerConfig()
+  // `provider` e `model` indicano un modello diverso da quello attivo (l'assistente di ricerca).
+  function assertConfigured(provider = activeProvider(), model = '') {
+    const config = { ...providerConfig(provider), ...(model ? { model } : {}) }
     if (!getSettings().aiEnabled) throw new Error(t('AI generation is turned off in the settings'))
-    if (activeProvider() === 'ollama' && !(config.endpoint && config.model)) throw new Error(t('Configure the Ollama endpoint and model in the settings'))
-    if (activeProvider() === 'ollama-cloud' && !(apiKey('ollama-cloud') && config.model)) throw new Error(t('Configure the Ollama Cloud API key and model in the settings'))
-    if (activeProvider() === 'openrouter' && !(apiKey('openrouter') && config.model)) throw new Error(t('Configure the OpenRouter API key and model in the settings'))
-    if (activeProvider() === 'gemini' && !(apiKey('gemini') && config.model)) throw new Error(t('Configure the Gemini API key and model in the settings'))
+    if (provider === 'ollama' && !(config.endpoint && config.model)) throw new Error(t('Configure the Ollama endpoint and model in the settings'))
+    if (provider === 'ollama-cloud' && !(apiKey('ollama-cloud') && config.model)) throw new Error(t('Configure the Ollama Cloud API key and model in the settings'))
+    if (provider === 'openrouter' && !(apiKey('openrouter') && config.model)) throw new Error(t('Configure the OpenRouter API key and model in the settings'))
+    if (provider === 'gemini' && !(apiKey('gemini') && config.model)) throw new Error(t('Configure the Gemini API key and model in the settings'))
   }
 
   // Invia il prompt alla CLI in modalità streaming e traduce i suoi eventi in { type: 'text' | 'thinking' | 'status', ... }.
@@ -836,10 +852,12 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
    * `onEvent` riceve { type: 'text' | 'thinking' | 'status', delta | text }; `signal` interrompe la richiesta.
    * Restituisce il testo finale della risposta.
    */
-  async function chatStream(messages, { onEvent = () => {}, signal, tools = [], reasoningCap = null } = {}) {
-    assertConfigured()
-    const provider = activeProvider()
-    const config = providerConfig(provider)
+  // `use`: { provider, model } per una singola richiesta con un altro modello (l'assistente di ricerca), solo provider con strumenti nativi.
+  async function chatStream(messages, { onEvent = () => {}, signal, tools = [], reasoningCap = null, use = null } = {}) {
+    const other = use && RESEARCH_PROVIDERS.includes(use.provider) ? { provider: use.provider, model: String(use.model || '').trim() } : null
+    const provider = other ? other.provider : activeProvider()
+    assertConfigured(provider, other?.model)
+    const config = { ...providerConfig(provider), ...(other?.model ? { model: other.model } : {}) }
     const level = reasoningLevel(provider, reasoningCap)
     const list = (Array.isArray(messages) ? messages : []).map((message) => ({
       role: message?.role || 'user',

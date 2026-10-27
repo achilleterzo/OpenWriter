@@ -890,7 +890,7 @@ ipcMain.handle('project:save-settings', (_event, settings) => {
   return saved
 })
 // Chat in streaming: gli eventi (testo, ragionamento, stato) arrivano al renderer man mano, e la richiesta si può interrompere.
-ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools, reasoningCap }) => {
+ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools, reasoningCap, use }) => {
   const controller = new AbortController()
   aiRequests.set(requestId, controller)
   try {
@@ -898,6 +898,7 @@ ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools, rea
       signal: controller.signal,
       tools: Array.isArray(tools) ? tools : [],
       reasoningCap: reasoningCap === 'low' || reasoningCap === 'instant' ? reasoningCap : null,
+      use: use && typeof use === 'object' ? { provider: String(use.provider || ''), model: String(use.model || '') } : null,
       onEvent: (payload) => { if (!event.sender.isDestroyed()) event.sender.send('ai:stream', { requestId, event: payload }) },
     })
   } catch (error) {
