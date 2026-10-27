@@ -221,8 +221,10 @@ export default function App() {
         const editor = currentEditors[tab.id]
         // Bozze e documenti mai salvati conservano il testo; gli altri si rileggono dal file.
         // Se l'editor non è ancora pronto (appena riaperta la sessione) il testo non salvato si tiene com'è: altrimenti un salvataggio troppo presto lo perderebbe.
-        const unsavedText = editor ? editor.getMarkdown() : (tab.contentType === 'markdown' && typeof tab.content === 'string' && tab.content ? tab.content : undefined)
-        const keepText = (tab.dirty || !tab.sourcePath) && unsavedText !== undefined
+        // Il Markdown si ricava solo quando serve (serializzare un documento grande a ogni salvataggio di sessione rallenta l'editor).
+        const needsText = tab.dirty || !tab.sourcePath
+        const unsavedText = !needsText ? undefined : editor ? editor.getMarkdown() : (tab.contentType === 'markdown' && typeof tab.content === 'string' && tab.content ? tab.content : undefined)
+        const keepText = needsText && unsavedText !== undefined
         // Modifiche dell'assistente ancora da rivedere (o non ancora rimesse in sosta dopo la riapertura): restano nella sessione.
         const pending = (editor && serializePending(editor)) || tab.pending
         return {
@@ -446,8 +448,38 @@ export default function App() {
       if (command === 'settings') openSettings()
       if (command === 'open-project') chooseProject()
       if (command === 'view-endless' || command === 'view-pages') updateAppearance({ view: command.slice(5) })
+      if (command === 'nav-back' || command === 'nav-forward') jumpsRef.current?.(command === 'nav-back' ? 'back' : 'forward')
     })
   }, [chooseProject])
+
+  // Errori e avvisi del processo principale (anche quelli che finora si vedevano solo nel terminale) diventano notifiche.
+  useEffect(() => {
+    if (!electronAPI?.onAppNotice) return undefined
+    return electronAPI.onAppNotice((notice) => notify(notice.level, notice.message, { detail: notice.detail }))
+  }, [])
+
+  // Indietro / Avanti nella cronologia dei salti: Alt+←/→ (Cmd+[ / ] su Mac) e i tasti laterali del mouse.
+  useEffect(() => {
+    const onKey = (event) => {
+      const mac = navigator.platform.toLowerCase().includes('mac')
+      const back = mac ? event.metaKey && event.key === '[' : event.altKey && !event.ctrlKey && event.key === 'ArrowLeft'
+      const forward = mac ? event.metaKey && event.key === ']' : event.altKey && !event.ctrlKey && event.key === 'ArrowRight'
+      if (!back && !forward) return
+      event.preventDefault()
+      jumpsRef.current?.(back ? 'back' : 'forward')
+    }
+    // Tasti laterali del mouse (3 = indietro, 4 = avanti): si ascoltano nella pagina, perché il comando di navigazione di Windows non arriva con tutti i mouse.
+    // Si blocca anche la discesa del tasto, così il browser non tenta una sua navigazione.
+    const onMouse = (event) => {
+      if (event.button !== 3 && event.button !== 4) return
+      event.preventDefault()
+      if (event.type === 'mouseup') jumpsRef.current?.(event.button === 3 ? 'back' : 'forward')
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('mousedown', onMouse)
+    window.addEventListener('mouseup', onMouse)
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('mousedown', onMouse); window.removeEventListener('mouseup', onMouse) }
+  }, [])
 
   // L'albero dei file si aggiorna quando la cartella del progetto cambia per mano di altri programmi (file incollati, creati, spostati, eliminati).
   useEffect(() => {
@@ -1086,7 +1118,7 @@ export default function App() {
   // Ctrl+clic su un collegamento del documento: file locale (si apre in una scheda), indirizzo web (nel browser di sistema) o ancora.
   // Va al punto di un documento indicato da `#nome`: un segnalibro, o un titolo con quel nome. `filePath` vuoto = il documento in primo piano.
   // Se il documento si sta ancora aprendo, aspetta che l'editor sia pronto (fino a 4 secondi).
-  async function goToFragment(filePath, fragment) {
+  async function goToFragment(filePath, fragment, origin = null) {
     if (!fragment) return
     const deadline = Date.now() + 4000
     for (;;) {
@@ -1099,6 +1131,7 @@ export default function App() {
         const list = tab.filePath ? await electronAPI.listBookmarks(tab.filePath).catch(() => []) : []
         const found = findFragmentTarget(editor, list, fragment)
         if (!found) { setStatus(t('Nothing named "{name}" in this document', { name: fragment })); return }
+        if (origin) rememberPlace(origin)
         setActiveId(tab.id)
         const match = list.find((item) => item.name.toLowerCase() === fragment.toLowerCase())
         if (match) setActiveBookmarkId(match.id)
@@ -1120,10 +1153,66 @@ export default function App() {
       setStatus(reason.message || String(reason))
     }
   }
+  // Cronologia dei salti: seguendo un collegamento (ancora, titolo, altro documento) o scegliendo una voce dei pannelli laterali, il punto di partenza si ricorda
+  // (scheda, cursore, scorrimento); Indietro / Avanti (Alt+←/→, Cmd+[ / ], il tasto indietro del mouse) ci tornano.
+  const jumps = useRef({ back: [], forward: [] })
+  function currentPlace() {
+    const { tabs: currentTabs, editors: currentEditors, activeId: currentActive } = latest.current
+    const tab = currentTabs.find((item) => item.id === currentActive && isLive(item))
+    const editor = tab && currentEditors[tab.id]
+    if (!editor || editor.isDestroyed) return null
+    return { tabId: tab.id, from: editor.state.selection.from, scrollTop: editor.view.dom.closest('[data-document-scroll]')?.scrollTop ?? 0 }
+  }
+  function rememberPlace(place = currentPlace()) {
+    if (!place) return
+    const last = jumps.current.back.at(-1)
+    if (!(last && last.tabId === place.tabId && last.from === place.from)) jumps.current.back = [...jumps.current.back, place].slice(-50)
+    jumps.current.forward = []
+  }
+  function restorePlace(place) {
+    const tab = latest.current.tabs.find((item) => item.id === place.tabId && isLive(item))
+    const editor = tab && latest.current.editors[tab.id]
+    if (!editor || editor.isDestroyed) return false
+    setActiveId(tab.id)
+    editor.chain().setTextSelection(Math.min(place.from, editor.state.doc.content.size)).run()
+    // La scheda può essere appena tornata visibile: lo scorrimento si ripristina dopo il disegno.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (editor.isDestroyed) return
+      editor.commands.focus(null, { scrollIntoView: false })
+      const scroller = editor.view.dom.closest('[data-document-scroll]')
+      if (scroller) scroller.scrollTop = place.scrollTop
+    }))
+    return true
+  }
+  function goThroughJumps(direction) {
+    const from = direction === 'back' ? jumps.current.back : jumps.current.forward
+    const to = direction === 'back' ? jumps.current.forward : jumps.current.back
+    while (from.length) {
+      const place = from.pop()
+      const here = currentPlace()
+      if (restorePlace(place)) { if (here) to.push(here); return }
+    }
+  }
+  const jumpsRef = useRef(null)
+  jumpsRef.current = goThroughJumps
+
+  // Un indirizzo web si apre nel browser integrato, in una scheda nuova (la pagina che c'è già non si perde); il pulsante della scheda lo apre nel browser di sistema.
+  async function openInBrowserTab(url) {
+    try {
+      const browser = await toolBridge.getBrowser({ newTab: true, activate: true })
+      await browser.controller.open(url)
+    } catch (reason) {
+      console.error(reason)
+      electronAPI.openLink(url)
+    }
+  }
+
   function openLink(target) {
-    if (target.kind === 'anchor') goToFragment(null, target.fragment)
-    else if (target.kind === 'file') openFromExplorer(target.path).then(() => goToFragment(target.path, target.fragment))
-    else if (target.kind === 'external') electronAPI.openLink(target.url)
+    // Il punto di partenza si ricorda adesso: aprendo un altro documento la scheda attiva cambia prima dell'arrivo.
+    const origin = currentPlace()
+    if (target.kind === 'anchor') goToFragment(null, target.fragment, origin)
+    else if (target.kind === 'file') openFromExplorer(target.path).then(() => { if (!target.fragment) rememberPlace(origin); return goToFragment(target.path, target.fragment, origin) })
+    else if (target.kind === 'external') openInBrowserTab(target.url)
     else if (target.kind === 'search') searchInBrowser(target.query)
     else if (target.kind === 'unresolved') setStatus(t('Save the document first to follow relative links'))
   }
@@ -1224,8 +1313,8 @@ export default function App() {
             {sideTab === 'files' && (
               <FileExplorer project={project} activePath={activeTab?.kind === 'image' ? activeTab.imagePath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />
             )}
-            {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} />}
-            {sideTab === 'anchors' && <AnchorsPanel editor={editors[contextTab?.id]} />}
+            {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} onJump={rememberPlace} />}
+            {sideTab === 'anchors' && <AnchorsPanel editor={editors[contextTab?.id]} onJump={rememberPlace} />}
             {sideTab === 'notes' && (editors[contextTab?.id]
               ? <NotesPanel noteView={noteView} onNoteViewChange={(view) => { setNoteView(view); setActiveNoteId(null) }} search={noteSearch} onSearchChange={setNoteSearch} tab={contextTab} editor={editors[contextTab.id]} project={workspaceRoot} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} />
               : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>)}
