@@ -35,6 +35,9 @@ const toolOptions = [
   { key: 'web', label: t('Web browsing'), help: t('Search with DuckDuckGo, open pages and read the Browser tabs, including the ones you opened yourself (even pages where you are signed in). Searches and addresses leave your computer; it cannot open local addresses.') },
 ]
 
+// Provider con chiamate native agli strumenti, ammessi per l'assistente di ricerca.
+const RESEARCH_PROVIDERS = ['ollama', 'ollama-cloud', 'openrouter', 'gemini']
+
 const fieldClass = 'mt-2 w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2.5 text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400 disabled:opacity-60'
 const buttonClass = 'rounded-md bg-slate-700 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-slate-600 disabled:cursor-wait disabled:opacity-60'
 
@@ -69,6 +72,23 @@ export default function AiProviderSettings() {
     setSettings(next)
     ai.saveSettings(next).catch((reason) => setError(reason.message))
   }, [])
+
+  // Assistente di ricerca: un secondo modello (solo provider con strumenti nativi) che l'assistente principale chiama come strumento.
+  const researcher = settings?.researcher || { enabled: false, provider: 'ollama-cloud', model: '', maxSteps: 12 }
+  const [researchModels, setResearchModels] = useState([])
+  const [researchLoading, setResearchLoading] = useState(false)
+  const researchEndpoint = settings?.providers?.[researcher.provider]?.endpoint
+  useEffect(() => {
+    if (!settings?.aiEnabled || !researcher.enabled) return undefined
+    let cancelled = false
+    setResearchLoading(true)
+    ai.listModels({ provider: researcher.provider, endpoint: researchEndpoint })
+      .then((list) => { if (!cancelled) setResearchModels(list) })
+      .catch(() => { if (!cancelled) setResearchModels([]) })
+      .finally(() => { if (!cancelled) setResearchLoading(false) })
+    return () => { cancelled = true }
+  }, [settings?.aiEnabled, researcher.enabled, researcher.provider, researchEndpoint])
+  const updateResearcher = (changes) => persist({ ...settings, researcher: { ...researcher, ...changes } })
 
   const updateConfig = (changes) => persist({ ...settings, providers: { ...settings.providers, [provider]: { ...config, ...changes } } })
 
@@ -371,6 +391,41 @@ export default function AiProviderSettings() {
               <p className="text-xs text-amber-400">{capabilities.known ? t('The selected model does not support images: the image and screenshot tools stay off.') : t('I cannot check whether the model supports images: the image and screenshot tools stay off.')}</p>
             )}
             <p className="text-xs text-slate-500">{t('The tools work with every provider, but small models may use them less reliably.')}</p>
+          </fieldset>
+
+          <fieldset className="grid gap-3 rounded-lg border border-slate-800 p-4">
+            <legend className="px-1 text-sm font-medium text-slate-200">{t('Research assistant')}</legend>
+            <label className="flex items-start gap-2 text-sm text-slate-300">
+              <input type="checkbox" className="mt-1 accent-accent-500" checked={researcher.enabled} onChange={(event) => updateResearcher({ enabled: event.target.checked })} />
+              <span>{t('Let the assistant delegate explorations to a second model')}<span className="block text-xs text-slate-500">{t('The research assistant searches and reads the project files on its own (it never changes anything) and returns a short report: the exploration stays out of the conversation, which keeps it small and fast. A model that is good with tools is enough.')}</span></span>
+            </label>
+            {researcher.enabled && (
+              <>
+                <label className="flex items-center justify-between gap-3 text-sm text-slate-300">
+                  <span>{t('Provider')}</span>
+                  <select className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-100 outline-none focus:border-accent-400" value={researcher.provider} onChange={(event) => updateResearcher({ provider: event.target.value, model: '' })}>
+                    {providers.filter((item) => RESEARCH_PROVIDERS.includes(item.value)).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  </select>
+                </label>
+                <div className="text-sm text-slate-300">{t('Model')}
+                  <ModelPicker
+                    value={researcher.model}
+                    models={researchModels}
+                    emptyLabel={researchLoading ? t('Loading…') : t('Select a model')}
+                    cacheKey={`research|${researcher.provider}|${researchEndpoint || ''}`}
+                    loadInputs={() => ai.listModelInputs({ provider: researcher.provider, endpoint: researchEndpoint })}
+                    onChange={(model) => updateResearcher({ model })}
+                  />
+                </div>
+                <label className="flex items-start justify-between gap-3 text-sm text-slate-300">
+                  <span>{t('Maximum research steps')}</span>
+                  <select className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-100 outline-none focus:border-accent-400" value={researcher.maxSteps} onChange={(event) => updateResearcher({ maxSteps: Number(event.target.value) })}>
+                    {[...new Set([4, 6, 8, 12, 16, 24, 30, researcher.maxSteps])].sort((left, right) => left - right).map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </label>
+                <p className="text-xs text-slate-500">{t('The API key and the endpoint of the chosen provider are the ones set for it above: configure it first if you have not used it yet.')}</p>
+              </>
+            )}
           </fieldset>
 
           {error && <p className="text-sm text-rose-400">{error}</p>}
