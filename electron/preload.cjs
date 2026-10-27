@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDroppedPaths: (files) => [...new Set(files.map((file) => { try { return webUtils.getPathForFile(file) } catch { return '' } }).filter(Boolean))],
   importFiles: (request) => ipcRenderer.invoke('workspace:import-files', request),
   getProjectSettings: () => ipcRenderer.invoke('project:get-settings'),
+  setProjectQuickActions: (value) => ipcRenderer.invoke('project:set-quick-actions', value),
   getContextChain: (filePath) => ipcRenderer.invoke('project:context-chain', filePath),
   moveIntoDirectory: (request) => ipcRenderer.invoke('workspace:move-path', request),
   saveProjectSettings: (settings) => ipcRenderer.invoke('project:save-settings', settings),
