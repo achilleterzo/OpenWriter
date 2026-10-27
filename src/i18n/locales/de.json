@@ -1039,6 +1039,7 @@
   "Always use this project, whatever the folder the agent starts in": "Immer dieses Projekt verwenden, egal in welchem Ordner der Agent startet",
   "Client": "Client",
   "Run in a terminal:": "In einem Terminal ausführen:",
+  "Open in the system browser": "Im System-Browser öffnen",
   "Show details": "Details anzeigen",
   "No anchors in the document.": "Keine Anker im Dokument.",
   "Insert anchor": "Anker einfügen",
