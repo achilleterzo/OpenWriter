@@ -7,7 +7,7 @@ const EXCLUDED_NAMES = new Set(['.ow', '.git', 'node_modules'])
 const BINARY_DOCUMENT_EXTENSIONS = new Set(['.docx', '.pdf'])
 const DEFAULT_READ_CHARS = 20000
 const MAX_READ_CHARS = 40000
-const MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024
+const MAX_TEXT_FILE_BYTES = 64 * 1024 * 1024
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'])
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 const MAX_LIST_ENTRIES = 300
@@ -85,6 +85,9 @@ function createProjectTools({ getProjectPath, readDocument }) {
       if (buffer.includes(0)) throw new Error(t('The file is binary and cannot be read as text'))
       text = buffer.toString('utf8')
     }
+    // Le immagini incorporate (data:…;base64,…) sono centinaia di KB di testo inutile: un segnaposto sulla stessa riga (i numeri di riga restano quelli delle ricerche).
+    let embedded = 0
+    text = text.replace(/data:([\w.+-]+\/[\w.+-]+);base64,[A-Za-z0-9+/=]{200,}/g, (all, type) => { embedded += 1; return `data:${type};base64,[embedded image, ${all.length} characters omitted]` })
 
     const firstLine = Number.parseInt(startLine, 10)
     if (firstLine > 0) {
@@ -95,14 +98,14 @@ function createProjectTools({ getProjectPath, readDocument }) {
       let content = lines.slice(from - 1, to).join('\n')
       let stop = to
       if (content.length > MAX_READ_CHARS) { content = content.slice(0, MAX_READ_CHARS); stop = from + content.split('\n').length - 1 }
-      return { path: relative, totalChars: text.length, totalLines: lines.length, startLine: from, endLine: stop, content, truncated: stop < lines.length, nextLine: stop < lines.length ? stop + 1 : null }
+      return { path: relative, ...(embedded ? { embeddedImages: embedded } : {}), totalChars: text.length, totalLines: lines.length, startLine: from, endLine: stop, content, truncated: stop < lines.length, nextLine: stop < lines.length ? stop + 1 : null }
     }
 
     const start = Math.max(0, Number.parseInt(offset, 10) || 0)
     const size = Math.min(MAX_READ_CHARS, Math.max(1, Number.parseInt(limit, 10) || DEFAULT_READ_CHARS))
     const content = text.slice(start, start + size)
     const end = start + content.length
-    return { path: relative, totalChars: text.length, offset: start, content, truncated: end < text.length, nextOffset: end < text.length ? end : null }
+    return { path: relative, ...(embedded ? { embeddedImages: embedded } : {}), totalChars: text.length, offset: start, content, truncated: end < text.length, nextOffset: end < text.length ? end : null }
   }
 
   // Contenuto di un'immagine del progetto (la cartella .ow resta esclusa).
@@ -125,30 +128,8 @@ function createProjectTools({ getProjectPath, readDocument }) {
     return { path: relative, absolute: target, created: !existing }
   }
 
-  // Documenti del progetto con lo stesso nome (senza distinguere maiuscole), in qualunque cartella: per non creare un doppione di un file già esistente altrove.
-  function findSameName(fileName, limit = 5) {
-    const project = getProjectPath()
-    const wanted = fileName.toLowerCase()
-    const found = []
-    let visited = 0
-    const walk = (directory, depth) => {
-      if (found.length >= limit || depth > 8 || visited > 5000) return
-      let entries = []
-      try { entries = fs.readdirSync(directory, { withFileTypes: true }) } catch { return }
-      for (const entry of entries) {
-        if (EXCLUDED_NAMES.has(entry.name)) continue
-        visited += 1
-        const full = path.join(directory, entry.name)
-        if (entry.isDirectory()) walk(full, depth + 1)
-        else if (entry.name.toLowerCase() === wanted) found.push(path.relative(project, full).split(path.sep).join('/'))
-      }
-    }
-    walk(project, 0)
-    return found
-  }
-
   // Crea un nuovo documento di testo (.md, o .txt) con il contenuto dato; non sovrascrive mai un file esistente.
-  async function createFile(relativePath, content = '', { allowSameName = false } = {}) {
+  async function createFile(relativePath, content = '') {
     const requested = String(relativePath || '').trim()
     if (!requested) throw new Error(t('Invalid name'))
     const extension = path.extname(requested).toLowerCase()
@@ -157,10 +138,9 @@ function createProjectTools({ getProjectPath, readDocument }) {
     const text = String(content ?? '')
     if (text.length > MAX_CREATED_CHARS) throw new Error(t('The content is too long'))
     if (fs.existsSync(target)) throw new Error(t('A file with this name already exists'))
-    if (!allowSameName) {
-      const others = findSameName(path.basename(target)).filter((item) => item.toLowerCase() !== relative.toLowerCase())
-      if (others.length) throw new Error(`${t('A document with this name already exists in the project')}: ${others.join(', ')}`)
-    }
+    // Solo la stessa cartella conta (senza distinguere maiuscole): in un progetto con più repository, cartelle diverse hanno legittimamente file con lo stesso nome (README.md).
+    const sibling = (await fs.promises.readdir(path.dirname(target)).catch(() => [])).find((name) => name.toLowerCase() === path.basename(target).toLowerCase())
+    if (sibling) throw new Error(`${t('A file with this name already exists')}: ${sibling}`)
     await fs.promises.mkdir(path.dirname(target), { recursive: true })
     await fs.promises.writeFile(target, text, { encoding: 'utf8', flag: 'wx' })
     return { path: relative, absolute: target }

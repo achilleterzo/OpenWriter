@@ -623,10 +623,10 @@ const EDIT_NOTE = 'It happens in the OpenWriter editor: the change is marked for
 const WRITE_TOOLS = [
   {
     name: 'create_file',
-    description: 'Creates a NEW document in the project (.md, or .txt; ".md" is added if the path has no extension), with the given content, creating the missing folders. It never overwrites: an existing path is refused, and so is a name already used by another document of the project unless allowSameName is true. The file is written straight to disk (a new file replaces nothing, and the user can delete it) and appears in the OpenWriter explorer at once. Only inside the project folder, never in .ow, .git or node_modules. Once created you can add notes and bookmarks to it.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'path of the new file, relative to the project root (folders are created as needed)' }, content: { type: 'string', description: 'full text of the document (Markdown for .md); empty by default' }, allowSameName: { type: 'boolean', description: 'true only if a second document with the same name as one in another folder is really wanted' } }, required: ['path'], additionalProperties: false },
-    async run({ path: file, content, allowSameName }) {
-      const result = await projectTools.createFile(text(file), text(content), { allowSameName: isTrue(allowSameName) })
+    description: 'Creates a NEW document in the project (.md, or .txt; ".md" is added if the path has no extension), with the given content, creating the missing folders. It never overwrites: an existing path is refused, and so is a name already used by another file in the same folder (the same name in a different folder is fine). The file is written straight to disk (a new file replaces nothing, and the user can delete it) and appears in the OpenWriter explorer at once. Only inside the project folder, never in .ow, .git or node_modules. Once created you can add notes and bookmarks to it.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'path of the new file, relative to the project root (folders are created as needed)' }, content: { type: 'string', description: 'full text of the document (Markdown for .md); empty by default' } }, required: ['path'], additionalProperties: false },
+    async run({ path: file, content }) {
+      const result = await projectTools.createFile(text(file), text(content))
       return `Created ${result.path} (${text(content).length} characters).`
     },
   },

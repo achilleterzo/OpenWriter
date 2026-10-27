@@ -12,7 +12,7 @@ const { Worker, isMainThread, parentPort, workerData } = require('node:worker_th
  */
 const SKIPPED_NAMES = new Set(['.ow', '.git', 'node_modules'])
 const DEFAULT_EXTENSIONS = /\.(md|markdown|mdown|txt)$/i
-const MAX_FILE_BYTES = 2 * 1024 * 1024
+const MAX_FILE_BYTES = 64 * 1024 * 1024
 // Abbastanza per un'alternanza di decine di nomi (un inventario: a|b|c|…); la regex gira comunque in un worker con scadenza.
 const MAX_PATTERN_CHARS = 2000
 const DEFAULT_RESULTS = 50
@@ -57,6 +57,8 @@ function runSearch(options) {
   let unsavedUsed = 0
   const results = []
   let filesSearched = 0
+  // File che corrispondono al glob ma non si sono potuti cercare (troppo grandi, binari): senza dirlo, «nessun risultato» sembrerebbe «non c'è».
+  const skipped = []
   let filesMatched = 0
   let totalMatches = 0
   let visited = 0
@@ -86,10 +88,11 @@ function runSearch(options) {
     else {
       let buffer
       try {
-        if (fs.statSync(file).size > MAX_FILE_BYTES) return
+        const size = fs.statSync(file).size
+        if (size > MAX_FILE_BYTES) { skipped.push({ path: relative(file), reason: `too large (${(size / 1048576).toFixed(1)} MB)` }); return }
         buffer = fs.readFileSync(file)
       } catch { return }
-      if (buffer.subarray(0, 4096).includes(0)) return
+      if (buffer.subarray(0, 4096).includes(0)) { skipped.push({ path: relative(file), reason: 'binary' }); return }
       content = buffer.toString('utf8')
     }
     filesSearched += 1
@@ -138,7 +141,7 @@ function runSearch(options) {
   if (isFile) searchFile(start); else walk(start)
   // Un testo letterale con i simboli di una regex senza risultati: probabilmente era un'espressione regolare.
   const hint = !regex && totalMatches === 0 && /[|()[\]\\^$*+?]/.test(String(options.pattern)) ? 'No literal matches. The pattern contains regular-expression symbols: if you meant a regular expression (for example a|b), pass regex=true.' : ''
-  return { pattern: String(options.pattern), regex: Boolean(regex), output: mode, filesSearched, filesMatched, totalMatches, ...(unsavedUsed ? { unsavedEditsIncluded: unsavedUsed } : {}), ...(mode === 'count' ? {} : { shown: results.length, results }), ...(hint ? { hint } : {}), ...(truncated ? { truncated: true, note: 'The result was cut: narrow it with path, glob or a more specific pattern, or raise maxResults' } : {}) }
+  return { pattern: String(options.pattern), regex: Boolean(regex), output: mode, filesSearched, filesMatched, totalMatches, ...(unsavedUsed ? { unsavedEditsIncluded: unsavedUsed } : {}), ...(mode === 'count' ? {} : { shown: results.length, results }), ...(hint ? { hint } : {}), ...(skipped.length ? { skipped: skipped.slice(0, 10), skippedCount: skipped.length } : {}), ...(truncated ? { truncated: true, note: 'The result was cut: narrow it with path, glob or a more specific pattern, or raise maxResults' } : {}) }
 }
 
 // Dentro un worker: si esegue la ricerca e si risponde al thread principale.
@@ -174,13 +177,15 @@ function searchFiles(input) {
 // Testo per un modello: una riga per file ("percorso (N)"), o per corrispondenza ("percorso:riga: testo"), con il contesto indentato.
 function formatSearch(result) {
   const head = `${result.totalMatches} matches in ${result.filesMatched} files (${result.filesSearched} files searched${result.unsavedEditsIncluded ? `, ${result.unsavedEditsIncluded} with unsaved edits from the editor` : ''}) for ${result.regex ? 'regex' : 'text'} “${result.pattern}”${result.autoRegex ? ' (read as a regular expression because it contains regex symbols; pass regex=false for the literal text)' : ''}`
-  if (result.output === 'count') return `${head}${result.hint ? `. ${result.hint}` : ''}`
-  if (!result.results.length) return `${head}.${result.hint ? ` ${result.hint}` : ''}`
+  const skippedNote = result.skippedCount ? `
+NOT SEARCHED (${result.skippedCount}): ${result.skipped.map((item) => `${item.path} [${item.reason}]`).join(', ')}${result.skippedCount > result.skipped.length ? ', …' : ''}. The matches above say nothing about these files: read them with read_file startLine/endLine.` : ''
+  if (result.output === 'count') return `${head}${result.hint ? `. ${result.hint}` : ''}${skippedNote}`
+  if (!result.results.length) return `${head}.${result.hint ? ` ${result.hint}` : ''}${skippedNote}`
   const body = result.results.map((entry) => {
     if (result.output === 'files') return `${entry.path} (${entry.matches})`
     return [...(entry.before || []).map((line) => `  ${entry.path}-  ${line}`), `${entry.path}:${entry.line}: ${entry.text}`, ...(entry.after || []).map((line) => `  ${entry.path}-  ${line}`)].join('\n')
   })
-  return [head, ...body, result.truncated ? `… ${result.note}` : ''].filter(Boolean).join('\n')
+  return [head, ...body, result.truncated ? `… ${result.note}` : '', skippedNote.trim()].filter(Boolean).join('\n')
 }
 
 module.exports = { searchFiles, formatSearch }
