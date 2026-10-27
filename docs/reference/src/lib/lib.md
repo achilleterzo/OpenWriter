@@ -30,10 +30,11 @@ Non-React helpers used by the editor and the assistant.
 - [pendingChangesExtension.js](pendingChangesExtension.js.md) — Assistant edits marked for review, with accept and reject
 - [preferences.js](preferences.js.md) — Interface preferences stored in the application data
 - [projectIcons.js](projectIcons.js.md) — Project icons: reading, caching, choosing, resizing
-- [quickActions.js](quickActions.js.md) — Chat quick actions: defaults, custom ones, and what to save
+- [quickActions.js](quickActions.js.md) — Chat quick actions: defaults, custom ones, project ones, and what to save
 - [rawMarkdownExtensions.js](rawMarkdownExtensions.js.md) — Front matter and HTML kept as raw text through the round trip
 - [readerMode.js](readerMode.js.md) — Article extraction, reading view, and save as Markdown
 - [searchExtension.js](searchExtension.js.md) — Tiptap extension powering live find highlight and match counting
+- [researchAgent.js](researchAgent.js.md) — Research assistant: a second model that explores the project and reports back
 - [selectionText.js](selectionText.js.md) — Text of the editor selection, blocks separated by a blank line
 - [skills.js](skills.js.md) — Writing skills: serialization, active skills, system-prompt block, AI generation prompts
 - [smartDashesExtension.js](smartDashesExtension.js.md) — Dashes and ellipsis typed in the editor

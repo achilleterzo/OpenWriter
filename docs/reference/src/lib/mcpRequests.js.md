@@ -11,6 +11,7 @@ The requests that arrive from the MCP server — an external agent, through the 
 - it then checks the document given by the agent (`authorizeDocument`): a project document, a document linked to the project or one already open in the editor, also outside the folder; anything else, or a relative path with `..` or `.ow`, is refused before opening or touching anything;
 - `open_document`: a document of the project, or the absolute path of a file outside it, which must be a document (`.md`, `.txt`, `.docx`, `.pdf`): it is the only way for an agent to bring a file into the active workspace, and the user sees it open in a tab;
 - `read_open_document`: the text the user sees right now (unsaved changes and edits waiting for review included), in chunks, with the number of edits to review;
+- `dirty_documents`: the JSON of the unsaved text of the documents open in the editor, `[{ path, text }]`, which the server's `search_files` searches instead of the older files on disk; it is asked before every search and silently skipped when it fails;
 - the edit tools: a document that is not open is opened in a tab first; the previous version goes to the history before the edit (at most once a minute per document); when the edit is done the tab of the document comes to the front and the status bar says that an agent proposed changes.
 
 Called from [App.jsx](../App.jsx.md) when the main process forwards a request (`onMcpRequest`), answering with `answerMcp`.

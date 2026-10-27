@@ -13,3 +13,9 @@ The chat quick actions (the pills above the message box). The default actions ha
 - `newCustomId()`: the id of a new user action.
 - Limits: `MAX_CUSTOM_QUICK_ACTIONS` (12), `MAX_QUICK_LABEL` (40), `MAX_QUICK_PROMPT` (2000).
 
+Project quick actions (stored in `project.json`, see [project-file.cjs.md](../../../electron/project-file.cjs.md)):
+
+- `projectActionsOf(projectSettings)`: the actions of the project, as `[{ id, label, prompt, isProject: true }]`; they exist only in that project.
+- `quickActionsFor(settings, projectSettings)`: what the chat shows — the project actions first, then the general ones, unless the project turned the general ones off (`quickActions.general === false`, which drops them when the project has actions of its own).
+- `MAX_PROJECT_QUICK_ACTIONS` (12) and `newProjectActionId()`: the cap and the id of a new project action (`project-…`).
+
