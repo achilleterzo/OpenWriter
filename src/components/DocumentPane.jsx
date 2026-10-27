@@ -72,6 +72,7 @@ function LiveDocumentPane({ tab, project, active, onOpenFull, onExtractImages, f
   const sourceLatest = useRef('')
   const applyingSource = useRef(false)
   // Testo (Markdown dell'editor) all'ultimo salvataggio o apertura; null finché non è noto (es. una bozza ripristinata).
+  // Il documento (non il suo Markdown: serializzarlo a ogni pausa costa molto su un file grande) all'ultimo salvataggio o apertura.
   const savedMarkdown = useRef(null)
   const cleanTimer = useRef(null)
   const [findOpen, setFindOpen] = useState(false)
@@ -188,7 +189,7 @@ function LiveDocumentPane({ tab, project, active, onOpenFull, onExtractImages, f
       clearTimeout(cleanTimer.current)
       cleanTimer.current = setTimeout(() => {
         const current = editorRef.current
-        if (current && !current.isDestroyed && savedMarkdown.current !== null && current.getMarkdown() === savedMarkdown.current) onClean?.(tab.id)
+        if (current && !current.isDestroyed && savedMarkdown.current !== null && current.state.doc.eq(savedMarkdown.current)) onClean?.(tab.id)
       }, 300)
     },
   })
@@ -199,7 +200,7 @@ function LiveDocumentPane({ tab, project, active, onOpenFull, onExtractImages, f
 
   // Quando la scheda non è modificata (appena aperta o salvata) quello che c'è nell'editor è il testo di riferimento.
   useEffect(() => {
-    if (editor && !tab.dirty) savedMarkdown.current = editor.getMarkdown()
+    if (editor && !tab.dirty) savedMarkdown.current = editor.state.doc
   }, [editor, tab.dirty, tab.filePath])
 
   function applySource(text) {
