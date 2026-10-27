@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { getMarkRange } from '@tiptap/core'
 import { useEditorState } from '@tiptap/react'
-import { Asterisk, Bold, Check, Code, ExternalLink, Image as ImageIcon, Italic, Link as LinkIcon, MessageSquarePlus, MessageSquareText, Pencil, Search, Strikethrough, Trash2, Unlink, X } from 'lucide-react'
+import { Anchor as AnchorIcon, Asterisk, Bold, Check, Code, ExternalLink, Image as ImageIcon, Italic, Maximize2, Link as LinkIcon, MessageSquarePlus, MessageSquareText, Pencil, Search, Strikethrough, Trash2, Unlink, X } from 'lucide-react'
 import FloatingToolbar, { FloatingButton, FloatingDivider } from './FloatingToolbar.jsx'
 import { resolveDocumentLink } from '../lib/imagePaths.js'
+import { anchorIds, anchorRaw, isAnchorHtml } from '../lib/rawMarkdownExtensions.js'
 import { selectedText } from '../lib/selectionText.js'
 import { t } from '../i18n/index.js'
 
@@ -65,7 +66,7 @@ function useSettledSelection(editor) {
  * `onDiscuss(text, { newChat })`, se c'è (assistente attivo), aggiunge i pulsanti per discutere il testo selezionato con l'assistente,
  * in una chat nuova o in quella aperta.
  */
-export default function SelectionToolbar({ editor, containerRef, request, documentPath, onOpenLink, onReplaceImage, onDiscuss }) {
+export default function SelectionToolbar({ editor, containerRef, request, documentPath, onOpenLink, onReplaceImage, onViewImage, onDiscuss }) {
   const state = useEditorState({
     editor,
     selector: ({ editor: current }) => (current
@@ -74,13 +75,16 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
         image: current.isActive('image'),
         href: current.getAttributes('link').href || '',
         imageHref: current.isActive('image') ? current.getAttributes('image').href || '' : '',
+        // Ancora HTML selezionata: blocco (più nomi, uno per riga) o in linea (uno solo).
+        anchor: current.state.selection.node?.type.name === 'htmlAnchor' ? { kind: 'block', ids: anchorIds(current.state.selection.node.attrs.raw) }
+          : current.state.selection.node?.type.name === 'htmlInline' && isAnchorHtml(current.state.selection.node.attrs.html) ? { kind: 'inline', ids: anchorIds(current.state.selection.node.attrs.html) } : null,
         empty: current.state.selection.empty,
         bold: current.isActive('bold'),
         italic: current.isActive('italic'),
         strike: current.isActive('strike'),
         code: current.isActive('code'),
       }
-      : { link: false, image: false, href: '', imageHref: '', empty: true, bold: false, italic: false, strike: false, code: false }),
+      : { link: false, image: false, anchor: null, href: '', imageHref: '', empty: true, bold: false, italic: false, strike: false, code: false }),
   })
   const settled = useSettledSelection(editor)
   // In modifica: { mode: 'link' | 'selection' | 'create', range, originalText, text, url } oppure, per un'immagine, { mode: 'image', range, alt, title } (descrizione) o { mode: 'imageLink', range, url } (collegamento).
@@ -106,6 +110,11 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
     } else {
       setEditing({ mode: 'create', range: { from: selection.from, to: selection.to }, originalText: '', text: '', url: '' })
     }
+  }
+
+  function startAnchor() {
+    const { selection } = editor.state
+    setEditing({ mode: 'anchor', range: { from: selection.from, to: selection.to }, kind: state.anchor.kind, text: state.anchor.ids.join(' ') })
   }
 
   function startImageDetails() {
@@ -146,7 +155,14 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
   function apply() {
     const url = normalizeUrl(editing.url)
     const chain = editor.chain().focus()
-    if (editing.mode === 'image') {
+    if (editing.mode === 'anchor') {
+      // Nomi separati da spazi; senza virgolette né simboli che romperebbero il tag. Vuoto = si toglie l'ancora.
+      const ids = [...new Set(editing.text.split(/\s+/).map((id) => id.replace(/["'<>&#]/g, '')).filter(Boolean))]
+      const selected = chain.setNodeSelection(editing.range.from)
+      if (!ids.length) selected.deleteSelection().run()
+      else if (editing.kind === 'block') selected.updateAttributes('htmlAnchor', { raw: anchorRaw(ids) }).run()
+      else selected.updateAttributes('htmlInline', { html: anchorRaw(ids.slice(0, 1)) }).run()
+    } else if (editing.mode === 'image') {
       // Testo alternativo (per chi non vede l'immagine) e titolo (suggerimento al passaggio del mouse): finiscono nel Markdown come ![alt](src "titolo").
       // Nel Markdown il testo alternativo sta tra [ ] e il titolo tra virgolette, su una riga: si ripuliscono i caratteri che romperebbero la sintassi.
       const alt = editing.alt.replace(/\s+/g, ' ').replace(/\[/g, '(').replace(/\]/g, ')').trim()
@@ -183,7 +199,31 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
   }
 
   let content
-  if (editing?.mode === 'image') {
+  // L'immagine selezionata si guarda in un visualizzatore con zoom: l'indirizzo è quello già caricabile nel DOM (file, incorporata o remota).
+  function viewImage() {
+    const dom = editor.view.nodeDOM(editor.state.selection.from)
+    const image = dom?.tagName === 'IMG' ? dom : dom?.querySelector?.('img')
+    if (image) onViewImage({ src: image.dataset.realSrc || image.currentSrc || image.src, alt: editor.getAttributes('image').alt || '' })
+  }
+
+  if (editing?.mode === 'anchor') {
+    content = (
+      <>
+        <AnchorIcon size={14} className="mx-1 shrink-0 text-accent-400" />
+        <input
+          ref={urlRef}
+          value={editing.text}
+          aria-label={t('Anchor name')}
+          placeholder={editing.kind === 'block' ? t('Anchor names, separated by spaces') : t('Anchor name')}
+          className={`${fieldClass} w-64`}
+          onChange={(event) => setEditing({ ...editing, text: event.target.value })}
+          onKeyDown={onKeyDown}
+        />
+        <FloatingButton label={t('Apply')} onClick={apply}><Check size={15} /></FloatingButton>
+        <FloatingButton label={t('Cancel')} onClick={finish}><X size={15} /></FloatingButton>
+      </>
+    )
+  } else if (editing?.mode === 'image') {
     // Testo alternativo in un'area di testo (di solito è una frase intera), poi il titolo su una riga. Invio applica; la barra si allarga in altezza.
     const onAltKeyDown = (event) => {
       if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); apply() } else onKeyDown(event)
@@ -240,10 +280,21 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
         <FloatingButton label={t('Cancel')} onClick={finish}><X size={15} /></FloatingButton>
       </>
     )
+  } else if (state.anchor) {
+    // Un'ancora selezionata: è un bersaglio per i link (`#nome`), non testo; si rinomina o si toglie.
+    content = (
+      <>
+        <AnchorIcon size={14} className="mx-1 shrink-0 text-accent-400" />
+        <span className="max-w-64 truncate px-1 text-xs text-slate-300" title={state.anchor.ids.map((id) => `#${id}`).join(' ')}>{state.anchor.ids.map((id) => `#${id}`).join(' ')}</span>
+        <FloatingButton label={t('Edit anchor')} onClick={startAnchor}><Pencil size={14} /></FloatingButton>
+        <FloatingButton label={t('Remove anchor')} danger onClick={() => editor.chain().focus().deleteSelection().run()}><Trash2 size={14} /></FloatingButton>
+      </>
+    )
   } else if (state.image) {
     // Un'immagine selezionata: gli strumenti del testo non servono; si può sceglierne un'altra o toglierla.
     content = (
       <>
+        {onViewImage && <FloatingButton label={t('View image')} onClick={() => viewImage()}><Maximize2 size={14} /></FloatingButton>}
         <FloatingButton label={t('Edit description and title')} onClick={startImageDetails}><Pencil size={14} /></FloatingButton>
         <FloatingDivider />
         {state.imageHref

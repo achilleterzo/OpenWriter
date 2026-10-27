@@ -1,4 +1,5 @@
 import {
+  Anchor as AnchorIcon,
   AlignCenter,
   AlignJustify,
   AlignLeft,
@@ -150,6 +151,7 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onL
         <ToolbarButton label={t('Link (Ctrl+K)')} active={active.link} onClick={onLink}><LinkIcon size={17} /></ToolbarButton>
         <ToolbarButton label={t('Insert image…')} onClick={onImage}><ImageIcon size={17} /></ToolbarButton>
         <ToolbarButton label={t('Insert footnote')} onClick={() => editor.chain().focus().insertFootnote().run()}><Asterisk size={17} /></ToolbarButton>
+        <ToolbarButton label={t('Insert anchor')} onClick={() => editor.chain().focus().insertAnchor().run()}><AnchorIcon size={17} /></ToolbarButton>
       </ToolbarGroup>
       <ToolbarGroup>
         <ToolbarMenu
