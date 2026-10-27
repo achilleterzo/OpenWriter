@@ -54,3 +54,15 @@ export function toEntry(action) {
 }
 
 export const quickActionsOf = (settings) => resolveQuickActions(settings?.quickActions)
+
+// Azioni specifiche del progetto (project.json → quickActions): [{ id, label, prompt, isProject: true }] e se mostrare anche quelle generali.
+export const MAX_PROJECT_QUICK_ACTIONS = 12
+export const newProjectActionId = () => `project-${Math.random().toString(36).slice(2, 10)}`
+export const projectActionsOf = (projectSettings) => (projectSettings?.quickActions?.actions || []).map((action) => ({ id: action.id, label: action.label, prompt: action.prompt, isProject: true }))
+
+// Quelle da mostrare nella chat: prima quelle del progetto, poi (salvo scelta contraria) le generali.
+export function quickActionsFor(settings, projectSettings) {
+  const project = projectActionsOf(projectSettings)
+  if (project.length && projectSettings?.quickActions?.general === false) return project
+  return [...project, ...quickActionsOf(settings)]
+}
