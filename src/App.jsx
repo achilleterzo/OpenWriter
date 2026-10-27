@@ -848,6 +848,11 @@ export default function App() {
       const editor = latest.current.editors[id]
       return editor ? editor.getMarkdown() : null
     },
+    // Accetta tutte le modifiche dell'assistente ancora da rivedere in un documento ("Approva per me": a fine lavoro, prima di salvare).
+    acceptPending(id) {
+      const editor = latest.current.editors[id]
+      if (editor && !editor.isDestroyed && getPending(editor.state).length) acceptAll(editor)
+    },
     // Salva un documento già associato a un file Markdown (usato a fine lavoro dell'assistente); gli altri restano modificati.
     // Le modifiche dell'assistente ancora da rivedere non si scrivono nel file: salvarle equivarrebbe ad accettarle al posto dell'utente.
     // Il documento resta modificato finché l'utente le accetta o le rifiuta e salva (`force`: solo per non perdere il lavoro, quando le schede stanno per essere sostituite).
