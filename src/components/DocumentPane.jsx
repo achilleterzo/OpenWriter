@@ -61,7 +61,7 @@ const DocumentLink = Link.configure({ openOnClick: false }).extend({
   },
 })
 
-function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onPendingRestored, onPendingChange, onNoteSelect, onBookmarkSelect, onStatus, onOpenLink, onSave, onDiscuss }) {
+function LiveDocumentPane({ tab, project, active, onOpenFull, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onPendingRestored, onPendingChange, onNoteSelect, onBookmarkSelect, onStatus, onOpenLink, onSave, onDiscuss }) {
   // Vista sorgente: il Markdown grezzo del documento in un campo di testo. È solo un modo di lavorare o copiare il testo:
   // note, assistente e ricerca restano sull'editor visuale, che si aggiorna man mano che si scrive.
   const [sourceOpen, setSourceOpen] = useState(false)
@@ -306,6 +306,12 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
   return (
     <div className={active ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
       <DocumentToolbar editor={editor} onSave={onSave} dirty={tab.dirty} sourceOpen={sourceOpen} onToggleSource={toggleSource} aiScore={tab.aiScore} onCheckAi={onCheckAi} onCopySource={() => navigator.clipboard.writeText(sourceLatest.current)} onImage={pickImage} onLink={() => { editor.commands.focus(); setLinkRequest((value) => value + 1) }} onFind={() => { if (findOpen) closeFind(); else { setFindOpen(true); setFocusToken((value) => value + 1) } }} findOpen={findOpen} />
+      {tab.largeFile && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 bg-amber-400/10 px-4 py-2 text-xs text-slate-200">
+          <span>{t('This file is very large ({size} MB): only the beginning is shown, read-only, so that the application stays responsive.', { size: (tab.largeFile.chars / 1048576).toFixed(1) })}</span>
+          {onOpenFull && <button type="button" className="rounded bg-amber-400/20 px-2 py-1 font-medium text-amber-200 transition hover:bg-amber-400/35" onClick={onOpenFull}>{t('Open the whole file in the editor')}</button>}
+        </div>
+      )}
       {pendingCount > 0 && !sourceOpen && (
         <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 bg-emerald-400/10 px-4 py-2 text-xs text-slate-200">
           <span>{t('{count} edits to review', { count: pendingCount })}</span>

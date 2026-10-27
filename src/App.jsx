@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import ActivityBar, { sideTabs } from './components/ActivityBar.jsx'
 import AiChatPanel from './components/AiChatPanel.jsx'
 import BrowserPane from './components/BrowserPane.jsx'
@@ -58,10 +59,26 @@ const compareVersions = (left, right) => {
 const isInside = (value, directory) => Boolean(value) && (samePath(value, directory) || isInsidePath(value, directory))
 
 let untitledCounter = 0
+// Un Markdown molto grande non si apre nell'editor: costruire il documento (e tutto ciò che lo segue a ogni modifica) per decine di MB blocca l'app per minuti.
+// Si apre come anteprima in sola lettura, con l'inizio del testo; l'avviso sopra il documento permette di aprirlo comunque per intero.
+const LARGE_DOCUMENT_CHARS = 1_500_000
+const PREVIEW_CHARS = 400_000
+
+// L'inizio del testo, tagliato a fine paragrafo (e chiudendo un eventuale blocco di codice rimasto aperto).
+function previewOf(markdown) {
+  const cut = markdown.lastIndexOf('\n\n', PREVIEW_CHARS)
+  const head = markdown.slice(0, cut > PREVIEW_CHARS / 2 ? cut : PREVIEW_CHARS)
+  return (head.match(/^\s*(```|~~~)/gm) || []).length % 2 ? `${head}\n\n\`\`\`` : head
+}
+
 function createTab(document = null, id = crypto.randomUUID()) {
   if (!document) {
     untitledCounter += 1
     return { id, filePath: null, sourcePath: null, untitled: untitledCounter, title: t('Untitled {untitledCounter}', { untitledCounter }), content: t('<h2>Start writing</h2><p>This is your new document.</p>'), contentType: 'html', dirty: false }
+  }
+  // Anteprima di un Markdown molto grande: sola lettura, e mai risalvabile (contiene solo l'inizio del file).
+  if (document.format === 'markdown' && !document.full && String(document.content).length > LARGE_DOCUMENT_CHARS) {
+    return { id, filePath: null, sourcePath: document.filePath, title: baseName(document.filePath), content: previewOf(String(document.content)), contentType: 'markdown', dirty: false, readOnly: true, largeFile: { chars: String(document.content).length } }
   }
   // Solo i Markdown si possono risalvare nello stesso file: DOCX e PDF diventano nuovi documenti.
   const savable = document.format === 'markdown'
@@ -151,6 +168,8 @@ export default function App() {
   // Documenti nel contesto della chat: il documento attivo (di default sì) e gli altri aperti, "pinnati" per id di scheda.
   const [contextPins, setContextPins] = useState({ includeActive: true, pinnedIds: [] })
   const [chatRequest, setChatRequest] = useState(null)
+  // Apertura di un file molto grande in corso: { title, chars } (vedi workspace.openFull).
+  const [largeLoading, setLargeLoading] = useState(null)
   const [conversationId, setConversationId] = useState(null)
   const [settingsVersion, setSettingsVersion] = useState(0)
   const [notes, setNotes] = useState([])
@@ -500,6 +519,24 @@ export default function App() {
       setStatus(t('Opened'))
     },
     // Pulsante "Apri" di una scheda fissata chiusa: rilegge il documento dal file.
+    // Apre per intero un file grande (da anteprima): l'editor può impiegare molto e l'app non risponde nel frattempo, quindi prima si mostra un avviso
+    // di caricamento (l'animazione gira anche con il thread dell'interfaccia occupato) e solo dopo si costruisce il documento.
+    async openFull(id) {
+      const tab = latest.current.tabs.find((item) => item.id === id)
+      if (!tab?.largeFile || !tab.sourcePath) return
+      setLargeLoading({ title: tab.title, chars: tab.largeFile.chars })
+      await sleep(80)
+      try {
+        let document
+        try { document = await electronAPI.openDocumentPath(tab.sourcePath) } catch { document = await electronAPI.reopenDocument(tab.sourcePath) }
+        setTabs((current) => current.map((item) => (item.id === id ? { ...createTab({ ...document, full: true }, id), pinned: item.pinned } : item)))
+      } catch (error) {
+        console.error(error)
+        setStatus(t('Could not open the file'))
+      } finally {
+        setTimeout(() => setLargeLoading(null), 0)
+      }
+    },
     async reopenTab(id) {
       const tab = latest.current.tabs.find((item) => item.id === id)
       if (!tab?.closed) return
@@ -726,6 +763,8 @@ export default function App() {
       if (!currentProject && !isAbsolutePath(given)) return null
       const wanted = isAbsolutePath(given) ? given : `${currentProject}/${given}`
       const tab = currentTabs.filter(isLive).find((item) => samePath(item.filePath, wanted) || samePath(item.sourcePath, wanted))
+      // L'anteprima di un file grande contiene solo l'inizio: l'assistente legge il file da disco.
+      if (tab?.largeFile) return null
       const editor = tab && currentEditors[tab.id]
       return editor ? { text: editor.getMarkdown(), dirty: tab.dirty } : null
     },
@@ -1165,8 +1204,16 @@ export default function App() {
               ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab.id} onStatus={setStatus} onInteract={workspace.promoteTab} onNavigate={workspace.changeImage} />
               : tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
-              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />))}
+              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onOpenFull={() => workspace.openFull(tab.id)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />))}
           </section>
+          {largeLoading && (
+            <div role="status" aria-live="polite" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+              <div className="flex max-w-sm items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-5 py-4 text-sm text-slate-200 shadow-xl">
+                <Loader2 size={20} className="shrink-0 animate-spin text-accent-400" />
+                <span>{t('Opening “{title}” ({size} MB)… the application may not respond for a while.', { title: largeLoading.title, size: (largeLoading.chars / 1048576).toFixed(1) })}</span>
+              </div>
+            </div>
+          )}
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>
             <span className="shrink-0">{status}</span>
