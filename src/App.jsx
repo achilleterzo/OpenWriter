@@ -194,8 +194,12 @@ export default function App() {
   const lastDocumentId = useRef(null)
   const lastBrowserId = useRef(null)
 
+  // Le schede documento si montano (e costruiscono il loro editor) solo quando si guardano la prima volta, o se hanno modifiche da conservare: riaprire un progetto
+  // con molte schede pesanti non le costruisce tutte insieme.
+  const mountedTabs = useRef(new Set())
   const activeTab = tabs.find((tab) => tab.id === activeId) || tabs[0]
   if (isLive(activeTab)) lastDocumentId.current = activeTab.id
+  if (activeTab) mountedTabs.current.add(activeTab.id)
   // Il documento "di contesto" è quello attivo, oppure l'ultimo usato quando in primo piano c'è il browser.
   const contextTab = isLive(activeTab) ? activeTab : tabs.find((tab) => tab.id === lastDocumentId.current && isLive(tab)) || tabs.find(isLive) || tabs.find(isDocument)
 
@@ -1282,7 +1286,15 @@ export default function App() {
 
   const openDocuments = useMemo(() => tabs.filter(isLive).map((item) => ({ id: item.id, title: item.title })), [tabs])
 
-  if (!ready) return <div className="h-screen bg-slate-950" />
+  // Caricamento (avvio o cambio di progetto): una schermata che lo dice, non una pagina vuota. La rotellina gira sul compositore, anche quando il resto è occupato.
+  if (!ready) {
+    return (
+      <div role="status" aria-live="polite" className="flex h-screen flex-col items-center justify-center gap-3 bg-slate-950 text-sm text-slate-400">
+        <Loader2 size={28} className="animate-spin text-accent-400" />
+        <span>{t('Loading the project…')}</span>
+      </div>
+    )
+  }
 
   // Larghezze dei pannelli laterali: quelle scelte dall'utente, ridotte solo se la finestra è troppo stretta.
   const leftVisible = Boolean(sideTab)
@@ -1346,7 +1358,9 @@ export default function App() {
               ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onStatus={setStatus} onInteract={workspace.promoteTab} onNavigate={workspace.changeImage} />
               : tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
-              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onOpenFull={() => workspace.openFull(tab.id)} onExtractImages={() => workspace.extractImages(tab.sourcePath)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />))}
+              : (mountedTabs.current.has(tab.id) || tab.dirty || tab.pending)
+              ? <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onOpenFull={() => workspace.openFull(tab.id)} onExtractImages={() => workspace.extractImages(tab.sourcePath)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />
+              : null))}
           </section>
           <ToastHost />
           {largeLoading && (
