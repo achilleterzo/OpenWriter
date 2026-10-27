@@ -446,7 +446,7 @@ const TOOLS = [
       properties: {
         pattern: { type: 'string', description: 'text to find, or a regular expression with regex=true' },
         query: { type: 'string', description: 'alias of pattern' },
-        regex: { type: 'boolean', description: 'true to read the pattern as a regular expression (default false)' },
+        regex: { type: 'boolean', description: 'true to read the pattern as a regular expression (default: literal text, but a pattern with | or other regex symbols such as \s, \w, .* is read as a regular expression, so a|b works); false forces literal text' },
         caseSensitive: { type: 'boolean', description: 'default false' },
         path: { type: 'string', description: 'optional: folder (or file) relative to the project root' },
         glob: { type: 'string', description: 'optional: file names to search, comma separated (default: .md, .markdown, .txt)' },
@@ -460,7 +460,7 @@ const TOOLS = [
       // Con l'app aperta, il testo non salvato dei documenti aperti vale al posto del file su disco (altrimenti si cercherebbe in una versione vecchia).
       let overrides = []
       try { overrides = JSON.parse(await bridgeCall('dirty_documents', {})) } catch { /* app chiusa o modifiche degli agenti spente: si cerca su disco */ }
-      return projectTools.search({ overrides, pattern: args.pattern ?? args.query, regex: isTrue(args.regex), caseSensitive: isTrue(args.caseSensitive), path: args.path, glob: args.glob, output: args.output || 'files', context: args.context, maxResults: args.maxResults })
+      return projectTools.search({ overrides, pattern: args.pattern ?? args.query, regex: args.regex === undefined || args.regex === null || args.regex === '' ? undefined : isTrue(args.regex), caseSensitive: isTrue(args.caseSensitive), path: args.path, glob: args.glob, output: args.output || 'files', context: args.context, maxResults: args.maxResults })
     },
   },
   {

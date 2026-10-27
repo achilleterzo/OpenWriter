@@ -13,7 +13,8 @@ const { Worker, isMainThread, parentPort, workerData } = require('node:worker_th
 const SKIPPED_NAMES = new Set(['.ow', '.git', 'node_modules'])
 const DEFAULT_EXTENSIONS = /\.(md|markdown|mdown|txt)$/i
 const MAX_FILE_BYTES = 2 * 1024 * 1024
-const MAX_PATTERN_CHARS = 300
+// Abbastanza per un'alternanza di decine di nomi (un inventario: a|b|c|…); la regex gira comunque in un worker con scadenza.
+const MAX_PATTERN_CHARS = 2000
 const DEFAULT_RESULTS = 50
 const MAX_RESULTS = 500
 const MAX_CONTEXT = 5
@@ -36,7 +37,7 @@ function globMatchers(glob) {
 function buildExpression({ pattern, regex, caseSensitive }) {
   const source = String(pattern ?? '')
   if (!source.trim()) throw new Error('The pattern is empty')
-  if (source.length > MAX_PATTERN_CHARS) throw new Error(`The pattern is too long (at most ${MAX_PATTERN_CHARS} characters)`)
+  if (source.length > MAX_PATTERN_CHARS) throw new Error(`The pattern is too long (at most ${MAX_PATTERN_CHARS} characters): split it into several searches`)
   try { return new RegExp(regex ? source : escapeRegExp(source), caseSensitive ? '' : 'i') } catch (error) { throw new Error(error.message.startsWith('Invalid regular expression') ? error.message : `Invalid regular expression: ${error.message}`) }
 }
 
@@ -145,25 +146,34 @@ if (!isMainThread && workerData?.type === 'project-search') {
   try { parentPort.postMessage({ ok: true, value: runSearch(workerData.options) }) } catch (error) { parentPort.postMessage({ ok: false, error: error.message }) }
 }
 
-function searchFiles(options) {
+function searchFiles(input) {
+  // Senza `regex` esplicito, un pattern con "|" (alternanza a|b) o con simboli che solo una regex usa (\s \w \d , .* .+, [^…], (?:…)) si legge come
+  // espressione regolare e il risultato lo dice; `regex: false` forza il testo letterale.
+  const options = { ...input }
+  let autoRegex = false
+  if (options.regex === undefined || options.regex === null || options.regex === '') {
+    autoRegex = /\||\\[swdbSWDB]|\.[*+]|\[\^|\(\?[:=!]/.test(String(options.pattern ?? ''))
+    options.regex = autoRegex
+  }
+  const mark = (result) => (autoRegex ? { ...result, autoRegex: true } : result)
   // Il testo semplice non può essere catastrofico: nel thread. La regex va in un worker con scadenza.
   if (!options.regex) return Promise.resolve().then(() => runSearch(options))
   buildExpression(options)
   return new Promise((resolve, reject) => {
     let worker
     try { worker = new Worker(__filename, { workerData: { type: 'project-search', options } }) } catch {
-      try { resolve(runSearch({ ...options, guardNested: true })) } catch (error) { reject(error) }
+      try { resolve(mark(runSearch({ ...options, guardNested: true }))) } catch (error) { reject(error) }
       return
     }
     const timer = setTimeout(() => { worker.terminate(); reject(new Error('The search took too long and was stopped: simplify the regular expression or narrow the search')) }, REGEX_TIMEOUT_MS)
-    worker.once('message', (message) => { clearTimeout(timer); worker.terminate(); if (message.ok) resolve(message.value); else reject(new Error(message.error)) })
+    worker.once('message', (message) => { clearTimeout(timer); worker.terminate(); if (message.ok) resolve(mark(message.value)); else reject(new Error(message.error)) })
     worker.once('error', (error) => { clearTimeout(timer); reject(error) })
   })
 }
 
 // Testo per un modello: una riga per file ("percorso (N)"), o per corrispondenza ("percorso:riga: testo"), con il contesto indentato.
 function formatSearch(result) {
-  const head = `${result.totalMatches} matches in ${result.filesMatched} files (${result.filesSearched} files searched${result.unsavedEditsIncluded ? `, ${result.unsavedEditsIncluded} with unsaved edits from the editor` : ''}) for ${result.regex ? 'regex' : 'text'} “${result.pattern}”`
+  const head = `${result.totalMatches} matches in ${result.filesMatched} files (${result.filesSearched} files searched${result.unsavedEditsIncluded ? `, ${result.unsavedEditsIncluded} with unsaved edits from the editor` : ''}) for ${result.regex ? 'regex' : 'text'} “${result.pattern}”${result.autoRegex ? ' (read as a regular expression because it contains regex symbols; pass regex=false for the literal text)' : ''}`
   if (result.output === 'count') return `${head}${result.hint ? `. ${result.hint}` : ''}`
   if (!result.results.length) return `${head}.${result.hint ? ` ${result.hint}` : ''}`
   const body = result.results.map((entry) => {
