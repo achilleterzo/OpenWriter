@@ -9,7 +9,25 @@ import { markdownLinkText, markdownTarget } from './markdownSyntax.js'
 const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
 const PRELOAD_MARGIN = '1500px 0px'
 const FALLBACK_HEIGHT = '240px'
-const naturalSizes = new Map() // indirizzo → { width, height }, per riservare lo spazio anche a immagini ricreate
+// indirizzo → { width, height }, per riservare lo spazio anche a immagini ricreate. Limitata (le meno recenti escono) e senza trattenere i testi enormi
+// delle immagini incorporate (data:…): per quelle la chiave è un'impronta breve; un'eventuale collisione sbaglia solo lo spazio riservato, corretto al caricamento.
+const MAX_REMEMBERED_SIZES = 500
+const sizes = new Map()
+const sizeKey = (source) => (source.length > 200 ? `${source.length}:${source.slice(0, 80)}:${source.slice(-80)}` : source)
+const naturalSizes = {
+  get(source) {
+    const key = sizeKey(source)
+    const size = sizes.get(key)
+    if (size) { sizes.delete(key); sizes.set(key, size) }
+    return size
+  },
+  set(source, size) {
+    const key = sizeKey(source)
+    sizes.delete(key)
+    sizes.set(key, size)
+    if (sizes.size > MAX_REMEMBERED_SIZES) sizes.delete(sizes.keys().next().value)
+  },
+}
 
 const lazyImages = typeof IntersectionObserver === 'undefined' ? null : new IntersectionObserver((entries) => {
   for (const entry of entries) entry.target.__lazy?.(entry.isIntersecting)
