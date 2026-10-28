@@ -22,15 +22,21 @@ function renameWithRetry(from, to) {
 /**
  * Scrittura atomica: il contenuto va prima in `<file>.tmp` e poi sostituisce il file, così un crash a metà non lascia un file troncato.
  * Se la sostituzione resta bloccata dopo i tentativi, come ultima risorsa si scrive sul posto (non atomico, ma il lavoro non va perso).
+ * `mode` (es. 0o600 per i segreti): i permessi con cui nasce il file temporaneo, quindi anche quelli del file finale (la rinomina li conserva);
+ * non si restringono dopo la scrittura, quando il contenuto sarebbe già leggibile.
  */
-function writeFileAtomic(file, content) {
+function writeFileAtomic(file, content, { mode } = {}) {
   const temporary = `${file}.tmp`
-  fs.writeFileSync(temporary, content)
+  if (mode !== undefined) {
+    // `mode` vale solo alla creazione: un .tmp rimasto da un arresto improvviso potrebbe avere permessi più larghi, quindi lo si ricrea.
+    try { fs.rmSync(temporary, { force: true }) } catch { /* se resta, wx sotto fallisce invece di scrivere il segreto */ }
+    fs.writeFileSync(temporary, content, { mode, flag: 'wx' })
+  } else fs.writeFileSync(temporary, content)
   try {
     renameWithRetry(temporary, file)
   } catch (error) {
     if (!RETRYABLE.has(error.code)) throw error
-    fs.writeFileSync(file, content)
+    fs.writeFileSync(file, content, mode === undefined ? undefined : { mode })
     try { fs.rmSync(temporary, { force: true }) } catch { /* resta un .tmp innocuo */ }
   }
 }

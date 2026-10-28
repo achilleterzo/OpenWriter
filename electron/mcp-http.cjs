@@ -27,8 +27,10 @@ function createMcpHttp({ directory, serverPath, packaged, execPath }) {
 
   function writeState(state) {
     fs.mkdirSync(directory, { recursive: true })
-    writeFileAtomic(stateFile, JSON.stringify(state))
-    try { fs.chmodSync(stateFile, 0o600) } catch { /* su Windows vale la sicurezza della cartella dell'utente */ }
+    // Il token è un segreto: il file nasce già leggibile solo dall'utente (su Windows vale la sicurezza della cartella dell'utente).
+    writeFileAtomic(stateFile, JSON.stringify(state), { mode: 0o600 })
+    // Un file creato da una versione precedente può avere permessi più larghi.
+    try { fs.chmodSync(stateFile, 0o600) } catch { /* come sopra */ }
   }
 
   const freePort = () => new Promise((resolve, reject) => {

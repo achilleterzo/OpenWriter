@@ -104,7 +104,7 @@ function createMcpBridge({ directory, getWindow, getProjectPath, isEnabled = () 
       server.listen(0, '127.0.0.1', () => {
         try {
           fs.mkdirSync(directory, { recursive: true })
-          writeFileAtomic(bridgeFile, JSON.stringify({ port: server.address().port, token, pid: process.pid, startedAt: new Date().toISOString() }))
+          writeFileAtomic(bridgeFile, JSON.stringify({ port: server.address().port, token, pid: process.pid, startedAt: new Date().toISOString() }), { mode: 0o600 })
           try { fs.chmodSync(bridgeFile, 0o600) } catch { /* su Windows vale la sicurezza della cartella dell'utente */ }
           resolve(true)
         } catch (error) {
