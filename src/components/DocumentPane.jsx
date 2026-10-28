@@ -354,5 +354,7 @@ function ClosedDocumentPane({ tab, active, onReopen }) {
 }
 
 export default function DocumentPane(props) {
-  return props.tab.closed ? <ClosedDocumentPane {...props} /> : <LiveDocumentPane {...props} />
+  // Il passaggio dall'anteprima di un file grande al file intero mantiene l'id della scheda: la chiave forza un nuovo editor, che altrimenti
+  // conserverebbe il testo troncato e lo salverebbe sul file originale.
+  return props.tab.closed ? <ClosedDocumentPane {...props} /> : <LiveDocumentPane key={props.tab.largeFile ? 'preview' : 'full'} {...props} />
 }
