@@ -1,6 +1,6 @@
 # lineDiff.js
 
-Source: [`src/lib/lineDiff.js`](../../../src/lib/lineDiff.js)
+Source: [`src/lib/lineDiff.js`](../../../../src/lib/lineDiff.js)
 
 Line-based diff used by the version diff dialog.
 

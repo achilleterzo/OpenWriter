@@ -23,6 +23,24 @@ const MAX_CONTEXT_CHARS = 20000
  * Le chiavi sconosciute di project.json vengono conservate.
  */
 const cleanLanguages = (value) => (Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === 'string' && item))] : [])
+// Azioni rapide del progetto: { actions: [{ id, label, prompt }], general } (`general`: mostrare anche quelle generali). Stesse misure di quelle generali.
+const MAX_PROJECT_QUICK_ACTIONS = 12
+function cleanQuickActions(value) {
+  const saved = value && typeof value === 'object' ? value : {}
+  const seen = new Set()
+  const actions = []
+  for (const item of Array.isArray(saved.actions) ? saved.actions : []) {
+    const label = String(item?.label ?? '').trim().slice(0, 40)
+    const prompt = String(item?.prompt ?? '').trim().slice(0, 2000)
+    let id = /^[A-Za-z0-9_-]{1,40}$/.test(String(item?.id ?? '')) ? String(item.id) : `project-${Math.random().toString(36).slice(2, 10)}`
+    if (!label || !prompt || seen.has(id)) continue
+    seen.add(id)
+    actions.push({ id, label, prompt })
+    if (actions.length >= MAX_PROJECT_QUICK_ACTIONS) break
+  }
+  return { actions, general: saved.general !== false }
+}
+
 const cleanSkillIds = (value) => (Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === 'string' && /^[a-z0-9][a-z0-9-]{0,59}$/.test(item)))].slice(0, 50) : [])
 
 // `getMainPath`: cartella del progetto main, che tiene cronologia e note dei documenti fuori dal progetto aperto.
@@ -80,6 +98,7 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
       options: { autoVersions: true, ...(parsed.options && typeof parsed.options === 'object' ? parsed.options : {}) },
       spellcheck: { languages: [], ...(parsed.spellcheck && typeof parsed.spellcheck === 'object' ? parsed.spellcheck : {}) },
       editor: cleanEditor(parsed.editor),
+      quickActions: cleanQuickActions(parsed.quickActions),
       skills: { ...(parsed.skills && typeof parsed.skills === 'object' ? parsed.skills : {}), active: cleanSkillIds(parsed.skills?.active) },
     }
   }
@@ -206,6 +225,7 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
       options: { autoVersions: settings.options.autoVersions !== false },
       spellcheck: { languages: cleanLanguages(settings.spellcheck.languages) },
       editor: cleanEditor(settings.editor),
+      quickActions: cleanQuickActions(settings.quickActions),
       skills: { active: settings.skills.active },
     }
   }
@@ -223,6 +243,14 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     writeAtomic(settingsFile(), JSON.stringify(settings, null, 2))
     writeAtomic(contextFile(), String(ai?.context || '').slice(0, MAX_CONTEXT_CHARS))
     return getSettings()
+  }
+
+  // Azioni rapide del progetto: si salvano da sole, senza toccare il resto delle impostazioni.
+  function setQuickActions(value) {
+    const settings = readSettings()
+    settings.quickActions = cleanQuickActions(value)
+    writeAtomic(settingsFile(), JSON.stringify(settings, null, 2))
+    return settings.quickActions
   }
 
   // Skill attive di default: si salvano da sole, senza toccare il resto delle impostazioni.
@@ -314,7 +342,7 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     return true
   }
 
-  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, getContextChain, saveSettings, setActiveSkills, autoVersionsEnabled, addVersion, listVersions, getVersion, deleteVersion }
+  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, getContextChain, saveSettings, setQuickActions, setActiveSkills, autoVersionsEnabled, addVersion, listVersions, getVersion, deleteVersion }
 }
 
 module.exports = { createProjectFile }

@@ -1,6 +1,6 @@
 # pendingChangesExtension.js
 
-Source: [`src/lib/pendingChangesExtension.js`](../../../src/lib/pendingChangesExtension.js)
+Source: [`src/lib/pendingChangesExtension.js`](../../../../src/lib/pendingChangesExtension.js)
 
 The assistant's edits "on hold". A direct edit stays applied to the document, but each one is marked as to be reviewed: the new text is highlighted and above it the previous version is shown with Accept and Reject buttons. Accepting keeps it; rejecting puts back the earlier text.
 

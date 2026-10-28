@@ -7,17 +7,20 @@ const { writeFileAtomic } = require('./atomic-write.cjs')
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/
 const MAX_TITLE_CHARS = 200
 const MAX_MESSAGE_CHARS = 200000
+const MAX_PASSAGES = 10
+const MAX_PASSAGE_CHARS = 20000
 const SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,59}$/
 const tokenCount = (value) => (Number.isInteger(value) && value >= 0 ? value : 0)
 const skillIds = (value) => [...new Set((Array.isArray(value) ? value : []).filter((id) => typeof id === 'string' && SKILL_ID_PATTERN.test(id)))].slice(0, 50)
 
 /**
  * Le conversazioni con l'assistente vivono in `<progetto>/.ow/chat/<id>.json`:
- *   { id, title, createdAt, updatedAt, parentId, branchedAt, contextFrom: [id…], skillOverrides: { add: [id…], remove: [id…] }, messages: [{ role, content, at, error?, thinking?, name?, toolCall?, images?, files?, usage? }] }
+ *   { id, title, createdAt, updatedAt, parentId, branchedAt, contextFrom: [id…], skillOverrides: { add: [id…], remove: [id…] }, passages: [{ text, title, filePath }], messages: [{ role, content, at, error?, thinking?, name?, toolCall?, images?, files?, usage? }] }
  * `role` può essere 'tool': il risultato di uno strumento (`name`) chiamato dall'assistente (`toolCall` nel messaggio precedente).
  * `parentId` e `branchedAt` descrivono un ramo (indice dell'ultimo messaggio copiato dalla conversazione di origine);
  * `contextFrom` elenca altre conversazioni da fornire come contesto precedente; `skillOverrides` aggiunge o toglie skill di scrittura
- * rispetto a quelle attive di default nel progetto.
+ * rispetto a quelle attive di default nel progetto; `passages` sono brani del documento in discussione: se ci sono, al modello vanno
+ * loro al posto del documento intero.
  * Sono JSON leggibili: servono anche da log e possono essere versionati con il progetto.
  */
 function createChatStore({ getProjectPath }) {
@@ -51,6 +54,10 @@ function createChatStore({ getProjectPath }) {
       branchedAt: Number.isInteger(input.branchedAt) ? input.branchedAt : null,
       contextFrom: [...new Set((Array.isArray(input.contextFrom) ? input.contextFrom : []).map(optionalId).filter(Boolean))].filter((id) => id !== input.id),
       skillOverrides: { add: skillIds(input.skillOverrides?.add), remove: skillIds(input.skillOverrides?.remove) },
+      passages: (Array.isArray(input.passages) ? input.passages : [])
+        .filter((passage) => passage && typeof passage.text === 'string' && passage.text.trim())
+        .slice(0, MAX_PASSAGES)
+        .map((passage) => ({ text: text(passage.text, MAX_PASSAGE_CHARS), title: text(passage.title, MAX_TITLE_CHARS), filePath: typeof passage.filePath === 'string' ? passage.filePath : null })),
       messages: (Array.isArray(input.messages) ? input.messages : [])
         .filter((message) => message && ['user', 'assistant', 'tool'].includes(message.role))
         .map((message) => ({
@@ -61,7 +68,7 @@ function createChatStore({ getProjectPath }) {
           // Ragionamento mostrato dal modello e chiamate agli strumenti restano nel log della conversazione.
           // Contesto allegato dall'app (es. una nota): etichetta mostrata all'utente, dettaglio inviato al modello, id della nota per il collegamento.
           ...(message.role === 'user' && message.attachment && typeof message.attachment === 'object'
-            ? { attachment: { label: text(message.attachment.label, 300), detail: text(message.attachment.detail, MAX_MESSAGE_CHARS), ...(message.attachment.noteId ? { noteId: text(message.attachment.noteId, 80) } : {}) } }
+            ? { attachment: { label: text(message.attachment.label, 300), detail: text(message.attachment.detail, MAX_MESSAGE_CHARS), ...(message.attachment.noteId ? { noteId: text(message.attachment.noteId, 80) } : {}), ...(message.attachment.source === 'mcp' ? { source: 'mcp', agent: text(message.attachment.agent, 60) } : {}) } }
             : {}),
           ...(message.role === 'assistant' && message.nextPrompt ? { nextPrompt: text(message.nextPrompt, 300) } : {}),
           ...(message.thinking ? { thinking: text(message.thinking, MAX_MESSAGE_CHARS) } : {}),
@@ -136,11 +143,15 @@ function createChatStore({ getProjectPath }) {
   const attachmentExtension = (mime) => ATTACHMENT_TYPES.find(([, known]) => known === attachmentMime(mime))[0]
 
   function saveAttachment({ mime, data }) {
-    const id = crypto.randomUUID()
     const buffer = Buffer.from(String(data || ''), 'base64')
     if (!buffer.length) throw new Error(t('Empty attachment'))
-    fs.mkdirSync(attachmentsDirectory(), { recursive: true })
-    fs.writeFileSync(path.join(attachmentsDirectory(), `${id}.${attachmentExtension(mime)}`), buffer)
+    // L'id deriva dal contenuto: la stessa immagine riguardata più volte (o riallegata) è un solo file.
+    const id = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 32)
+    const file = path.join(attachmentsDirectory(), `${id}.${attachmentExtension(mime)}`)
+    if (!fs.existsSync(file)) {
+      fs.mkdirSync(attachmentsDirectory(), { recursive: true })
+      fs.writeFileSync(file, buffer)
+    }
     return { id, mime: attachmentMime(mime) }
   }
 
@@ -170,7 +181,26 @@ function createChatStore({ getProjectPath }) {
         for (const [extension] of ATTACHMENT_TYPES) fs.rmSync(path.join(attachmentsDirectory(), `${attachment}.${extension}`), { force: true })
       }
     }
+    sweepAttachments()
     return true
+  }
+
+  // Toglie gli allegati che nessuna conversazione cita più (restano quando una chat viene modificata o troncata, o con versioni vecchie).
+  // Quelli recenti si lasciano: potrebbero appartenere a una conversazione non ancora salvata.
+  function sweepAttachments() {
+    if (!fs.existsSync(attachmentsDirectory())) return
+    const used = new Set()
+    for (const name of fs.existsSync(directory()) ? fs.readdirSync(directory()) : []) {
+      if (!name.endsWith('.json')) continue
+      try { for (const attachment of attachmentIds(JSON.parse(fs.readFileSync(path.join(directory(), name), 'utf8')))) used.add(attachment) } catch { return } // un JSON illeggibile: meglio non togliere nulla
+    }
+    const limit = Date.now() - 10 * 60 * 1000
+    for (const name of fs.readdirSync(attachmentsDirectory())) {
+      const file = path.join(attachmentsDirectory(), name)
+      try {
+        if (!used.has(path.parse(name).name) && fs.statSync(file).mtimeMs < limit) fs.rmSync(file, { force: true })
+      } catch { /* file già sparito */ }
+    }
   }
 
   // Copia una conversazione (e gli allegati che usa) nella chat di un altro progetto: serve a proseguirla lì.

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Pencil, Plus, RotateCcw, X } from 'lucide-react'
 import { useDialogs } from './Dialogs.jsx'
-import { MAX_CUSTOM_QUICK_ACTIONS, MAX_QUICK_LABEL, MAX_QUICK_PROMPT, defaultTextOf, newCustomId, quickActionsOf, resolveQuickActions, toEntry } from '../lib/quickActions.js'
+import { MAX_CUSTOM_QUICK_ACTIONS, MAX_PROJECT_QUICK_ACTIONS, newProjectActionId, MAX_QUICK_LABEL, MAX_QUICK_PROMPT, defaultTextOf, newCustomId, quickActionsOf, resolveQuickActions, toEntry } from '../lib/quickActions.js'
 import { t } from '../i18n/index.js'
 
-const ai = window.electronAPI?.ai
+const electronAPI = window.electronAPI
+const ai = electronAPI?.ai
 const fieldClass = 'mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400'
 const iconButton = 'rounded p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-slate-50 disabled:opacity-30 disabled:hover:bg-transparent'
 
@@ -58,7 +59,7 @@ function ActionDialog({ initial, onSave, onClose }) {
 
 // Azioni rapide della chat. Quelle di default non si eliminano: si modificano e si ripristinano (una per una o tutte insieme).
 // Quelle create dall'utente si possono anche eliminare.
-export default function QuickActionsSettings() {
+function GeneralQuickActions() {
   const dialogs = useDialogs()
   const [actions, setActions] = useState(null)
   // Almeno una modifica rispetto ai default (ordine, testi, azioni aggiunte): abilita "Ripristina tutte".
@@ -152,5 +153,98 @@ export default function QuickActionsSettings() {
 
       {editing && <ActionDialog initial={editing} onSave={saveEditing} onClose={() => setEditing(null)} />}
     </section>
+  )
+}
+
+
+// Azioni rapide specifiche del progetto (project.json): compaiono nella chat solo in questo progetto, prima di quelle generali.
+function ProjectQuickActions({ project }) {
+  const [state, setState] = useState(null)
+  const [editing, setEditing] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!electronAPI?.getProjectSettings) return
+    electronAPI.getProjectSettings().then((loaded) => setState(loaded.quickActions || { actions: [], general: true })).catch((reason) => setError(reason.message))
+  }, [project])
+
+  async function save(next) {
+    setState(next)
+    try {
+      setState(await electronAPI.setProjectQuickActions(next))
+      setError('')
+    } catch (reason) {
+      setError(reason.message)
+    }
+  }
+
+  if (!state) return <p className="text-sm text-slate-500">{error || t('Loading…')}</p>
+  const actions = state.actions
+  const move = (index, step) => {
+    const target = index + step
+    if (target < 0 || target >= actions.length) return
+    const next = [...actions]
+    ;[next[index], next[target]] = [next[target], next[index]]
+    save({ ...state, actions: next })
+  }
+  function saveEditing(action) {
+    const { isNew, isDefault, ...saved } = action
+    save({ ...state, actions: isNew ? [...actions, saved] : actions.map((item) => (item.id === saved.id ? saved : item)) })
+    setEditing(null)
+  }
+
+  return (
+    <section className="grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+      <p className="max-w-xl text-sm leading-6 text-slate-400">{t('Actions that appear only in this project, in the chat before the general ones: for example to extract documentation from the source code, or to check a document against the code. They are saved in the project (.ow/project.json).')}</p>
+      <label className="flex items-start gap-2 text-sm text-slate-300">
+        <input type="checkbox" className="mt-1 accent-accent-500" checked={state.general} onChange={(event) => save({ ...state, general: event.target.checked })} />
+        <span>{t('Also show the general actions')}<span className="block text-xs text-slate-500">{t('Turn off to show only the actions of this project.')}</span></span>
+      </label>
+
+      {actions.length === 0
+        ? <p className="text-sm text-slate-500">{t('No actions for this project yet.')}</p>
+        : (
+          <ul className="grid grid-cols-1 gap-1.5">
+            {actions.map((action, index) => (
+              <li key={action.id} className="flex min-w-0 items-center gap-1 rounded-lg border border-slate-800 bg-slate-900/60 py-1.5 pl-3 pr-1.5">
+                <button type="button" title={action.prompt} className="min-w-0 flex-1 overflow-hidden text-left" onClick={() => setEditing(action)}>
+                  <span className="block truncate text-sm font-medium text-slate-100">{action.label}</span>
+                  <span className="block truncate text-xs text-slate-500">{action.prompt}</span>
+                </button>
+                <button type="button" aria-label={t('Move up')} title={t('Move up')} disabled={index === 0} className={iconButton} onClick={() => move(index, -1)}><ChevronUp size={14} /></button>
+                <button type="button" aria-label={t('Move down')} title={t('Move down')} disabled={index === actions.length - 1} className={iconButton} onClick={() => move(index, 1)}><ChevronDown size={14} /></button>
+                <button type="button" aria-label={t('Edit')} title={t('Edit')} className={iconButton} onClick={() => setEditing(action)}><Pencil size={14} /></button>
+                <button type="button" aria-label={t('Remove')} title={t('Remove')} className={iconButton} onClick={() => save({ ...state, actions: actions.filter((_item, position) => position !== index) })}><X size={14} /></button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+      {error && <p className="text-sm text-rose-400">{error}</p>}
+
+      <div>
+        <button type="button" disabled={actions.length >= MAX_PROJECT_QUICK_ACTIONS} className="flex items-center gap-1.5 rounded-md bg-slate-700 px-3 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-600 disabled:opacity-50" onClick={() => setEditing({ id: newProjectActionId(), label: '', prompt: '', isDefault: false, isNew: true })}><Plus size={14} /> {t('Add action')}</button>
+      </div>
+
+      {editing && <ActionDialog initial={editing} onSave={saveEditing} onClose={() => setEditing(null)} />}
+    </section>
+  )
+}
+
+// Azioni rapide: generali (di tutta l'app) o del progetto aperto.
+export default function QuickActionsSettings({ project = null }) {
+  const [scope, setScope] = useState('general')
+  const tabs = [['general', t('General')], ['project', t('This project')]]
+  return (
+    <div className="grid gap-4">
+      {project && (
+        <div role="tablist" aria-label={t('Quick actions')} className="flex gap-1">
+          {tabs.map(([id, label]) => (
+            <button key={id} type="button" role="tab" aria-selected={scope === id} className={`rounded-md px-3 py-1.5 text-sm transition ${scope === id ? 'bg-accent-500/15 font-medium text-accent-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-50'}`} onClick={() => setScope(id)}>{label}</button>
+          ))}
+        </div>
+      )}
+      {scope === 'project' && project ? <ProjectQuickActions project={project} /> : <GeneralQuickActions />}
+    </div>
   )
 }

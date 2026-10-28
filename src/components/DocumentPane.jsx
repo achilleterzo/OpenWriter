@@ -22,11 +22,12 @@ import { useEditorState } from '@tiptap/react'
 import Link from '@tiptap/extension-link'
 import { TaskItem, TaskList } from '@tiptap/extension-list'
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
-import { FrontMatter, HtmlBlock, HtmlInline } from '../lib/rawMarkdownExtensions.js'
+import { FrontMatter, HtmlAnchor, HtmlBlock, HtmlInline } from '../lib/rawMarkdownExtensions.js'
 import { FootnoteDefinition, FootnoteRef } from '../lib/footnoteExtensions.js'
 import { MarkdownListItem } from '../lib/listItemExtension.js'
 import { mergeAttributes } from '@tiptap/core'
 import SelectionToolbar from './SelectionToolbar.jsx'
+import ImageViewer from './ImageViewer.jsx'
 import ChangeMarkers from './ChangeMarkers.jsx'
 import SourceEditor from './SourceEditor.jsx'
 import { displaySource, isInside, dirname, resolveDocumentLink, sourceForImage } from '../lib/imagePaths.js'
@@ -61,15 +62,17 @@ const DocumentLink = Link.configure({ openOnClick: false }).extend({
   },
 })
 
-function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onPendingRestored, onPendingChange, onNoteSelect, onBookmarkSelect, onStatus, onOpenLink, onSave }) {
+function LiveDocumentPane({ tab, project, active, onOpenFull, onExtractImages, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onPendingRestored, onPendingChange, onNoteSelect, onBookmarkSelect, onStatus, onOpenLink, onSave, onDiscuss }) {
   // Vista sorgente: il Markdown grezzo del documento in un campo di testo. È solo un modo di lavorare o copiare il testo:
   // note, assistente e ricerca restano sull'editor visuale, che si aggiorna man mano che si scrive.
   const [sourceOpen, setSourceOpen] = useState(false)
+  const [viewedImage, setViewedImage] = useState(null)
   const [sourceText, setSourceText] = useState('')
   const sourceTimer = useRef(null)
   const sourceLatest = useRef('')
   const applyingSource = useRef(false)
   // Testo (Markdown dell'editor) all'ultimo salvataggio o apertura; null finché non è noto (es. una bozza ripristinata).
+  // Il documento (non il suo Markdown: serializzarlo a ogni pausa costa molto su un file grande) all'ultimo salvataggio o apertura.
   const savedMarkdown = useRef(null)
   const cleanTimer = useRef(null)
   const [findOpen, setFindOpen] = useState(false)
@@ -162,6 +165,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
       TableCell,
       FrontMatter,
       HtmlBlock,
+      HtmlAnchor,
       HtmlInline,
       FootnoteRef,
       MathInline,
@@ -185,7 +189,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
       clearTimeout(cleanTimer.current)
       cleanTimer.current = setTimeout(() => {
         const current = editorRef.current
-        if (current && !current.isDestroyed && savedMarkdown.current !== null && current.getMarkdown() === savedMarkdown.current) onClean?.(tab.id)
+        if (current && !current.isDestroyed && savedMarkdown.current !== null && current.state.doc.eq(savedMarkdown.current)) onClean?.(tab.id)
       }, 300)
     },
   })
@@ -196,7 +200,7 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
 
   // Quando la scheda non è modificata (appena aperta o salvata) quello che c'è nell'editor è il testo di riferimento.
   useEffect(() => {
-    if (editor && !tab.dirty) savedMarkdown.current = editor.getMarkdown()
+    if (editor && !tab.dirty) savedMarkdown.current = editor.state.doc
   }, [editor, tab.dirty, tab.filePath])
 
   function applySource(text) {
@@ -306,6 +310,13 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
   return (
     <div className={active ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
       <DocumentToolbar editor={editor} onSave={onSave} dirty={tab.dirty} sourceOpen={sourceOpen} onToggleSource={toggleSource} aiScore={tab.aiScore} onCheckAi={onCheckAi} onCopySource={() => navigator.clipboard.writeText(sourceLatest.current)} onImage={pickImage} onLink={() => { editor.commands.focus(); setLinkRequest((value) => value + 1) }} onFind={() => { if (findOpen) closeFind(); else { setFindOpen(true); setFocusToken((value) => value + 1) } }} findOpen={findOpen} />
+      {tab.largeFile && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 bg-amber-400/10 px-4 py-2 text-xs text-slate-200">
+          <span>{t('This file is very large ({size} MB): only the beginning is shown, read-only, so that the application stays responsive.', { size: (tab.largeFile.chars / 1048576).toFixed(1) })}</span>
+          {onOpenFull && <button type="button" className="rounded border border-amber-400/50 bg-amber-400/15 px-2 py-1 font-medium text-amber-300 transition hover:bg-amber-400/30" onClick={onOpenFull}>{t('Open the whole file in the editor')}</button>}
+          {onExtractImages && <button type="button" className="rounded border border-amber-400/50 bg-amber-400/15 px-2 py-1 font-medium text-amber-300 transition hover:bg-amber-400/30" onClick={onExtractImages}>{t('Extract the images into files…')}</button>}
+        </div>
+      )}
       {pendingCount > 0 && !sourceOpen && (
         <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 bg-emerald-400/10 px-4 py-2 text-xs text-slate-200">
           <span>{t('{count} edits to review', { count: pendingCount })}</span>
@@ -323,7 +334,8 @@ function LiveDocumentPane({ tab, project, active, findRequest, onReady, onDirty,
           <EditorContent editor={editor} className="document-editor mx-auto" />
         </div>
         {!sourceOpen && <ChangeMarkers editor={editor} containerRef={editorArea} onSelectNote={onNoteSelect} />}
-        {!sourceOpen && <SelectionToolbar editor={editor} containerRef={editorArea} request={linkRequest} documentPath={tab.filePath || null} onOpenLink={onOpenLink} onReplaceImage={pickImage} />}
+        {!sourceOpen && <SelectionToolbar editor={editor} containerRef={editorArea} request={linkRequest} documentPath={tab.filePath || null} onOpenLink={onOpenLink} onReplaceImage={pickImage} onViewImage={setViewedImage} onDiscuss={onDiscuss && ((text, options) => onDiscuss({ text, title: tab.title, filePath: tab.filePath || null }, options))} />}
+        {viewedImage && <ImageViewer src={viewedImage.src} alt={viewedImage.alt} onClose={() => setViewedImage(null)} />}
       </div>
     </div>
   )
@@ -342,5 +354,7 @@ function ClosedDocumentPane({ tab, active, onReopen }) {
 }
 
 export default function DocumentPane(props) {
-  return props.tab.closed ? <ClosedDocumentPane {...props} /> : <LiveDocumentPane {...props} />
+  // Il passaggio dall'anteprima di un file grande al file intero mantiene l'id della scheda: la chiave forza un nuovo editor, che altrimenti
+  // conserverebbe il testo troncato e lo salverebbe sul file originale.
+  return props.tab.closed ? <ClosedDocumentPane {...props} /> : <LiveDocumentPane key={props.tab.largeFile ? 'preview' : 'full'} {...props} />
 }

@@ -1,7 +1,8 @@
 ---
+
 # rawMarkdownExtensions.js
 
-Source: [`src/lib/rawMarkdownExtensions.js`](../../../src/lib/rawMarkdownExtensions.js)
+Source: [`src/lib/rawMarkdownExtensions.js`](../../../../src/lib/rawMarkdownExtensions.js)
 
 Parts of Markdown the editor cannot represent but that must not be lost or altered on save: the YAML front matter at the top of the file, block HTML, and inline HTML tags. They stay raw text, written back unchanged.
 

@@ -1,6 +1,6 @@
 # src/appearance.js
 
-Source: [`src/appearance.js`](../../src/appearance.js)
+Source: [`src/appearance.js`](../../../src/appearance.js)
 
 Appearance preferences manager. The preferences are saved through [preferences.js](lib/preferences.js.md) in the application data (`openwriter.appearance`), from which older values in `localStorage` are migrated.
 

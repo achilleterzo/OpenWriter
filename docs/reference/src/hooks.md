@@ -4,7 +4,7 @@ React hooks.
 
 ## useDocumentFileCommands.js
 
-Source: [`src/hooks/useDocumentFileCommands.js`](../hooks/useDocumentFileCommands.js)
+Source: [`src/hooks/useDocumentFileCommands.js`](../../../src/hooks/useDocumentFileCommands.js)
 
 Hook that applies native-menu document commands to the active tab, subscribing through `onDocumentCommand`.
 

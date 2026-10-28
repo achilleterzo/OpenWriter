@@ -6,8 +6,10 @@ import './app.js'
 import './appearance.js'
 import './styles.css'
 import { initLanguage } from './i18n/index.js'
+import { installDiagnostics } from './lib/toasts.js'
 
 initLanguage()
+installDiagnostics()
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

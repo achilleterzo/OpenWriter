@@ -30,6 +30,7 @@ function createApplicationMenu(sendCommand, state = {}) {
             { label: t('Markdown with embedded images (.md)…'), click: command('export-markdown-embedded') },
           ],
         },
+        { label: t('Extract the images of a Markdown file…'), click: command('extract-markdown-images') },
         { type: 'separator' },
         { label: t('Settings…'), accelerator: 'CmdOrCtrl+,', click: command('settings') },
         { type: 'separator' },

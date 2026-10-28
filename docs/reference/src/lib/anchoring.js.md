@@ -1,6 +1,6 @@
 # anchoring.js
 
-Source: [`src/lib/anchoring.js`](../../../src/lib/anchoring.js)
+Source: [`src/lib/anchoring.js`](../../../../src/lib/anchoring.js)
 
 Text anchoring for notes: instead of remembering a position, a note keeps the quoted text plus a bit of surrounding context, so it survives document changes and keeps the Markdown clean.
 

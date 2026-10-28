@@ -1,12 +1,14 @@
-import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { Brain, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Copy, CornerDownLeft, FileText, FolderOpen, GitBranch, Loader2, Paperclip, Pencil, Pin, Plus, RotateCcw, Send, Settings, Sparkles, Square, Trash2, Wand2, Wrench, X } from 'lucide-react'
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { ArrowDown, Brain, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Copy, CornerDownLeft, FileText, FolderOpen, GitBranch, Loader2, Paperclip, Pencil, Pin, Plus, Quote, RotateCcw, Send, Settings, Sparkles, Square, Trash2, Wand2, Wrench, X } from 'lucide-react'
 import MarkdownMessage from './MarkdownMessage.jsx'
 import { useDialogs } from './Dialogs.jsx'
 import { GenerateSkillDialog, SkillEditor } from './SkillsManager.jsx'
 import ModelPicker from './ModelPicker.jsx'
+import { runResearch } from '../lib/researchAgent.js'
 import { reasoningByProvider, toolLabels } from '../lib/aiOptions.js'
 import { formatDateTime, languageEnglishName } from '../i18n/index.js'
-import { quickActionsOf } from '../lib/quickActions.js'
+import { quickActionsFor } from '../lib/quickActions.js'
+import { selectedText } from '../lib/selectionText.js'
 import { DEFAULT_MAX_TOOL_STEPS, TOOL_DEFINITIONS, createToolRunner, describeCall, parseToolCall, splitNextPrompt, toolAvailable, toolSchemas, toolsPrompt, visibleText } from '../lib/aiTools.js'
 import { t } from '../i18n/index.js'
 import { activeSkillIds, skillsPromptText } from '../lib/skills.js'
@@ -20,6 +22,16 @@ const MAX_PREVIOUS_CHARS = 12000
 const MAX_TOOL_DISPLAY_CHARS = 3000
 // Al modello si rinviano solo le immagini più recenti: le altre pesano molti token e di solito non servono più.
 const MAX_MODEL_IMAGES = 4
+// Potatura dei risultati degli strumenti nel contesto del modello: si tengono interi i più recenti, finché stanno in KEEP_TOOL_CHARS caratteri (e comunque
+// gli ultimi KEEP_TOOL_RESULTS); gli altri, se lunghi, si riducono all'inizio (la chiamata che li ha prodotti resta visibile). Un budget a caratteri e non un numero
+// fisso: durante un'indagine il modello non ha altra memoria di ciò che ha letto (il ragionamento non si rinvia) e, potato, rilegge. Nella chat si vedono sempre
+// per intero: cambia solo ciò che si rimanda al modello a ogni richiesta.
+const KEEP_TOOL_RESULTS = 4
+const KEEP_TOOL_CHARS = 80000
+const PRUNE_MIN_CHARS = 1500
+const PRUNED_HEAD_CHARS = 500
+const pruneToolResult = (content) => `${content.slice(0, PRUNED_HEAD_CHARS)}
+[… ${content.length - PRUNED_HEAD_CHARS} more characters of this earlier result were dropped to save space: do not rely on them; if you still need that content, call the tool again]`
 
 // Elenco dei modelli per provider, letto una volta e riusato.
 const modelsCache = new Map()
@@ -73,7 +85,7 @@ function userAttachmentParts(message, loaded) {
 
 // Titoli lunghi: nelle liste a discesa si abbreviano, il titolo completo resta nel tooltip.
 const ellipsize = (value, limit) => (value.length > limit ? `${value.slice(0, limit - 1).trimEnd()}…` : value)
-const blankConversation = () => ({ id: null, title: '', parentId: null, branchedAt: null, contextFrom: [], skillOverrides: { add: [], remove: [] }, messages: [] })
+const blankConversation = () => ({ id: null, title: '', parentId: null, branchedAt: null, contextFrom: [], skillOverrides: { add: [], remove: [] }, passages: [], messages: [] })
 const noSkills = { skills: [], defaults: [], problems: [], chain: [] }
 // Skill attive in una conversazione, come oggetti completi (istruzioni, esempi, azioni), nell'ordine di attivazione.
 const activeSkillsOf = (data, overrides) => {
@@ -122,12 +134,23 @@ function transcriptOf(conversation) {
 function toModelMessages(messages, context, native, loaded = new Map()) {
   const usable = messages.filter((message) => !(message.error && message.role === 'assistant'))
   const lastUser = usable.map((message) => message.role).lastIndexOf('user')
+  // Dai più recenti, finché il budget lo permette: questi restano interi.
+  const recentTools = new Set()
+  let budget = KEEP_TOOL_CHARS
+  for (let position = usable.length - 1; position >= 0; position -= 1) {
+    const message = usable[position]
+    if (message.role !== 'tool' || message.name === 'ask_choice') continue
+    if (recentTools.size >= KEEP_TOOL_RESULTS && message.content.length > budget) continue
+    recentTools.add(position)
+    budget -= message.content.length
+  }
   return usable.flatMap((message, index) => {
     if (message.role === 'tool') {
       const entries = message.images || []
       const attached = entries.map((entry) => loaded.get(imageKey(entry))).filter(Boolean)
       const omitted = entries.length - attached.length
-      const content = `${message.content}${omitted ? `\n(${omitted === 1 ? 'image no longer attached' : `${omitted} images no longer attached`} to save tokens)` : ''}`
+      const pruned = message.name !== 'ask_choice' && !recentTools.has(index) && message.content.length > PRUNE_MIN_CHARS
+      const content = `${pruned ? pruneToolResult(message.content) : message.content}${omitted ? `\n(${omitted === 1 ? 'image no longer attached' : `${omitted} images no longer attached`} to save tokens: call describe_image right after looking at an image so that view_image returns the saved description instead of the image; do not view ${omitted === 1 ? 'it' : 'them'} again without one)` : ''}`
       if (native) {
         const result = { role: 'tool', tool_name: message.name, content }
         return attached.length ? [result, { role: 'user', content: `[Image returned by ${message.name}]`, images: attached.map((image) => image.data) }] : [result]
@@ -148,11 +171,6 @@ function toModelMessages(messages, context, native, loaded = new Map()) {
     }
     return [{ role: message.role, content: message.content }]
   })
-}
-
-function selectedText(editor) {
-  const { from, to, empty } = editor.state.selection
-  return empty ? '' : editor.state.doc.textBetween(from, to, '\n\n')
 }
 
 const actionClass = 'flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-slate-800 hover:text-slate-200'
@@ -372,8 +390,66 @@ function ImageViewer({ src, label, onClose }) {
   )
 }
 
+// Le chiamate agli strumenti si raccolgono in una cella a scomparsa (chiusa) tra una risposta e l'altra: restano a vista i messaggi dell'utente
+// e le risposte dell'assistente, nella loro successione. Una risposta che porta anche una chiamata mostra il testo e apre la cella dopo di esso.
+function conversationItems(messages) {
+  const items = []
+  let group = null
+  const flush = () => { if (group) { items.push(group); group = null } }
+  messages.forEach((message, index) => {
+    if (message.role === 'tool' && !(message.name === 'ask_choice' && !message.error)) {
+      if (!group) group = { type: 'group', index, entries: [] }
+      group.entries.push({ index, message })
+      return
+    }
+    if (message.role === 'assistant' && message.toolCall && !message.error) {
+      const text = visibleText(message.content).text.trim()
+      // Senza testo il ragionamento non interrompe la cella: sta dentro, prima della sua chiamata.
+      if (text) { flush(); items.push({ type: 'message', index, hideCall: true }) }
+      if (!group) group = { type: 'group', index, entries: [] }
+      group.entries.push({ index, message })
+      return
+    }
+    flush()
+    items.push({ type: 'message', index })
+  })
+  flush()
+  return items
+}
+
+// Cella con le chiamate agli strumenti di una tratta del lavoro: chiusa, una riga; aperta, ogni chiamata con il suo risultato.
+function ToolGroup({ entries, onBranch, onOpenImage }) {
+  const calls = entries.filter(({ message }) => message.role === 'assistant')
+  const results = entries.filter(({ message }) => message.role === 'tool')
+  const count = Math.max(calls.length, results.length)
+  const names = [...new Set((calls.length ? calls.map(({ message }) => message.toolCall.name) : results.map(({ message }) => message.name)))]
+  const failed = results.some(({ message }) => message.error)
+  // Token delle risposte che hanno portato queste chiamate (le righe ↑ ↓ che altrimenti resterebbero tra una cella e l'altra).
+  const usage = calls.reduce((total, { message }) => ({ input: total.input + (message.usage?.input || 0), output: total.output + (message.usage?.output || 0) }), { input: 0, output: 0 })
+  const summary = `${count === 1 ? t('One tool call') : t('{count} tool calls', { count })} · ${names.slice(0, 4).join(', ')}${names.length > 4 ? '…' : ''}`
+  return (
+    <details className="group/tools max-w-[92%] rounded-lg border border-slate-800 bg-slate-950/40 px-2.5 py-1.5 text-xs text-slate-500">
+      <summary className="flex cursor-pointer select-none items-center gap-1.5">
+        <ChevronRight size={12} className="shrink-0 transition group-open/tools:rotate-90" />
+        <Wrench size={12} className="shrink-0" />
+        <span className="truncate">{summary}</span>
+        {failed && <span className="shrink-0 text-rose-400">{t('· error')}</span>}
+        {(usage.input > 0 || usage.output > 0) && <span className="ml-auto shrink-0 text-[11px]">↑ {formatTokens(usage.input)} ↓ {formatTokens(usage.output)}</span>}
+      </summary>
+      <div className="mt-1.5 flex flex-col items-start gap-1.5">
+        {entries.map(({ index, message }) => (message.role === 'assistant'
+          ? <div key={index} className="flex max-w-full flex-col items-start gap-1.5">
+            {message.thinking && <ThinkingBlock text={message.thinking} />}
+            <p className="flex max-w-full items-center gap-1.5 rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-400"><Wrench size={12} className="shrink-0" /> <span className="truncate">{describeCall(message.toolCall.name, message.toolCall.arguments)}</span></p>
+          </div>
+          : <Message key={index} message={message} index={index} onBranch={onBranch} onOpenImage={onOpenImage} />))}
+      </div>
+    </details>
+  )
+}
+
 // memo: ogni tasto digitato nella casella rirenderizza il pannello, ma i messaggi (con il Markdown) non devono rifarsi.
-const Message = memo(function Message({ message, index, editor, onBranch, onEdit, onOpenImage, onOpenNote }) {
+const Message = memo(function Message({ message, index, editor, onBranch, onEdit, onOpenImage, onOpenNote, hideCall = false }) {
   const [copied, setCopied] = useState(false)
   const assistant = message.role === 'assistant'
 
@@ -418,7 +494,7 @@ const Message = memo(function Message({ message, index, editor, onBranch, onEdit
           {assistant && !message.error ? <MarkdownMessage>{shown}</MarkdownMessage> : shown}
         </div>
       )}
-      {message.toolCall && (
+      {message.toolCall && !hideCall && (
         <p className="flex max-w-[92%] items-center gap-1.5 rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-400"><Wrench size={12} className="shrink-0" /> <span className="truncate">{describeCall(message.toolCall.name, message.toolCall.arguments)}</span></p>
       )}
       {assistant && message.usage && (
@@ -538,6 +614,16 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const [live, setLive] = useState(null)
   const [error, setError] = useState('')
   const endRef = useRef(null)
+  const listRef = useRef(null)
+  // Lo scorrimento automatico segue il testo che arriva solo se si è in fondo: scorrendo verso l'alto si smette, e un pulsante riporta giù.
+  const stickRef = useRef(true)
+  // "Approva per me": a fine lavoro le modifiche dell'assistente si accettano, i documenti si salvano e quelli che ha aperto lui si richiudono (la versione
+  // precedente resta nella cronologia). Preferenza dell'app, valida per tutte le conversazioni.
+  const [autoApprove, setAutoApprove] = useState(() => api.preferences?.values?.['openwriter.autoApprove'] === 'on')
+  const autoApproveRef = useRef(autoApprove)
+  autoApproveRef.current = autoApprove
+  const changeAutoApprove = (value) => { setAutoApprove(value); api.preferences?.set('openwriter.autoApprove', value ? 'on' : 'off') }
+  const [showJump, setShowJump] = useState(false)
   const liveRef = useRef({ text: '', thinking: '', status: '' })
   const frameRef = useRef(null)
   const runRef = useRef({ cancelled: false, cancel: null })
@@ -612,8 +698,28 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project])
 
+  const items = useMemo(() => conversationItems(current.messages), [current.messages])
+  const scrollToEnd = () => {
+    const list = listRef.current
+    if (list) list.scrollTop = list.scrollHeight
+  }
+  function onListScroll() {
+    const list = listRef.current
+    if (!list) return
+    const atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 40
+    stickRef.current = atEnd
+    setShowJump((shown) => (shown === !atEnd ? shown : !atEnd))
+  }
+  function jumpToEnd() {
+    stickRef.current = true
+    setShowJump(false)
+    scrollToEnd()
+  }
+  // Un messaggio appena inviato dall'utente, o un'altra conversazione, portano sempre in fondo.
+  useEffect(() => { stickRef.current = true }, [current.id])
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'end' })
+    if (current.messages[current.messages.length - 1]?.role === 'user') stickRef.current = true
+    if (stickRef.current) scrollToEnd()
   }, [current.messages, live, busy, pendingAsk])
 
   const provider = settings?.provider
@@ -701,6 +807,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       parentId: current.id,
       branchedAt: index,
       contextFrom: current.contextFrom,
+      passages: current.passages || [],
       messages: current.messages.slice(0, index + 1),
     }
     setCurrent(await persist(branch))
@@ -777,14 +884,32 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
 
   // Richiesta arrivata da fuori (es. "Applica correzione…" di una nota): parte appena l'assistente è pronto e libero.
   const handledRequest = useRef(null)
+  const resetFor = useRef(null)
   useEffect(() => {
     if (!request || handledRequest.current === request.id || busy || !enabled || !settings) return
     // Ripresa dopo il cambio di progetto: aspetta che la conversazione sia stata caricata.
     if (request.resume && current.id !== request.conversationId) return
+    // Richiesta in una chat nuova: prima si azzera la conversazione, poi (al render successivo) si invia.
+    if (request.newChat && resetFor.current !== request.id) {
+      resetFor.current = request.id
+      setCurrent(blankConversation())
+      onConversationChange(null)
+      return
+    }
     handledRequest.current = request.id
     // Consumata: altrimenti, rimontando il pannello (es. dopo le impostazioni), la stessa richiesta ripartirebbe da sola.
     onRequestHandled?.()
-    send(request.text || '', request.attachment, request.resume ? { resume: true } : {})
+    // Brano da discutere: entra nel contesto della conversazione e non parte nulla; la domanda la scrive l'utente.
+    if (request.passage) {
+      const passages = current.passages || []
+      if (!passages.some((item) => item.text === request.passage.text && item.filePath === request.passage.filePath)) {
+        const untitled = !current.title && !current.messages.length
+        updateConversation({ passages: [...passages, request.passage], ...(untitled ? { title: `“${ellipsize(request.passage.text.replace(/\s+/g, ' '), 50)}”` } : {}) })
+      }
+      composer.current?.focus()
+      return
+    }
+    send(request.text || '', request.attachment, { ...(request.resume ? { resume: true } : {}), ...(request.onStarted ? { onStarted: request.onStarted } : {}) })
   })
 
   // Riprende da dove si era interrotto: l'ultimo messaggio è dell'utente (o un errore dell'assistente, che viene scartato).
@@ -833,7 +958,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     }
   }
 
-  async function runConversation(content, attachment, { resume = false }) {
+  async function runConversation(content, attachment, { resume = false, onStarted = null }) {
     setError('')
     composer.current?.setValue('')
     runRef.current = { cancelled: false, cancel: null }
@@ -863,6 +988,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     setCurrent(conversation)
     conversation = await persist(conversation)
     setCurrent(conversation)
+    // Chi ha inviato la richiesta (un agente esterno, via MCP) saprà in quale chat e a quale messaggio è finita.
+    onStarted?.({ conversationId: conversation.id, messageIndex: conversation.messages.length - 1 })
 
     const append = async (input) => {
       // I token delle richieste fatte finora (compresi i tentativi scartati) vanno alla prossima risposta dell'assistente.
@@ -889,6 +1016,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       vision: Boolean(toolSettings.vision && capabilities?.vision && project),
       ask: Boolean(toolSettings.ask && project),
       memory: Boolean(toolSettings.memory && project),
+      // Assistente di ricerca (altro modello, chiamato come strumento): acceso e con un modello scelto nelle impostazioni.
+      research: Boolean(settings.researcher?.enabled && settings.researcher.model && project && !loose),
     }
     const anyTool = Object.values(toolsOn).some(Boolean)
     // Strumenti spenti dall'utente nelle impostazioni: il modello lo sa e può chiedere di attivarli.
@@ -925,6 +1054,19 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       captureDocument: (path) => toolBridge.captureDocument(path),
       captureBrowser: (tab) => toolBridge.captureBrowser(tab),
       askUser,
+      // L'assistente di ricerca lavora a parte (altro modello, soli strumenti di lettura) e restituisce un rapporto breve.
+      research: ({ question, scope }) => runResearch({
+        question,
+        scope,
+        settings,
+        api,
+        chat: ai,
+        project,
+        toolBridge,
+        onStatus: (status) => { liveRef.current = { text: '', thinking: '', status }; scheduleLive() },
+        register: (cancel) => { runRef.current.cancel = cancel },
+        isCancelled: () => runRef.current.cancelled,
+      }),
       createProject: (request) => toolBridge.createProject(request),
       setAiScore: (tab, data) => toolBridge.setAiScore(tab, data),
       onProjectCreated: (created) => { handoff = created },
@@ -951,9 +1093,11 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       let limit = maxSteps
       for (let step = 0; ; step += 1) {
         // Documento e selezione sono riletti a ogni passaggio: dopo una modifica il modello vede il testo aggiornato.
-        const selection = editor ? selectedText(editor) : ''
+        // Con dei brani in discussione al modello vanno loro, non il documento attivo né la selezione (restano i documenti fissati a mano).
+        const passages = conversation.passages || []
+        const selection = editor && !passages.length ? selectedText(editor) : ''
         const documents = []
-        if (editor && (includeDocument || pinnedIds.includes(contextTab?.id))) documents.push({ title: contextTab?.title, text: abbreviateEmbeddedImages(editor.getMarkdown()) })
+        if (editor && ((includeDocument && !passages.length) || pinnedIds.includes(contextTab?.id))) documents.push({ title: contextTab?.title, text: abbreviateEmbeddedImages(editor.getMarkdown()) })
         for (const id of pinnedIds) {
           if (id === contextTab?.id) continue
           const text = toolBridge.documentMarkdown(id)
@@ -966,8 +1110,11 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
           : `Document "${title}" (Markdown):\n"""\n${text.slice(0, perDocument)}\n"""`))
         // Se la scheda attiva è un'immagine, l'assistente lo sa e può guardarla con view_image.
         const imageTab = toolsOn.vision ? toolBridge.activeImagePath?.() : null
+        const passageBlocks = passages.map(({ text, title }) => `Passage under discussion${title ? ` from "${title}"` : ''} (as it was when the user attached it: the document may have changed since):\n"""\n${text}\n"""`)
+        if (passageBlocks.length) passageBlocks.push('The conversation is about the passage(s) above: the full document is not included. Read it with read_file only if you really need more context; to change a passage in the document use replace_text.')
         const context = [
           ...documentBlocks,
+          ...passageBlocks,
           selection && `Text selected by the user:\n"""\n${selection}\n"""`,
           imageTab && `The user has the image "${imageTab}" open in a tab: you can look at it with view_image (path "${imageTab}").`,
         ].filter(Boolean).join('\n\n')
@@ -1003,17 +1150,25 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
             )
             const loadedImages = new Map([...(await loadRecentImages(conversation.messages)), ...(await loadUserAttachments(conversation.messages, capabilities))])
             const modelMessages = [{ role: 'system', content: system }, ...toModelMessages(conversation.messages, context, native, loadedImages)]
-            const streamOptions = native ? { tools: toolSchemas(toolsOn) } : {}
+            // Dopo il risultato di uno strumento il piano c'è già: si ragiona di meno (impostazione "Ragionamento con gli strumenti"), così l'esecuzione è più rapida.
+            const afterTool = conversation.messages.at(-1)?.role === 'tool'
+            const mode = settings.toolReasoning || 'reduced'
+            const reasoningCap = afterTool && mode !== 'same' ? (mode === 'none' ? 'instant' : 'low') : null
+            const streamOptions = { ...(native ? { tools: toolSchemas(toolsOn) } : {}), ...(reasoningCap ? { reasoningCap } : {}) }
             let reply = await streamReply(modelMessages, streamOptions)
             // Una risposta vuota (capita con alcuni modelli dopo il ragionamento) si ritenta una volta con un richiamo esplicito.
             if (!reply.reply.trim()) reply = await streamReply([...modelMessages, { role: 'user', content: 'Your reply was empty. Reply now, or use a tool.' }], streamOptions)
             // Se il modello parla degli strumenti (ne cita il nome) invece di usarli, si richiama una volta: confronto sui nomi tecnici, non sul testo in lingua.
             if (anyTool && reply.reply.trim() && !parseToolCall(reply.reply)) {
-              const mentioned = TOOL_DEFINITIONS.some((tool) => toolAvailable(tool, toolsOn) && reply.reply.includes(tool.name))
+              // Una risposta lunga che cita uno strumento è una risposta vera (la documentazione parla spesso degli strumenti), non un'intenzione non eseguita.
+              const mentioned = reply.reply.trim().length < 1500 && TOOL_DEFINITIONS.some((tool) => toolAvailable(tool, toolsOn) && reply.reply.includes(tool.name))
               // Dopo il risultato di uno strumento una risposta molto breve senza chiamata è quasi sempre un abbandono prematuro: si richiama una volta.
               const prematureStop = conversation.messages.at(-1)?.role === 'tool' && reply.reply.trim().length < 600
               if (mentioned || prematureStop) {
-                reply = await streamReply([...modelMessages, { role: 'assistant', content: reply.reply }, { role: 'user', content: 'The OpenWriter tools ARE available and working right now: never say otherwise. If the task is not finished, write the <tool_call> block for the next step now. If it is finished, reply with a short summary of what was done, without mentioning tool names.' }], streamOptions, t('The reply looked incomplete: asking again…'))
+                const retry = await streamReply([...modelMessages, { role: 'assistant', content: reply.reply }, { role: 'user', content: 'The OpenWriter tools ARE available and working right now: never say otherwise. If the task is not finished, write the <tool_call> block for the next step now. If it is finished, reply with a short summary of what was done, without mentioning tool names.' }], streamOptions, t('The reply looked incomplete: asking again…'))
+                // La prima risposta si sostituisce solo se il richiamo porta davvero a una chiamata di strumento: altrimenti resta quella, che era la risposta
+                // del modello (prima veniva scartata, e a volte sostituita da una vuota o peggiore: la risposta "spariva").
+                if (retry.reply.trim() && parseToolCall(retry.reply)) reply = retry
               }
             }
             return reply
@@ -1114,6 +1269,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         if (runRef.current.cancelled) break
       }
     } finally {
+      // Con "Approva per me" le modifiche si accettano prima di salvare (senza, un documento con modifiche da rivedere non si salva).
+      if (autoApproveRef.current) for (const id of editedTabs) { try { toolBridge.acceptPending(id) } catch (error) { console.error(error) } }
       for (const id of editedTabs) await toolBridge.saveDocument(id).catch((error) => console.error(error))
       for (const id of openedTabs) await toolBridge.closeDocument(id).catch((error) => console.error(error))
       cancelAnimationFrame(frameRef.current)
@@ -1208,6 +1365,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     pendingAskRef.current?.({ answers: [], cancelled: true })
   }
 
+  const hasPassages = (current.passages || []).length > 0
   const attachable = conversations.filter((item) => item.id !== current.id && !current.contextFrom.includes(item.id))
   const titleOf = (id) => conversations.find((item) => item.id === id)?.title || t('Deleted conversation')
   const iconButton = 'rounded p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-50 disabled:opacity-40'
@@ -1285,12 +1443,15 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         </div>
       ) : (
         <>
-          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+          <div className="relative flex min-h-0 flex-1 flex-col">
+          <div ref={listRef} onScroll={onListScroll} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
             {!current.messages.length && !busy && (
               <p className="m-auto max-w-[16rem] text-center text-sm text-slate-500">{t('Ask to proofread, rewrite or discuss the document. If you select some text, the assistant works on that.')}
               </p>
             )}
-            {current.messages.map((message, index) => <Message key={index} message={message} index={index} editor={editor} onBranch={canBranch ? onBranchStable : null} onEdit={message.role === 'user' && !busy ? onEditStable : null} onOpenImage={setViewer} onOpenNote={onOpenNote} />)}
+            {items.map((item) => (item.type === 'group'
+              ? <ToolGroup key={`g${item.index}`} entries={item.entries} onBranch={canBranch ? onBranchStable : null} onOpenImage={setViewer} />
+              : <Message key={item.index} message={current.messages[item.index]} index={item.index} hideCall={item.hideCall} editor={editor} onBranch={canBranch ? onBranchStable : null} onEdit={current.messages[item.index].role === 'user' && !busy ? onEditStable : null} onOpenImage={setViewer} onOpenNote={onOpenNote} />))}
             {canResume && (
               <button type="button" className="flex items-center gap-1.5 self-start rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50" onClick={() => send('', null, { resume: true })}><RotateCcw size={12} /> {t('Resume from here')}</button>
             )}
@@ -1308,6 +1469,12 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
             {pendingAsk && <AskCard ask={pendingAsk} />}
             {error && <p className="text-sm text-rose-400">{error}</p>}
             <div ref={endRef} />
+          </div>
+          {showJump && (
+            <button type="button" aria-label={t('Scroll to the bottom')} title={t('Scroll to the bottom')} className="absolute bottom-3 right-4 rounded-full border border-slate-700 bg-slate-900/95 p-1.5 text-slate-300 shadow-lg transition hover:bg-slate-800 hover:text-slate-50" onClick={jumpToEnd}>
+              <ArrowDown size={16} />
+            </button>
+          )}
           </div>
 
           <div className="border-t border-slate-800 p-3">
@@ -1338,19 +1505,31 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
               </div>
             )}
             <div className="mb-2 flex flex-wrap gap-1.5">
-              {quickActionsOf(settings).map((action) => (
-                <button key={action.id} type="button" disabled={busy} className="rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50" onClick={() => send(action.prompt)}>{action.label}</button>
+              {quickActionsFor(settings, projectSettings).map((action) => (
+                <button key={action.id} type="button" disabled={busy} title={action.isProject ? `${t('Project action')}: ${action.prompt}` : undefined} className={`rounded-full border px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50 ${action.isProject ? 'flex items-center gap-1 border-slate-500' : 'border-slate-700'}`} onClick={() => send(action.prompt)}>{action.isProject && <FolderOpen size={11} className="shrink-0 text-accent-400" />}{action.label}</button>
               ))}
               {activeSkills.flatMap((skill) => skill.actions.map((action) => (
                 <button key={`${skill.id}:${action.label}`} type="button" disabled={busy} title={`${skill.name}: ${action.prompt}`} className="flex items-center gap-1 rounded-full border border-accent-500/40 px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50" onClick={() => send(action.prompt)}><Wand2 size={11} className="text-accent-400" /> {action.label}</button>
               )))}
             </div>
+            {hasPassages && (
+              <div className="mb-2 flex flex-wrap gap-1" aria-label={t('Passages under discussion')}>
+                {current.passages.map((passage, index) => (
+                  <span key={`${index}:${passage.text.slice(0, 20)}`} className="flex max-w-full items-center gap-1 rounded-full border border-accent-500/50 bg-accent-500/10 py-0.5 pl-2 pr-1 text-xs text-slate-200" title={passage.title ? `${passage.title}\n\n${passage.text}` : passage.text}>
+                    <Quote size={11} className="shrink-0 text-accent-400" />
+                    <span className="truncate">{ellipsize(passage.text.replace(/\s+/g, ' '), 60)}</span>
+                    <button type="button" aria-label={t('Remove the passage')} title={t('Remove the passage')} disabled={busy} className="rounded-full p-0.5 text-slate-400 hover:bg-slate-700 hover:text-slate-50" onClick={() => updateConversation({ passages: current.passages.filter((_, item) => item !== index) })}><X size={11} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
             {openDocuments.length > 0 && (
               <div className="mb-2 flex flex-wrap gap-1" aria-label={t('Context documents')}>
                 {openDocuments.map((doc) => {
                   const active = doc.id === contextTab?.id
                   const pinned = pinnedIds.includes(doc.id)
-                  const automatic = active && includeDocument && !pinned
+                  // Con dei brani in discussione il documento attivo non entra da solo: si può comunque fissarlo.
+                  const automatic = active && includeDocument && !pinned && !hasPassages
                   const change = (changes) => onContextPinsChange({ ...contextPins, ...changes })
                   const pin = () => change({ pinnedIds: [...pinnedIds, doc.id] })
                   const unpin = () => change({ pinnedIds: pinnedIds.filter((id) => id !== doc.id) })
@@ -1377,7 +1556,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
                     )
                   }
                   return (
-                    <button key={doc.id} type="button" className="flex max-w-full items-center gap-1 rounded-full border border-dashed border-slate-700 px-2 py-0.5 text-xs text-slate-500 transition hover:border-accent-400 hover:text-slate-200" title={t('Add to the context')} onClick={() => (active ? change({ includeActive: true }) : pin())}>
+                    <button key={doc.id} type="button" className="flex max-w-full items-center gap-1 rounded-full border border-dashed border-slate-700 px-2 py-0.5 text-xs text-slate-500 transition hover:border-accent-400 hover:text-slate-200" title={t('Add to the context')} onClick={() => (active && !hasPassages ? change({ includeActive: true }) : pin())}>
                       <Pin size={11} className="shrink-0" />
                       <span className="truncate">{doc.title}</span>
                     </button>
@@ -1410,6 +1589,20 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
                 </select>
               </label>
             </div>
+            {project && !loose && (
+              <label className="mb-2 grid min-w-0 gap-0.5 text-xs text-slate-400">{t('Edits to the documents')}
+                <select
+                  aria-label={t('Edits to the documents')}
+                  title={t('“Approve for me”: when the work is done the assistant\'s edits are accepted and saved, and the documents it opened are closed again. The previous version stays in the history.')}
+                  value={autoApprove ? 'auto' : 'review'}
+                  className="w-full min-w-0 rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs text-slate-100 outline-none focus:border-accent-400"
+                  onChange={(event) => changeAutoApprove(event.target.value === 'auto')}
+                >
+                  <option value="review">{t('I review them')}</option>
+                  <option value="auto">{t('Approve for me')}</option>
+                </select>
+              </label>
+            )}
             {project && (current.contextFrom.length > 0 || attachable.length > 0) && (
               <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                 {current.contextFrom.map((id) => (

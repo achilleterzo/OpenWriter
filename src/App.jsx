@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import ActivityBar, { sideTabs } from './components/ActivityBar.jsx'
 import AiChatPanel from './components/AiChatPanel.jsx'
 import BrowserPane from './components/BrowserPane.jsx'
@@ -17,6 +18,9 @@ import AboutDialog from './components/AboutDialog.jsx'
 import { useDialogs } from './components/Dialogs.jsx'
 import { acceptAll, getPending, serializePending } from './lib/pendingChangesExtension.js'
 import OutlinePanel from './components/OutlinePanel.jsx'
+import AnchorsPanel from './components/AnchorsPanel.jsx'
+import ToastHost from './components/ToastHost.jsx'
+import { notify } from './lib/toasts.js'
 import PanelResizer from './components/PanelResizer.jsx'
 import SettingsScreen from './components/SettingsScreen.jsx'
 import TabBar from './components/TabBar.jsx'
@@ -29,6 +33,7 @@ import { relativeToProject } from './lib/aiTools.js'
 import { handleMcpRequest } from './lib/mcpRequests.js'
 import InfoPanel from './components/InfoPanel.jsx'
 import { isInsidePath, samePath } from './lib/pathCompare.js'
+import { selectedText } from './lib/selectionText.js'
 import { PANELS, clampWidth, fitLayout, loadLayout, maxWidthFor, saveLayout } from './lib/layout.js'
 import { AFTER_LANGUAGE_RELOAD_KEY, t } from './i18n/index.js'
 import { setProjectEditor, updateAppearance } from './appearance.js'
@@ -57,10 +62,28 @@ const compareVersions = (left, right) => {
 const isInside = (value, directory) => Boolean(value) && (samePath(value, directory) || isInsidePath(value, directory))
 
 let untitledCounter = 0
+// Un Markdown molto grande non si apre nell'editor: costruire il documento (e tutto ciò che lo segue a ogni modifica) per decine di MB blocca l'app per minuti.
+// Si apre come anteprima in sola lettura, con l'inizio del testo; l'avviso sopra il documento permette di aprirlo comunque per intero.
+const LARGE_DOCUMENT_CHARS = 1_500_000
+// Da qui in su l'apertura nell'editor si nota: si mostra il riquadro di attesa.
+const HEAVY_DOCUMENT_CHARS = 150_000
+const PREVIEW_CHARS = 400_000
+
+// L'inizio del testo, tagliato a fine paragrafo (e chiudendo un eventuale blocco di codice rimasto aperto).
+function previewOf(markdown) {
+  const cut = markdown.lastIndexOf('\n\n', PREVIEW_CHARS)
+  const head = markdown.slice(0, cut > PREVIEW_CHARS / 2 ? cut : PREVIEW_CHARS)
+  return (head.match(/^\s*(```|~~~)/gm) || []).length % 2 ? `${head}\n\n\`\`\`` : head
+}
+
 function createTab(document = null, id = crypto.randomUUID()) {
   if (!document) {
     untitledCounter += 1
     return { id, filePath: null, sourcePath: null, untitled: untitledCounter, title: t('Untitled {untitledCounter}', { untitledCounter }), content: t('<h2>Start writing</h2><p>This is your new document.</p>'), contentType: 'html', dirty: false }
+  }
+  // Anteprima di un Markdown molto grande: sola lettura, e mai risalvabile (contiene solo l'inizio del file).
+  if (document.format === 'markdown' && !document.full && String(document.content).length > LARGE_DOCUMENT_CHARS) {
+    return { id, filePath: null, sourcePath: document.filePath, title: baseName(document.filePath), content: previewOf(String(document.content)), contentType: 'markdown', dirty: false, readOnly: true, largeFile: { chars: String(document.content).length } }
   }
   // Solo i Markdown si possono risalvare nello stesso file: DOCX e PDF diventano nuovi documenti.
   const savable = document.format === 'markdown'
@@ -150,6 +173,8 @@ export default function App() {
   // Documenti nel contesto della chat: il documento attivo (di default sì) e gli altri aperti, "pinnati" per id di scheda.
   const [contextPins, setContextPins] = useState({ includeActive: true, pinnedIds: [] })
   const [chatRequest, setChatRequest] = useState(null)
+  // Operazione lunga in corso (apertura o conversione di un file molto grande): il testo da mostrare nel riquadro di attesa.
+  const [largeLoading, setLargeLoading] = useState(null)
   const [conversationId, setConversationId] = useState(null)
   const [settingsVersion, setSettingsVersion] = useState(0)
   const [notes, setNotes] = useState([])
@@ -169,14 +194,19 @@ export default function App() {
   const lastDocumentId = useRef(null)
   const lastBrowserId = useRef(null)
 
+  // Le schede documento si montano (e costruiscono il loro editor) solo quando si guardano la prima volta, o se hanno modifiche da conservare: riaprire un progetto
+  // con molte schede pesanti non le costruisce tutte insieme.
+  const mountedTabs = useRef(new Set())
   const activeTab = tabs.find((tab) => tab.id === activeId) || tabs[0]
   if (isLive(activeTab)) lastDocumentId.current = activeTab.id
+  if (activeTab) mountedTabs.current.add(activeTab.id)
   // Il documento "di contesto" è quello attivo, oppure l'ultimo usato quando in primo piano c'è il browser.
   const contextTab = isLive(activeTab) ? activeTab : tabs.find((tab) => tab.id === lastDocumentId.current && isLive(tab)) || tabs.find(isLive) || tabs.find(isDocument)
 
   // Gli ultimi valori restano in un ref: serve a salvare la sessione anche dai timer e da beforeunload.
   const latest = useRef({})
-  latest.current = { ready, tabs, activeId, editors, project, sideTab, expandedPaths, assistantOpen, conversationId, contextPins, contextTabId: contextTab?.id }
+  const openProjectRef = useRef(null)
+  latest.current = { openProject: (directory) => openProjectRef.current?.(directory), ready, tabs, activeId, editors, project, sideTab, expandedPaths, assistantOpen, conversationId, contextPins, contextTabId: contextTab?.id }
   const saveTimer = useRef(null)
 
   const buildSession = useCallback(() => {
@@ -195,8 +225,10 @@ export default function App() {
         const editor = currentEditors[tab.id]
         // Bozze e documenti mai salvati conservano il testo; gli altri si rileggono dal file.
         // Se l'editor non è ancora pronto (appena riaperta la sessione) il testo non salvato si tiene com'è: altrimenti un salvataggio troppo presto lo perderebbe.
-        const unsavedText = editor ? editor.getMarkdown() : (tab.contentType === 'markdown' && typeof tab.content === 'string' && tab.content ? tab.content : undefined)
-        const keepText = (tab.dirty || !tab.sourcePath) && unsavedText !== undefined
+        // Il Markdown si ricava solo quando serve (serializzare un documento grande a ogni salvataggio di sessione rallenta l'editor).
+        const needsText = tab.dirty || !tab.sourcePath
+        const unsavedText = !needsText ? undefined : editor ? editor.getMarkdown() : (tab.contentType === 'markdown' && typeof tab.content === 'string' && tab.content ? tab.content : undefined)
+        const keepText = needsText && unsavedText !== undefined
         // Modifiche dell'assistente ancora da rivedere (o non ancora rimesse in sosta dopo la riapertura): restano nella sessione.
         const pending = (editor && serializePending(editor)) || tab.pending
         return {
@@ -292,6 +324,22 @@ export default function App() {
       if (info.isEditable) {
         items.push({ label: t('Paste'), hint: `${modKey}V`, disabled: !info.flags.canPaste, onClick: () => electronAPI.editAction('paste') }, { separator: true }, { label: t('Select all'), hint: `${modKey}A`, onClick: () => electronAPI.editAction('selectAll') })
       }
+      // Clic destro su del testo selezionato nel documento: lo si può discutere con l'assistente, come dalla barra della selezione.
+      const { editors: openEditors, tabs: openTabs, activeId: currentId } = latest.current
+      const tab = openTabs.find((item) => item.id === currentId)
+      const editor = openEditors[currentId]
+      if (tab && editor && !editor.isDestroyed && editor.view.dom.contains(document.elementFromPoint(info.x, info.y))) {
+        const text = selectedText(editor).trim()
+        if (text) {
+          const passage = { text, title: tab.title, filePath: tab.filePath || null }
+          items.push(
+            { separator: true },
+            { label: t('Search the web'), onClick: () => searchInBrowser(text) },
+            { label: t('Discuss with AI in a new chat'), onClick: () => discussPassage(passage, { newChat: true }) },
+            { label: t('Discuss with AI in the current chat'), onClick: () => discussPassage(passage, { newChat: false }) },
+          )
+        }
+      }
       setContextMenu({ x: info.x, y: info.y, items })
     })
   }, [])
@@ -362,6 +410,9 @@ export default function App() {
 
   const chooseProject = useCallback(() => switchProject(() => electronAPI.chooseProject()), [switchProject])
   const openProject = useCallback((directory) => switchProject(() => electronAPI.openProject(directory)), [switchProject])
+  openProjectRef.current = openProject
+  // Scegliendo un progetto dal pannello Progetti si passa subito ai suoi file (se la scelta è annullata non cambia nulla).
+  const showFiles = (picking) => picking.then((chosen) => { if (chosen) setSideTab('files'); return chosen })
   const createProject = useCallback((name) => switchProject(() => electronAPI.createProject(name)), [switchProject])
 
   // Nuova versione: controllo all'avvio (e a richiesta dalla finestra Informazioni), confronto con la versione in uso.
@@ -403,8 +454,38 @@ export default function App() {
       if (command === 'settings') openSettings()
       if (command === 'open-project') chooseProject()
       if (command === 'view-endless' || command === 'view-pages') updateAppearance({ view: command.slice(5) })
+      if (command === 'nav-back' || command === 'nav-forward') jumpsRef.current?.(command === 'nav-back' ? 'back' : 'forward')
     })
   }, [chooseProject])
+
+  // Errori e avvisi del processo principale (anche quelli che finora si vedevano solo nel terminale) diventano notifiche.
+  useEffect(() => {
+    if (!electronAPI?.onAppNotice) return undefined
+    return electronAPI.onAppNotice((notice) => notify(notice.level, notice.message, { detail: notice.detail }))
+  }, [])
+
+  // Indietro / Avanti nella cronologia dei salti: Alt+←/→ (Cmd+[ / ] su Mac) e i tasti laterali del mouse.
+  useEffect(() => {
+    const onKey = (event) => {
+      const mac = navigator.platform.toLowerCase().includes('mac')
+      const back = mac ? event.metaKey && event.key === '[' : event.altKey && !event.ctrlKey && event.key === 'ArrowLeft'
+      const forward = mac ? event.metaKey && event.key === ']' : event.altKey && !event.ctrlKey && event.key === 'ArrowRight'
+      if (!back && !forward) return
+      event.preventDefault()
+      jumpsRef.current?.(back ? 'back' : 'forward')
+    }
+    // Tasti laterali del mouse (3 = indietro, 4 = avanti): si ascoltano nella pagina, perché il comando di navigazione di Windows non arriva con tutti i mouse.
+    // Si blocca anche la discesa del tasto, così il browser non tenta una sua navigazione.
+    const onMouse = (event) => {
+      if (event.button !== 3 && event.button !== 4) return
+      event.preventDefault()
+      if (event.type === 'mouseup') jumpsRef.current?.(event.button === 3 ? 'back' : 'forward')
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('mousedown', onMouse)
+    window.addEventListener('mouseup', onMouse)
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('mousedown', onMouse); window.removeEventListener('mouseup', onMouse) }
+  }, [])
 
   // L'albero dei file si aggiorna quando la cartella del progetto cambia per mano di altri programmi (file incollati, creati, spostati, eliminati).
   useEffect(() => {
@@ -481,6 +562,53 @@ export default function App() {
       setStatus(t('Opened'))
     },
     // Pulsante "Apri" di una scheda fissata chiusa: rilegge il documento dal file.
+    // Apre per intero un file grande (da anteprima): l'editor può impiegare molto e l'app non risponde nel frattempo, quindi prima si mostra un avviso
+    // di caricamento (l'animazione gira anche con il thread dell'interfaccia occupato) e solo dopo si costruisce il documento.
+    async openFull(id) {
+      const tab = latest.current.tabs.find((item) => item.id === id)
+      if (!tab?.largeFile || !tab.sourcePath) return
+      setLargeLoading(t('Opening “{title}” ({size} MB)… the application may not respond for a while.', { title: tab.title, size: (tab.largeFile.chars / 1048576).toFixed(1) }))
+      await sleep(80)
+      try {
+        let document
+        try { document = await electronAPI.openDocumentPath(tab.sourcePath) } catch { document = await electronAPI.reopenDocument(tab.sourcePath) }
+        setTabs((current) => current.map((item) => (item.id === id ? { ...createTab({ ...document, full: true }, id), pinned: item.pinned } : item)))
+      } catch (error) {
+        console.error(error)
+        setStatus(t('Could not open the file'))
+      } finally {
+        setTimeout(() => setLargeLoading(null), 0)
+      }
+    },
+    // Apre un documento già letto: se è grande, costruire l'editor blocca l'interfaccia per un po', quindi prima si mostra il riquadro di attesa e si lascia
+    // dipingere (due fotogrammi) prima di cominciare; il riquadro sparisce quando l'editor è montato.
+    async openLoaded(document, options) {
+      const heavy = String(document?.content ?? '').length > HEAVY_DOCUMENT_CHARS
+      if (heavy) {
+        setLargeLoading(t('Opening “{name}”…', { name: document.title || baseName(document.filePath || document.sourcePath || '') }))
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      }
+      try { workspaceRef.current.openDocument(document, options) } finally { if (heavy) setTimeout(() => setLargeLoading(null), 0) }
+    },
+    // Estrae le immagini incorporate di un file Markdown in file collegati (anche molto grande: si lavora sul disco, senza editor) e apre il risultato.
+    async extractImages(source = null, near = null) {
+      // Il main avvisa quando, scelti i file, parte la conversione vera (prima ci sono solo le finestre di scelta).
+      const stop = electronAPI.onExtractMarkdownImagesStart?.((info) => setLargeLoading(t('Extracting the images of “{name}” ({size} MB)…', info)))
+      try {
+        const result = await electronAPI.extractMarkdownImages({ source, directory: near ? near.replace(/[\\/][^\\/]*$/, '') : undefined })
+        if (!result) return
+        if (!result.path) { setStatus(t('No embedded images found in this file')); notify('info', t('No embedded images found in this file')); return }
+        setStatus(t('{count} images extracted into the “images” folder', { count: result.count }))
+        notify('success', t('{count} images extracted into the “images” folder', { count: result.count }))
+        await workspaceRef.current.openLoaded(await electronAPI.openDocumentPath(result.path))
+      } catch (error) {
+        console.error(error)
+        setStatus(t('The operation failed'))
+      } finally {
+        stop?.()
+        setLargeLoading(null)
+      }
+    },
     async reopenTab(id) {
       const tab = latest.current.tabs.find((item) => item.id === id)
       if (!tab?.closed) return
@@ -492,6 +620,16 @@ export default function App() {
         console.error(error)
         setStatus(t('Could not open the file'))
       }
+    },
+    // Salvataggio chiesto dall'utente: con modifiche dell'assistente ancora da rivedere chiede conferma e le accetta tutte, altrimenti resterebbero
+    // segnate "da rivedere" in un file già salvato. Annullando non si salva e non si accetta nulla.
+    async saveWithReview(id, options) {
+      const editor = latest.current.editors[id]
+      if (editor && !editor.isDestroyed && getPending(editor.state).length) {
+        if (!(await dialogsRef.current.confirm(t('This document has edits by the assistant still to review: saving accepts them all. Save and accept them?'), { confirmLabel: t('Save and accept all') }))) return false
+        acceptAll(editor)
+      }
+      return workspaceRef.current.saveTab(id, options)
     },
     // Salva una scheda: se ha già un file lo sovrascrive, altrimenti (o con "salva con nome") chiede dove. Restituisce true se salvata.
     async saveTab(id, { saveAs = false } = {}) {
@@ -521,7 +659,7 @@ export default function App() {
           { value: 'cancel', label: t('Cancel') },
         ])
         if (!choice || choice === 'cancel') return
-        if (choice === 'save' && !(await workspaceRef.current.saveTab(id))) return
+        if (choice === 'save' && !(await workspaceRef.current.saveWithReview(id))) return
       }
       // Una scheda fissata con un file non sparisce: resta al suo posto senza documento, con il pulsante "Apri".
       if (tab.pinned && tab.sourcePath && !tab.closed) {
@@ -530,12 +668,12 @@ export default function App() {
       }
       const current = latest.current.tabs
       const remaining = current.filter((item) => item.id !== id)
-      const next = remaining.some(isDocument) ? remaining : [...remaining, createTab()]
-      setTabs(next)
+      // Si può chiudere anche l'ultima scheda: l'editor resta senza documenti, con i pulsanti per crearne o aprirne uno.
+      setTabs(remaining)
       setActiveId((active) => {
         if (active !== id) return active
         const index = current.findIndex((item) => item.id === id)
-        return (next[index] || next[next.length - 1]).id
+        return (remaining[index] || remaining[remaining.length - 1])?.id ?? null
       })
     },
     pathRenamed(from, to) {
@@ -697,8 +835,15 @@ export default function App() {
       if (!currentProject && !isAbsolutePath(given)) return null
       const wanted = isAbsolutePath(given) ? given : `${currentProject}/${given}`
       const tab = currentTabs.filter(isLive).find((item) => samePath(item.filePath, wanted) || samePath(item.sourcePath, wanted))
+      // L'anteprima di un file grande contiene solo l'inizio: l'assistente legge il file da disco.
+      if (tab?.largeFile) return null
       const editor = tab && currentEditors[tab.id]
       return editor ? { text: editor.getMarkdown(), dirty: tab.dirty } : null
+    },
+    // Documenti aperti con modifiche non salvate, col testo dell'editor: la ricerca li usa al posto del file su disco, che è più vecchio.
+    getDirtyDocuments() {
+      const { tabs: currentTabs, editors: currentEditors } = latest.current
+      return currentTabs.filter((tab) => isLive(tab) && tab.dirty && tab.filePath && currentEditors[tab.id]).map((tab) => ({ path: tab.filePath, text: currentEditors[tab.id].getMarkdown() }))
     },
     // Imagine che l'utente ha aperta nella scheda attiva (percorso relativo al progetto), se la scheda attiva è un'immagine.
     activeImagePath() {
@@ -814,6 +959,11 @@ export default function App() {
       const editor = latest.current.editors[id]
       return editor ? editor.getMarkdown() : null
     },
+    // Accetta tutte le modifiche dell'assistente ancora da rivedere in un documento ("Approva per me": a fine lavoro, prima di salvare).
+    acceptPending(id) {
+      const editor = latest.current.editors[id]
+      if (editor && !editor.isDestroyed && getPending(editor.state).length) acceptAll(editor)
+    },
     // Salva un documento già associato a un file Markdown (usato a fine lavoro dell'assistente); gli altri restano modificati.
     // Le modifiche dell'assistente ancora da rivedere non si scrivono nel file: salvarle equivarrebbe ad accettarle al posto dell'utente.
     // Il documento resta modificato finché l'utente le accetta o le rifiuta e salva (`force`: solo per non perdere il lavoro, quando le schede stanno per essere sostituite).
@@ -862,6 +1012,30 @@ export default function App() {
           activate: setActiveId,
           notify: (title) => setStatus(t('An agent proposed changes to “{title}”: review them in the document', { title })),
           refreshNotes: () => setNotesVersion((value) => value + 1),
+          openProject: (directory) => latest.current.openProject(directory),
+          setStatus,
+          // La richiesta parte nella chat dell'assistente, firmata col nome dell'agente (messaggio riconoscibile come non scritto dall'utente);
+          // si risponde quando il messaggio è salvato, con l'id della chat e l'indice del messaggio.
+          askAgent: ({ prompt, newChat, agent }) => new Promise((resolve) => {
+            const timer = setTimeout(() => resolve('The request was sent but the assistant has not started yet (it is busy, or not configured in OpenWriter). It starts as soon as it is free: look for the chat with list_chats / read_chat.'), 60_000)
+            const onStarted = ({ conversationId: chatId, messageIndex }) => {
+              clearTimeout(timer)
+              resolve(JSON.stringify({ started: true, chatId: chatId || null, messageIndex, note: 'The assistant is working in the app in the background. Follow it with read_chat (id = chatId; from = messageIndex shows the request and what comes after) and list_chats: lastRole "assistant" means it has answered.' }, null, 2))
+            }
+            setAssistantOpen(true)
+            setChatRequest({
+              id: Date.now(),
+              text: prompt,
+              newChat,
+              onStarted,
+              attachment: {
+                label: t('Request from {agent} (MCP)', { agent }),
+                detail: `This request was sent by an external coding agent (${agent}) through the OpenWriter MCP server, not written by the user. Carry it out with your tools, then reply with a short summary of what you did.`,
+                source: 'mcp',
+                agent,
+              },
+            })
+          }),
         })
         electronAPI.answerMcp(id, { ok: true, text })
       } catch (error) {
@@ -937,6 +1111,12 @@ export default function App() {
     setSideTab('notes')
   }, [])
 
+  // Brano selezionato da discutere con l'assistente: entra nel contesto della chat (nuova o aperta) senza partire, la domanda la scrive l'utente.
+  const discussPassage = useCallback((passage, { newChat }) => {
+    setAssistantOpen(true)
+    setChatRequest({ id: Date.now(), passage, newChat })
+  }, [])
+
   useDocumentFileCommands({ activeTab, getEditor, workspace, onStatusChange: setStatus })
 
   const openFileRef = useRef(null)
@@ -944,7 +1124,7 @@ export default function App() {
   // Ctrl+clic su un collegamento del documento: file locale (si apre in una scheda), indirizzo web (nel browser di sistema) o ancora.
   // Va al punto di un documento indicato da `#nome`: un segnalibro, o un titolo con quel nome. `filePath` vuoto = il documento in primo piano.
   // Se il documento si sta ancora aprendo, aspetta che l'editor sia pronto (fino a 4 secondi).
-  async function goToFragment(filePath, fragment) {
+  async function goToFragment(filePath, fragment, origin = null) {
     if (!fragment) return
     const deadline = Date.now() + 4000
     for (;;) {
@@ -957,6 +1137,7 @@ export default function App() {
         const list = tab.filePath ? await electronAPI.listBookmarks(tab.filePath).catch(() => []) : []
         const found = findFragmentTarget(editor, list, fragment)
         if (!found) { setStatus(t('Nothing named "{name}" in this document', { name: fragment })); return }
+        if (origin) rememberPlace(origin)
         setActiveId(tab.id)
         const match = list.find((item) => item.name.toLowerCase() === fragment.toLowerCase())
         if (match) setActiveBookmarkId(match.id)
@@ -968,10 +1149,77 @@ export default function App() {
     }
   }
 
+  // Ricerca sul web nel browser integrato (la scheda in primo piano o l'ultima usata, altrimenti una nuova): l'assistente può poi leggere la pagina e agire.
+  async function searchInBrowser(query) {
+    try {
+      const browser = await toolBridge.getBrowser({ create: true, activate: true })
+      const words = String(query).trim().replace(/\s+/g, ' ').slice(0, 300)
+      if (words) await browser.controller.open(`https://duckduckgo.com/?q=${encodeURIComponent(words)}`)
+    } catch (reason) {
+      setStatus(reason.message || String(reason))
+    }
+  }
+  // Cronologia dei salti: seguendo un collegamento (ancora, titolo, altro documento) o scegliendo una voce dei pannelli laterali, il punto di partenza si ricorda
+  // (scheda, cursore, scorrimento); Indietro / Avanti (Alt+←/→, Cmd+[ / ], il tasto indietro del mouse) ci tornano.
+  const jumps = useRef({ back: [], forward: [] })
+  function currentPlace() {
+    const { tabs: currentTabs, editors: currentEditors, activeId: currentActive } = latest.current
+    const tab = currentTabs.find((item) => item.id === currentActive && isLive(item))
+    const editor = tab && currentEditors[tab.id]
+    if (!editor || editor.isDestroyed) return null
+    return { tabId: tab.id, from: editor.state.selection.from, scrollTop: editor.view.dom.closest('[data-document-scroll]')?.scrollTop ?? 0 }
+  }
+  function rememberPlace(place = currentPlace()) {
+    if (!place) return
+    const last = jumps.current.back.at(-1)
+    if (!(last && last.tabId === place.tabId && last.from === place.from)) jumps.current.back = [...jumps.current.back, place].slice(-50)
+    jumps.current.forward = []
+  }
+  function restorePlace(place) {
+    const tab = latest.current.tabs.find((item) => item.id === place.tabId && isLive(item))
+    const editor = tab && latest.current.editors[tab.id]
+    if (!editor || editor.isDestroyed) return false
+    setActiveId(tab.id)
+    editor.chain().setTextSelection(Math.min(place.from, editor.state.doc.content.size)).run()
+    // La scheda può essere appena tornata visibile: lo scorrimento si ripristina dopo il disegno.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (editor.isDestroyed) return
+      editor.commands.focus(null, { scrollIntoView: false })
+      const scroller = editor.view.dom.closest('[data-document-scroll]')
+      if (scroller) scroller.scrollTop = place.scrollTop
+    }))
+    return true
+  }
+  function goThroughJumps(direction) {
+    const from = direction === 'back' ? jumps.current.back : jumps.current.forward
+    const to = direction === 'back' ? jumps.current.forward : jumps.current.back
+    while (from.length) {
+      const place = from.pop()
+      const here = currentPlace()
+      if (restorePlace(place)) { if (here) to.push(here); return }
+    }
+  }
+  const jumpsRef = useRef(null)
+  jumpsRef.current = goThroughJumps
+
+  // Un indirizzo web si apre nel browser integrato, in una scheda nuova (la pagina che c'è già non si perde); il pulsante della scheda lo apre nel browser di sistema.
+  async function openInBrowserTab(url) {
+    try {
+      const browser = await toolBridge.getBrowser({ newTab: true, activate: true })
+      await browser.controller.open(url)
+    } catch (reason) {
+      console.error(reason)
+      electronAPI.openLink(url)
+    }
+  }
+
   function openLink(target) {
-    if (target.kind === 'anchor') goToFragment(null, target.fragment)
-    else if (target.kind === 'file') openFromExplorer(target.path).then(() => goToFragment(target.path, target.fragment))
-    else if (target.kind === 'external') electronAPI.openLink(target.url)
+    // Il punto di partenza si ricorda adesso: aprendo un altro documento la scheda attiva cambia prima dell'arrivo.
+    const origin = currentPlace()
+    if (target.kind === 'anchor') goToFragment(null, target.fragment, origin)
+    else if (target.kind === 'file') openFromExplorer(target.path).then(() => { if (!target.fragment) rememberPlace(origin); return goToFragment(target.path, target.fragment, origin) })
+    else if (target.kind === 'external') openInBrowserTab(target.url)
+    else if (target.kind === 'search') searchInBrowser(target.query)
     else if (target.kind === 'unresolved') setStatus(t('Save the document first to follow relative links'))
   }
   const workspaceRef = useRef(null)
@@ -1011,11 +1259,18 @@ export default function App() {
     const { preview, permanent, ...ipcOptions } = options || {}
     // Un'immagine si apre nella scheda di visualizzazione, senza passare dal lettore dei documenti.
     if (isImageFile(filePath)) { workspace.openImage(filePath, { preview, permanent }); return }
+    // Se la lettura (o la conversione di un DOCX/PDF) richiede tempo, dopo un attimo compare il riquadro di attesa.
+    const timer = setTimeout(() => setLargeLoading(t('Opening “{name}”…', { name: baseName(filePath) })), 300)
     try {
-      workspace.openDocument(await electronAPI.openDocumentPath(filePath, ipcOptions), { preview, permanent })
+      const document = await electronAPI.openDocumentPath(filePath, ipcOptions)
+      clearTimeout(timer)
+      await workspace.openLoaded(document, { preview, permanent })
     } catch (error) {
       console.error(error)
       setStatus(t('Could not open the file'))
+    } finally {
+      clearTimeout(timer)
+      setTimeout(() => setLargeLoading(null), 0)
     }
   }
 
@@ -1024,14 +1279,22 @@ export default function App() {
   // Documenti aperti dal sistema (doppio clic su un .md, "Apri con"): quelli arrivati prima dell'avvio, poi quelli successivi.
   useEffect(() => {
     if (!ready || !electronAPI?.onExternalDocument) return undefined
-    const open = (document) => workspaceRef.current.openDocument(document)
+    const open = (document) => workspaceRef.current.openLoaded(document)
     electronAPI.takeExternalDocuments().then((list) => list.forEach(open)).catch((error) => console.error(error))
     return electronAPI.onExternalDocument(open)
   }, [ready])
 
   const openDocuments = useMemo(() => tabs.filter(isLive).map((item) => ({ id: item.id, title: item.title })), [tabs])
 
-  if (!ready || !activeTab) return <div className="h-screen bg-slate-950" />
+  // Caricamento (avvio o cambio di progetto): una schermata che lo dice, non una pagina vuota. La rotellina gira sul compositore, anche quando il resto è occupato.
+  if (!ready) {
+    return (
+      <div role="status" aria-live="polite" className="flex h-screen flex-col items-center justify-center gap-3 bg-slate-950 text-sm text-slate-400">
+        <Loader2 size={28} className="animate-spin text-accent-400" />
+        <span>{t('Loading the project…')}</span>
+      </div>
+    )
+  }
 
   // Larghezze dei pannelli laterali: quelle scelte dall'utente, ridotte solo se la finestra è troppo stretta.
   const leftVisible = Boolean(sideTab)
@@ -1060,11 +1323,12 @@ export default function App() {
           <aside style={{ width: widths.left }} className="relative flex shrink-0 flex-col border-r border-slate-800 bg-slate-900/60">
             <PanelResizer side="left" label={t('Side panel width')} width={widths.left} min={PANELS.left.min} max={maxWidthFor('left', resizeContext('left'))} defaultWidth={PANELS.left.default} onChange={resizePanel('left')} onCommit={commitLayout} />
             <h2 className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{sideTabs.find((item) => item.id === sideTab)?.label}</h2>
-            {sideTab === 'projects' && <ProjectsPanel project={project} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onOpen={openProject} onChoose={chooseProject} onCreate={createProject} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
+            {sideTab === 'projects' && <ProjectsPanel project={project} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onOpen={(directory) => showFiles(openProject(directory))} onChoose={() => showFiles(chooseProject())} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
             {sideTab === 'files' && (
-              <FileExplorer project={project} activePath={activeTab.kind === 'image' ? activeTab.imagePath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />
+              <FileExplorer project={project} activePath={activeTab?.kind === 'image' ? activeTab.imagePath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />
             )}
-            {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} />}
+            {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} onJump={rememberPlace} />}
+            {sideTab === 'anchors' && <AnchorsPanel editor={editors[contextTab?.id]} onJump={rememberPlace} />}
             {sideTab === 'notes' && (editors[contextTab?.id]
               ? <NotesPanel noteView={noteView} onNoteViewChange={(view) => { setNoteView(view); setActiveNoteId(null) }} search={noteSearch} onSearchChange={setNoteSearch} tab={contextTab} editor={editors[contextTab.id]} project={workspaceRoot} notes={notes} activeNoteId={activeNoteId} onSelectNote={setActiveNoteId} onChanged={() => setNotesVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} />
               : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>)}
@@ -1079,14 +1343,34 @@ export default function App() {
           </aside>
         )}
         <main className="flex min-w-0 flex-1 flex-col">
-          <TabBar tabs={tabs} onPromote={workspace.promoteTab} unsavedCount={unsavedTabs(tabs).length} onSaveAll={saveAllTabs} activeId={activeTab.id} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
+          <TabBar tabs={tabs} onPromote={workspace.promoteTab} unsavedCount={unsavedTabs(tabs).length} onSaveAll={saveAllTabs} activeId={activeTab?.id ?? null} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
+            {!tabs.length && (
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-slate-500">
+                <p>{t('No document open.')}</p>
+                <div className="flex gap-2">
+                  <button type="button" className="rounded border border-slate-700 px-3 py-1.5 text-slate-300 transition hover:bg-slate-800" onClick={workspace.newTab}>{t('New document')}</button>
+                  <button type="button" className="rounded border border-slate-700 px-3 py-1.5 text-slate-300 transition hover:bg-slate-800" onClick={async () => { const document = await electronAPI.openDocument(); if (document) await workspace.openLoaded(document) }}>{t('Open…')}</button>
+                </div>
+              </div>
+            )}
             {tabs.map((tab) => (tab.kind === 'image'
-              ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab.id} onStatus={setStatus} onInteract={workspace.promoteTab} onNavigate={workspace.changeImage} />
+              ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onStatus={setStatus} onInteract={workspace.promoteTab} onNavigate={workspace.changeImage} />
               : tab.kind === 'browser'
-              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
-              : <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onSave={async () => { if (await workspace.saveTab(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} />))}
+              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
+              : (mountedTabs.current.has(tab.id) || tab.dirty || tab.pending)
+              ? <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onOpenFull={() => workspace.openFull(tab.id)} onExtractImages={() => workspace.extractImages(tab.sourcePath)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />
+              : null))}
           </section>
+          <ToastHost />
+          {largeLoading && (
+            <div role="status" aria-live="polite" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+              <div className="flex max-w-sm items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-5 py-4 text-sm text-slate-200 shadow-xl">
+                <Loader2 size={20} className="shrink-0 animate-spin text-accent-400" />
+                <span>{largeLoading}</span>
+              </div>
+            </div>
+          )}
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>
             <span className="shrink-0">{status}</span>

@@ -1,6 +1,6 @@
 # src/styles.css
 
-Source: [`src/styles.css`](../../src/styles.css)
+Source: [`src/styles.css`](../../../src/styles.css)
 
 Global stylesheet built on Tailwind CSS (base, components, utilities).
 

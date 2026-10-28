@@ -1,6 +1,6 @@
 # electron/bookmarks-store.cjs
 
-Source: [`electron/bookmarks-store.cjs`](../../electron/bookmarks-store.cjs)
+Source: [`electron/bookmarks-store.cjs`](../../../electron/bookmarks-store.cjs)
 
 Bookmarks: named anchors in a document, to go back to them, to link them from other documents (`file.md#name`) and to point something out to the assistant. They are saved outside the Markdown file, like notes, in `<project>/.ow/bookmarks/<document path>.json` as `[{ id, name, label, quote, prefix, suffix, note, flagged, author, createdAt, updatedAt }]`.
 

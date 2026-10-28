@@ -1,7 +1,8 @@
 ---
+
 # projectIcons.js
 
-Source: [`src/lib/projectIcons.js`](../../../src/lib/projectIcons.js)
+Source: [`src/lib/projectIcons.js`](../../../../src/lib/projectIcons.js)
 
 Project icons on the renderer side: read once per folder and kept in memory until they change.
 

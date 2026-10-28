@@ -1,6 +1,6 @@
 # electron/markdown-tokens.cjs
 
-Source: [`electron/markdown-tokens.cjs`](../../electron/markdown-tokens.cjs)
+Source: [`electron/markdown-tokens.cjs`](../../../electron/markdown-tokens.cjs)
 
 The Markdown analyzer of the main process: `marked` with the same extensions as the editor — front matter, footnote definitions and references, block and inline formulas. So what is code, a formula or a footnote is decided the way the editor decides it, and not by regular expressions applied to the source (which would also touch the examples inside a code block).
 

@@ -1,6 +1,6 @@
 # electron/pdf-import.cjs
 
-Source: [`electron/pdf-import.cjs`](../../electron/pdf-import.cjs)
+Source: [`electron/pdf-import.cjs`](../../../electron/pdf-import.cjs)
 
 Reads a PDF and returns its text with a marker where each image stood, in the reading order of the page, plus the images as PNG.
 

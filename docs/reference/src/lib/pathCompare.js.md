@@ -1,6 +1,6 @@
 # pathCompare.js
 
-Source: [`src/lib/pathCompare.js`](../../../src/lib/pathCompare.js)
+Source: [`src/lib/pathCompare.js`](../../../../src/lib/pathCompare.js)
 
 Path comparison in the interface, with the same rule as [path-compare.cjs](../../electron/path-compare.cjs.md): case matters on Linux, not on Windows and macOS. Paths arrive with `\` or `/` and are compared with `/`.
 

@@ -1,6 +1,6 @@
 # aiOptions.js
 
-Source: [`src/lib/aiOptions.js`](../../../src/lib/aiOptions.js)
+Source: [`src/lib/aiOptions.js`](../../../../src/lib/aiOptions.js)
 
 The options of the AI providers shared between the components.
 

@@ -1,6 +1,6 @@
 # alertExtension.js
 
-Source: [`src/lib/alertExtension.js`](../../../src/lib/alertExtension.js)
+Source: [`src/lib/alertExtension.js`](../../../../src/lib/alertExtension.js)
 
 GitHub alerts: a blockquote whose first line is `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]` (`ALERT_TYPES`). In the editor it is a blockquote with a coloured label; in the file it keeps the GitHub form. Without this extension the `[!NOTE]` was written as `\[!NOTE\]` and the alert stopped working.
 

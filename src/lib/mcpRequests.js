@@ -1,6 +1,7 @@
 import { createToolRunner } from './aiTools.js'
 import { getPending } from './pendingChangesExtension.js'
 import { isInsidePath, samePath } from './pathCompare.js'
+import { t } from '../i18n/index.js'
 
 /**
  * Richieste di modifica che arrivano dal server MCP (un agente esterno, tramite il ponte del processo principale): si eseguono con gli stessi
@@ -29,10 +30,33 @@ async function authorizeDocument(given, { api, toolBridge, project }) {
   throw new Error('The path is not accessible: it must be a document of the project, a document linked to the project, or a document open in OpenWriter')
 }
 
-export async function handleMcpRequest({ tool, args = {} }, { api, toolBridge, project, activate, notify, refreshNotes }) {
+const OPENABLE_DOCUMENT = /\.(md|markdown|mdown|txt|docx|pdf)$/i
+
+export async function handleMcpRequest({ tool, args = {} }, { api, toolBridge, project, activate, notify, refreshNotes, openProject, setStatus, askAgent }) {
+  // Cambiare progetto non richiede un progetto aperto, né che sia quello dell'agente.
+  if (tool === 'open_project') {
+    const directory = String(args.path ?? '').trim()
+    if (!isAbsolute(directory)) throw new Error('Give the absolute path of the project folder')
+    const opened = await openProject(directory)
+    if (!opened) throw new Error('The project could not be opened')
+    setStatus?.(t("An agent opened the project “{project}”", { project: opened }))
+    return `Project ${opened} is now open in OpenWriter.`
+  }
   if (!project) throw new Error('No project is open in OpenWriter')
+  // Testo non salvato dei documenti aperti, per la ricerca del server MCP.
+  if (tool === 'dirty_documents') return JSON.stringify(toolBridge.getDirtyDocuments())
+  // Una richiesta all'assistente di OpenWriter: parte in una chat dell'app, in parallelo al lavoro dell'agente che l'ha inviata.
+  if (tool === 'ask_agent') {
+    const prompt = String(args.prompt ?? '').trim()
+    if (!prompt) throw new Error('Missing parameter "prompt"')
+    return askAgent({ prompt, newChat: !(args.newChat === false || args.newChat === 'false'), agent: String(args.agent ?? '').trim().slice(0, 60) || 'an external agent' })
+  }
   const given = String(args.path ?? '').trim()
-  if (given) await authorizeDocument(given, { api, toolBridge, project })
+  // Aprire un documento è l'unico modo per un agente di portare nell'area di lavoro un file fuori dal progetto: l'utente lo vede aprirsi in una scheda.
+  if (tool === 'open_document') {
+    if (!given) throw new Error('Missing parameter "path"')
+    if (isAbsolute(given) && !OPENABLE_DOCUMENT.test(given)) throw new Error('Only documents can be opened (.md, .txt, .docx, .pdf)')
+  } else if (given) await authorizeDocument(given, { api, toolBridge, project })
 
   // Quello che l'utente vede in questo momento (modifiche non salvate e da rivedere comprese), mentre il file su disco può essere più vecchio.
   if (tool === 'read_open_document') {

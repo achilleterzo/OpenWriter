@@ -11,7 +11,7 @@ The project is built with Electron, React, Vite, Tailwind CSS, and Tiptap.
 ## Editor Features
 
 - Rich-text editing with Markdown as the native format: H1–H7 headings, bold, italic, strikethrough, inline code, links, bullet, numbered and task lists, blockquotes, code blocks, tables, horizontal rules, and undo/redo.
-- Text alignment (left, centre, right, justified) saved as GitHub-compatible `<div align>` blocks ([textAlignExtension.js](reference/src/lib/textAlignExtension.js.md)).
+- Text alignment (left, centre, right, justified) saved as GitHub-compatible `<div align>` blocks; a paragraph that holds nothing but a linked image (a badge) no longer leaves an empty line in the file ([textAlignExtension.js](reference/src/lib/textAlignExtension.js.md)).
 - Extended Markdown kept exactly as written: GitHub alerts (`[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`), footnotes (`[^1]`), LaTeX formulas (`$…$`, `$$…$$`), front matter, block and inline HTML ([rawMarkdownExtensions.js](reference/src/lib/rawMarkdownExtensions.js.md), [footnoteExtensions.js](reference/src/lib/footnoteExtensions.js.md), [mathExtensions.js](reference/src/lib/mathExtensions.js.md)).
 - Typographic rules while typing: `--` becomes «–», `–-` becomes «—», `...` becomes «…», never at the start of a line and never inside code ([smartDashesExtension.js](reference/src/lib/smartDashesExtension.js.md)).
 - Safe serialisation of the marks: spaces at the edges of bold or italic text no longer break the delimiters and leave literal asterisks in the file ([markExtensions.js](reference/src/lib/markExtensions.js.md)).
@@ -23,7 +23,8 @@ The project is built with Electron, React, Vite, Tailwind CSS, and Tiptap.
 - Exports to DOCX and PDF, and a self-contained Markdown export with the images embedded as `data:` URIs ([markdown-embed.cjs](reference/electron/markdown-embed.cjs.md)).
 - Find and replace with live highlighting, a match counter, match-case, whole-word and regular-expression options, and `$1` capture groups in replacements.
 - Replace all is handled as a single undoable operation.
-- Images of a document (in its `images/` folder) follow it when it is moved, and a shared image is copied instead ([document-images.cjs](reference/electron/document-images.cjs.md)).
+- Images of a document (in its `images/` folder) follow it when it is moved, and a shared image is copied instead ([document-images.cjs](reference/electron/document-images.cjs.md)). The images a document uses are found through the Markdown tokens, so the examples inside a code block are left alone ([markdown-images.cjs](reference/electron/markdown-images.cjs.md), [markdown-tokens.cjs](reference/electron/markdown-tokens.cjs.md)).
+- Links and images are written with the right syntax: a destination with spaces or brackets goes between `<…>` with the escapes it needs, and a text or a title with `[`, `]` or `"` cannot break the line ([markdownSyntax.js](reference/src/lib/markdownSyntax.js.md)).
 - Editor fonts: a bundled set of Google Fonts plus the ones installed from the catalog, kept in the application data so they also work offline ([fonts.js](reference/src/lib/fonts.js.md), [fonts.cjs](reference/electron/fonts.cjs.md)).
 - Files can be copied or cut in OpenWriter and pasted in the system file manager, and the other way round ([file-clipboard.cjs](reference/electron/file-clipboard.cjs.md)).
 
@@ -51,30 +52,27 @@ When a folder is opened, an `.ow` directory is created or reused at the project 
 
 ```text
 .ow/
-  
-```
-
   project.json
   context.md
-  links.json
-  references.json
-  icon.png
   skills/
   memory.json
   chat/
     attachments/
+  image-descriptions/
   notes/
   bookmarks/
+  links.json
+  references.json
+  icon.png
   browser-history.json
+  browser-history-agent.json
   history/
     chapters/intro.md/
       index.json
       <id>.md
-
 ```
 
-The directory contains settings, the assistant context, the linked documents and reference folders, the project icon, project memory, conversations, attachments, notes, bookmarks, the browser history, and document versions. Its contents are plain text or JSON and can be committed to Git or ignored, and every write is atomic ([atomic-write.cjs](reference/electron/atomic-write.cjs.md)).
-```
+The directory contains settings, the assistant context, the linked documents and reference folders, the project icon, project memory, conversations, attachments, the descriptions the assistant saved of the project images, notes, bookmarks, the browser history, and document versions. Its contents are plain text or JSON and can be committed to Git or ignored, and every write is atomic ([atomic-write.cjs](reference/electron/atomic-write.cjs.md)).
 
 A version is saved when the text changes. Manually labeled versions can also be created. Up to 100 versions are retained per document, with older automatic versions removed first.
 
@@ -82,9 +80,9 @@ History can compare a version with the current text, restore it, or delete it. B
 
 ## AI Assistant
 
-The assistant is available in a side panel and can work on the current selection or the entire document.
+The assistant is available in a side panel and can work on the current selection or the entire document. A selected passage can also be discussed on its own: the buttons of the selection bar, or the right-click menu, attach it to a new or the current conversation, and from then on the model receives the passage instead of the whole document.
 
-Quick actions (proofread, rewrite, summarize, lengthen, review) can be edited in Settings, and you can add your own; by default Review leaves its remarks as notes in the document. Conversations are saved in the project and can be renamed, deleted, or branched.
+Quick actions (proofread, rewrite, summarize, lengthen, review) can be edited in Settings, and you can add your own; a project can also have actions of its own, shown in the chat before the general ones. By default Review leaves its remarks as notes in the document. Conversations are saved in the project and can be renamed, deleted, or branched.
 
 Responses are streamed and may include the model's reasoning or progress state. Token usage is shown per reply and per conversation. The tool-chain limit is configurable in Settings, together with the option to continue on its own when the limit is reached.
 
@@ -94,15 +92,17 @@ A writing skill is a reusable pack of style, tone of voice, rules, reference exa
 
 ### Tools
 
-- Reading project file listings and document contents; the `.ow`, `.git`, and `node_modules` directories are never exposed.
+- Reading project file listings and document contents; the `.ow`, `.git`, and `node_modules` directories are never exposed. `list_directory` is recursive by default, so one call returns the whole hierarchy below a folder.
 - Reading the current editor content for open files, including unsaved changes.
+- Searching the project files for a word, a phrase or a regular expression — the results as a list of files, as matching lines with context, or as totals only — with the same search as the MCP server ([project-search.cjs](reference/electron/project-search.cjs.md)); unsaved editor text takes the place of the file on disk.
+- Delegating an exploration to a research assistant: a second model, chosen in Settings → AI, that searches and reads the project on its own and returns a short report with paths and line numbers, so that the readings stay out of the conversation ([researchAgent.js](reference/src/lib/researchAgent.js.md)).
 - Creating directories and new Markdown or text files without overwriting existing files.
 - Moving and deleting project files through the app's controlled project operations.
 - Creating notes anchored to text and suggestions with accept/rejectable replacements.
 - Setting bookmarks: named anchors in a document, linkable as `file.md#name`, with a flag and a note to point a passage out.
 - Inserting and replacing text in the open document through the editor, with undo support through `Ctrl+Z`.
 - Optional web browsing through DuckDuckGo and reading open browser tabs.
-- Taking document or browser screenshots and reading images for vision-capable models.
+- Taking document or browser screenshots and reading images for vision-capable models. `describe_image` saves a description of a project image in `.ow/image-descriptions/`, and `view_image` returns that description instead of the image from then on (`again` shows the image itself), so the same image is never looked at twice.
 - Asking single-choice or multiple-choice questions and sequential questionnaires.
 
 ### Supported Providers
@@ -113,12 +113,13 @@ Ollama, Ollama Cloud, OpenRouter, Codex, Claude, and Gemini are supported. Ollam
 
 ### External Agents (MCP)
 
-OpenWriter also exposes its project to external agents as an MCP server on stdio ([mcp-server.cjs](reference/electron/mcp-server.cjs.md), configured from Settings → Agents (MCP), [McpSettings.jsx](reference/src/components/pages/McpSettings.jsx.md)).
+OpenWriter also exposes its project to external agents as an MCP server ([mcp-server.cjs](reference/electron/mcp-server.cjs.md), configured from Settings → Agents (MCP), [McpSettings.jsx](reference/src/components/pages/McpSettings.jsx.md)). It normally speaks on stdio, started by the agent's client; for the clients that cannot start a program it can also be turned on over HTTP (Settings → Agents (MCP) → HTTP server): the same server, listening only on `127.0.0.1` at a fixed address with a token kept in the application data and regenerable, and working while OpenWriter runs ([mcp-http.cjs](reference/electron/mcp-http.cjs.md)).
 
 - **What an agent reaches**: the documents of the project, the documents linked to the project, and the documents open in OpenWriter (also outside the project folder: opening one in the editor makes it part of the active workspace). Any other path on the disk is refused. Folder listing and search concern the project folder only.
-- **What it reads**: the context, the instructions, the skills, the notes, the bookmarks, the memory, and the documents (the saved file, or with `read_open_document` what the user sees right now, unsaved changes included).
+- **What it reads**: the context, the instructions, the skills, the notes, the bookmarks, the memory, and the documents (the saved file, or with `read_open_document` what the user sees right now, unsaved changes included). The whole file tree comes in one call: `list_documents` is recursive by default and `read_project` is its alias. Its text search is `search_files` (`search_documents` is the old name, still accepted): the same search as the assistant's ([project-search.cjs](reference/electron/project-search.cjs.md)), which with the application running also searches the unsaved text of the documents open in the editor instead of the older files on disk. It can also read the chats of the assistant (`list_chats`, `read_chat`), to follow what `ask_agent` set in motion and check its result.
 - **What it writes**: notes, suggested changes (a note with a replacement) and bookmarks, which are stored in `.ow` and reviewed in the Notes panel; new documents and folders (`create_file`, `create_folder`: inside the project, never overwriting); and, with the application running, edits to the documents open in the editor — `replace_text`, `insert_text` and `replace_document`. Those edits are applied to the live editor through a local bridge ([mcp-bridge.cjs](reference/electron/mcp-bridge.cjs.md), [mcpRequests.js](reference/src/lib/mcpRequests.js.md)): they are marked for the user to accept or reject, can be undone with Ctrl+Z, and nothing is written to the file until the user saves. A document that is not open is opened in a tab first.
-- **Switches**: `--read-only` (Settings → Agents (MCP) → Read-only) removes every writing tool, the bridge ones included; "Let agents change the documents open in OpenWriter" turns the editor edits off at any time, without regenerating the client configuration.
+- **What it opens, in the application**: `open_document` brings a document of the project, or any document file outside it, in front in a tab (opening it is what makes it part of the active workspace); `open_project` opens a project folder and switches the application to it, with `create=true` to create a new project there first (with OpenWriter closed the folder is created but nothing switches, so the server keeps the project it had); `ask_agent` hands a task to the built-in writing assistant, which works on it in the app in parallel with the agent — the request is signed with the agent's name and the answer says in which chat and at which message it landed, so the agent can follow it with `list_chats` / `read_chat`.
+- **Switches**: `--read-only` (Settings → Agents (MCP) → Read-only) removes every writing tool, the bridge ones included; "Let agents change the documents open in OpenWriter" turns the editor edits off at any time, without regenerating the client configuration; the HTTP server has its own switch and its own read-only option, and its token can be renewed.
 
 ## Spell Checking
 
@@ -166,7 +167,8 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [bookmarks-store.cjs.md](reference/electron/bookmarks-store.cjs.md) ([bookmarks-store.cjs](../electron/bookmarks-store.cjs)) — Named anchors in documents, linkable as `file.md#name`
   - [memory-store.cjs.md](reference/electron/memory-store.cjs.md) ([memory-store.cjs](../electron/memory-store.cjs)) — Project memory entries and file references
   - [skills-store.cjs.md](reference/electron/skills-store.cjs.md) ([skills-store.cjs](../electron/skills-store.cjs)) — Writing skills: global and project libraries
-  - [project-tools.cjs.md](reference/electron/project-tools.cjs.md) ([project-tools.cjs](../electron/project-tools.cjs)) — File tools for the assistant
+  - [project-tools.cjs.md](reference/electron/project-tools.cjs.md) ([project-tools.cjs](../electron/project-tools.cjs)) — File tools for the assistant (listing, reading, creating; the search lives in `project-search.cjs`)
+  - [project-search.cjs.md](reference/electron/project-search.cjs.md) ([project-search.cjs](../electron/project-search.cjs)) — Text and regular-expression search shared by the assistant and the MCP server
   - [markdown-plain.cjs.md](reference/electron/markdown-plain.cjs.md) ([markdown-plain.cjs](../electron/markdown-plain.cjs)) — Plain text of a document, for anchoring quotations
   - [markdown-tokens.cjs.md](reference/electron/markdown-tokens.cjs.md) ([markdown-tokens.cjs](../electron/markdown-tokens.cjs)) — Markdown tokenizer with the editor's extensions
   - [markdown-images.cjs.md](reference/electron/markdown-images.cjs.md) ([markdown-images.cjs](../electron/markdown-images.cjs)) — Images of a document found and rewritten through the tokens
@@ -177,7 +179,8 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [file-clipboard.cjs.md](reference/electron/file-clipboard.cjs.md) ([file-clipboard.cjs](../electron/file-clipboard.cjs)) — Files copied and cut through the system clipboard
   - [browser-history.cjs.md](reference/electron/browser-history.cjs.md) ([browser-history.cjs](../electron/browser-history.cjs)) — History of the built-in browser, per project
   - [images.cjs.md](reference/electron/images.cjs.md) ([images.cjs](../electron/images.cjs)) — Image downloads, screenshots, normalization
-  - [mcp-server.cjs.md](reference/electron/mcp-server.cjs.md) ([mcp-server.cjs](../electron/mcp-server.cjs)) — MCP server for external agents
+  - [mcp-server.cjs.md](reference/electron/mcp-server.cjs.md) ([mcp-server.cjs](../electron/mcp-server.cjs)) — MCP server for external agents, on stdio or HTTP
+  - [mcp-http.cjs.md](reference/electron/mcp-http.cjs.md) ([mcp-http.cjs](../electron/mcp-http.cjs)) — HTTP transport of the MCP server, started by the app
   - [mcp-bridge.cjs.md](reference/electron/mcp-bridge.cjs.md) ([mcp-bridge.cjs](../electron/mcp-bridge.cjs)) — Local bridge from the MCP server to the running app
   - [path-compare.cjs.md](reference/electron/path-compare.cjs.md) ([path-compare.cjs](../electron/path-compare.cjs)) — Platform-aware path comparison
   - [menu.cjs.md](reference/electron/menu.cjs.md) ([menu.cjs](../electron/menu.cjs)) — Native application menu
@@ -201,7 +204,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [lib/](reference/src/lib/)
     - [lib.md](reference/src/lib/lib.md) — Index of the `src/lib` helpers
     - [aiOptions.js.md](reference/src/lib/aiOptions.js.md) ([aiOptions.js](../src/lib/aiOptions.js)) — Provider option helpers
-    - [aiTools.js.md](reference/src/lib/aiTools.js.md) ([aiTools.js](../src/lib/aiTools.js)) — Tool catalog and execution layer
+    - [aiTools.js.md](reference/src/lib/aiTools.js.md) ([aiTools.js](../src/lib/aiTools.js)) — Tool catalog and execution layer, recursive `list_directory`, `describe_image`
     - [alertExtension.js.md](reference/src/lib/alertExtension.js.md) ([alertExtension.js](../src/lib/alertExtension.js)) — GitHub alerts (`[!NOTE]`…) in blockquotes
     - [anchoring.js.md](reference/src/lib/anchoring.js.md) ([anchoring.js](../src/lib/anchoring.js)) — Text anchoring for notes
     - [annotationExtension.js.md](reference/src/lib/annotationExtension.js.md) ([annotationExtension.js](../src/lib/annotationExtension.js)) — Find highlights and note markers
@@ -223,7 +226,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [markdownSyntax.js.md](reference/src/lib/markdownSyntax.js.md) ([markdownSyntax.js](../src/lib/markdownSyntax.js)) — Destination, text and title of links and images, written correctly
     - [markExtensions.js.md](reference/src/lib/markExtensions.js.md) ([markExtensions.js](../src/lib/markExtensions.js)) — Safe writing of the Markdown marks
     - [mathExtensions.js.md](reference/src/lib/mathExtensions.js.md) ([mathExtensions.js](../src/lib/mathExtensions.js)) — LaTeX formulas kept as written
-    - [mcpRequests.js.md](reference/src/lib/mcpRequests.js.md) ([mcpRequests.js](../src/lib/mcpRequests.js)) — Agent requests applied to the open editor
+    - [mcpRequests.js.md](reference/src/lib/mcpRequests.js.md) ([mcpRequests.js](../src/lib/mcpRequests.js)) — Agent requests applied to the open editor, and to the workspace (opening a document or a project, a task for the assistant)
     - [pathCompare.js.md](reference/src/lib/pathCompare.js.md) ([pathCompare.js](../src/lib/pathCompare.js)) — Platform-aware path comparison in the interface
     - [pendingChangesExtension.js.md](reference/src/lib/pendingChangesExtension.js.md) ([pendingChangesExtension.js](../src/lib/pendingChangesExtension.js)) — Assistant edits marked for review
     - [preferences.js.md](reference/src/lib/preferences.js.md) ([preferences.js](../src/lib/preferences.js)) — Interface preferences in the app data
@@ -231,7 +234,9 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [quickActions.js.md](reference/src/lib/quickActions.js.md) ([quickActions.js](../src/lib/quickActions.js)) — Chat quick actions and their defaults
     - [rawMarkdownExtensions.js.md](reference/src/lib/rawMarkdownExtensions.js.md) ([rawMarkdownExtensions.js](../src/lib/rawMarkdownExtensions.js)) — Front matter and HTML kept as raw text
     - [readerMode.js.md](reference/src/lib/readerMode.js.md) ([readerMode.js](../src/lib/readerMode.js)) — Article extraction, reading view, save as Markdown
+    - [researchAgent.js.md](reference/src/lib/researchAgent.js.md) ([researchAgent.js](../src/lib/researchAgent.js)) — Research assistant: a second model that explores the project and reports back
     - [searchExtension.js.md](reference/src/lib/searchExtension.js.md) ([searchExtension.js](../src/lib/searchExtension.js)) — Find and replace engine
+    - [selectionText.js.md](reference/src/lib/selectionText.js.md) ([selectionText.js](../src/lib/selectionText.js)) — Text of the editor selection
     - [skills.js.md](reference/src/lib/skills.js.md) ([skills.js](../src/lib/skills.js)) — Writing skills helpers
     - [smartDashesExtension.js.md](reference/src/lib/smartDashesExtension.js.md) ([smartDashesExtension.js](../src/lib/smartDashesExtension.js)) — Dashes and ellipsis typed in the editor
     - [textAlignExtension.js.md](reference/src/lib/textAlignExtension.js.md) ([textAlignExtension.js](../src/lib/textAlignExtension.js)) — Text alignment saved as aligned blocks
@@ -246,7 +251,7 @@ Settings, sessions, window state, the interface preferences, the installed fonts
 
 Document text is sent only to the enabled AI provider when a message is submitted. With local Ollama, data does not leave the computer.
 
-Web browsing by the assistant is off by default; when it is on, the searches and the addresses go through DuckDuckGo and the pages, while the sites the user opens in a browser tab are visited as usual. The built-in browser keeps a history per project, the assistant's navigations in a separate one ([browser-history.cjs](reference/electron/browser-history.cjs.md)). The MCP server only reads the project and leaves notes, suggestions and bookmarks; a read-only mode removes even that ([mcp-server.cjs](reference/electron/mcp-server.cjs.md)).
+Web browsing by the assistant is off by default; when it is on, the searches and the addresses go through DuckDuckGo and the pages, while the sites the user opens in a browser tab are visited as usual. The built-in browser keeps a history per project, the assistant's navigations in a separate one ([browser-history.cjs](reference/electron/browser-history.cjs.md)). The MCP server never writes to the document files: it reads the project, leaves notes, suggestions and bookmarks in `.ow`, can create documents and folders on request, and its edits to the documents open in the editor are applied to the editor and stay marked for the user to accept or reject; a read-only mode removes every writing tool ([mcp-server.cjs](reference/electron/mcp-server.cjs.md)). The bridge it uses listens only on `127.0.0.1`, requires a token, and accepts a request only for the project that is open; the HTTP transport does the same, with a token of its own that can be renewed.
 
 ## Releases
 

@@ -6,6 +6,8 @@ import { buildTextIndex, locateNote } from './anchoring.js'
 export const annotationKey = new PluginKey('owAnnotations')
 
 function buildDecorations(doc, notes, activeId) {
+  // Senza note non c'è nulla da cercare: indicizzare il testo di un documento grande a ogni battuta costa inutilmente.
+  if (!notes.length) return DecorationSet.empty
   const index = buildTextIndex(doc)
   const decorations = []
   for (const note of notes) {

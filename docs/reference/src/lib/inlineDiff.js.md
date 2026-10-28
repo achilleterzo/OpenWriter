@@ -1,6 +1,6 @@
 # inlineDiff.js
 
-Source: [`src/lib/inlineDiff.js`](../../../src/lib/inlineDiff.js)
+Source: [`src/lib/inlineDiff.js`](../../../../src/lib/inlineDiff.js)
 
 Word-level differences between two texts, used to show only what actually changed inside an assistant edit awaiting review, instead of the whole replaced paragraph.
 

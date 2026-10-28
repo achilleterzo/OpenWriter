@@ -25,15 +25,17 @@ Non-React helpers used by the editor and the assistant.
 - [markdownSyntax.js](markdownSyntax.js.md) — Destination, text and title of links and images, written correctly
 - [markExtensions.js](markExtensions.js.md) — Safe writing of the Markdown marks and italic delimiters
 - [mathExtensions.js](mathExtensions.js.md) — LaTeX formulas (`$…$`, `$$…$$`) kept as written
-- [mcpRequests.js](mcpRequests.js.md) — Agent requests applied to the open editor
+- [mcpRequests.js](mcpRequests.js.md) — Agent requests applied to the open editor, and to the workspace (opening a document or a project, a task for the assistant)
 - [pathCompare.js](pathCompare.js.md) — Platform-aware path comparison in the interface
 - [pendingChangesExtension.js](pendingChangesExtension.js.md) — Assistant edits marked for review, with accept and reject
 - [preferences.js](preferences.js.md) — Interface preferences stored in the application data
 - [projectIcons.js](projectIcons.js.md) — Project icons: reading, caching, choosing, resizing
-- [quickActions.js](quickActions.js.md) — Chat quick actions: defaults, custom ones, and what to save
+- [quickActions.js](quickActions.js.md) — Chat quick actions: defaults, custom ones, project ones, and what to save
 - [rawMarkdownExtensions.js](rawMarkdownExtensions.js.md) — Front matter and HTML kept as raw text through the round trip
 - [readerMode.js](readerMode.js.md) — Article extraction, reading view, and save as Markdown
 - [searchExtension.js](searchExtension.js.md) — Tiptap extension powering live find highlight and match counting
+- [researchAgent.js](researchAgent.js.md) — Research assistant: a second model that explores the project and reports back
+- [selectionText.js](selectionText.js.md) — Text of the editor selection, blocks separated by a blank line
 - [skills.js](skills.js.md) — Writing skills: serialization, active skills, system-prompt block, AI generation prompts
 - [smartDashesExtension.js](smartDashesExtension.js.md) — Dashes and ellipsis typed in the editor
 - [textAlignExtension.js](textAlignExtension.js.md) — Text alignment saved as aligned HTML blocks

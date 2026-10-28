@@ -1,4 +1,5 @@
 import {
+  Anchor as AnchorIcon,
   AlignCenter,
   AlignJustify,
   AlignLeft,
@@ -163,6 +164,7 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onL
         <ToolbarButton label={t('Quote')} active={active.blockquote} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote size={17} /></ToolbarButton>
         <ToolbarButton label={t('Code block')} active={active.codeBlock} onClick={() => editor.chain().focus().toggleCodeBlock().run()}><Code2 size={17} /></ToolbarButton>
         <ToolbarButton label={t('Horizontal rule')} onClick={() => editor.chain().focus().setHorizontalRule().run()}><Minus size={17} /></ToolbarButton>
+        <ToolbarButton label={t('Insert anchor')} onClick={() => editor.chain().focus().insertAnchor().run()}><AnchorIcon size={17} /></ToolbarButton>
         <ToolbarButton label={t('Insert table')} active={active.table} onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}><Table2 size={17} /></ToolbarButton>
       </ToolbarGroup>
       {active.table && (

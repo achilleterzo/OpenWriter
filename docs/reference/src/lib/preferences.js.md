@@ -1,6 +1,6 @@
 # preferences.js
 
-Source: [`src/lib/preferences.js`](../../../src/lib/preferences.js)
+Source: [`src/lib/preferences.js`](../../../../src/lib/preferences.js)
 
 Interface preferences (theme, language, panel widths, notes view…). They live in the application data directory, in a file managed by the main process, and not only in the browser's `localStorage`: that depends on the address the page is loaded from (development server, installed application, another port) and on the installation folder, so changing any of them lost everything.
 

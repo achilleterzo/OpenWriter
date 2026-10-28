@@ -18,6 +18,7 @@ function marker(bookmark) {
 }
 
 function buildDecorations(doc, bookmarks, activeId) {
+  if (!bookmarks.length) return DecorationSet.empty
   const index = buildTextIndex(doc)
   const decorations = []
   for (const bookmark of bookmarks) {

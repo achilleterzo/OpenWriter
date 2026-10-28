@@ -1,7 +1,8 @@
 ---
+
 # electron/project-icon.cjs
 
-Source: [`electron/project-icon.cjs`](../../electron/project-icon.cjs)
+Source: [`electron/project-icon.cjs`](../../../electron/project-icon.cjs)
 
 The icon of a project, kept in `<project>/.ow/` as `icon.png` (any image, already resized to 128 px by the interface), `icon.svg` (copied as it is), or `icon.gif` / `icon.webp` (animated, copied as they are). Only one of the four is kept.
 

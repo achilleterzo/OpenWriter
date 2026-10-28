@@ -1,7 +1,8 @@
 ---
+
 # readerMode.js
 
-Source: [`src/lib/readerMode.js`](../../../src/lib/readerMode.js)
+Source: [`src/lib/readerMode.js`](../../../../src/lib/readerMode.js)
 
 The reading view of a web page: it extracts the article and turns it into a clean page or into Markdown.
 

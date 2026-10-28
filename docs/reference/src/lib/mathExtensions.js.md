@@ -1,6 +1,6 @@
 # mathExtensions.js
 
-Source: [`src/lib/mathExtensions.js`](../../../src/lib/mathExtensions.js)
+Source: [`src/lib/mathExtensions.js`](../../../../src/lib/mathExtensions.js)
 
 LaTeX formulas of extended Markdown: `$…$` in the text and `$$…$$` (also on several lines) as a block. They are not rendered: they stay raw text, written back identical on save. Without these extensions the `_` and `*` of a formula were read as italic and written as `\_`, changing the formula.
 

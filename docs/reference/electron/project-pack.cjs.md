@@ -1,6 +1,6 @@
 # electron/project-pack.cjs
 
-Source: [`electron/project-pack.cjs`](../../electron/project-pack.cjs)
+Source: [`electron/project-pack.cjs`](../../../electron/project-pack.cjs)
 
 The shareable configuration of a project: everything in `.ow` that defines *how the work is done* in the project, in a single JSON file that can be passed to other people.
 
@@ -10,3 +10,4 @@ The pack holds the assistant context (`context.md`) and the other instruction fi
 - `parsePack(source)`: reads and checks a file, returning the cleaned pack or a readable error (not a setup file, too large, from a newer version). Names and identifiers are validated so that nothing can be written outside the expected files.
 - `summarize(pack)`: the summary shown before importing (date, app, context length, instruction files, skills).
 - `applyPack({ pack, file, directory, mode, overwrite, applySettings })`: applies the configuration. The context replaces the current one or is appended (`mode`), instruction files and skills are written only when they do not exist yet (unless `overwrite`), and with `applySettings` the settings are adopted too; the project name is always kept. It returns how much was written and skipped.
+
