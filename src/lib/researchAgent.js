@@ -45,6 +45,7 @@ export async function runResearch({ question, scope = '', settings, api, chat, p
     api,
     project,
     enabled: { files: true },
+    getDocument: (path) => toolBridge.getDocument(path),
     getOpenDocumentText: (path) => toolBridge.getOpenDocumentText(path),
     getDirtyDocuments: () => toolBridge.getDirtyDocuments(),
   })
