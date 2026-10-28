@@ -85,7 +85,7 @@ export default function ImageViewer({ src, alt, onClose }) {
       <div
         ref={stage}
         className={`relative min-h-0 flex-1 touch-none select-none overflow-hidden ${drag.current ? 'cursor-grabbing' : 'cursor-grab'}`}
-        onPointerDown={(event) => { drag.current = { x: event.clientX, y: event.clientY, view: state.current.view, moved: false }; event.currentTarget.setPointerCapture(event.pointerId) }}
+        onPointerDown={(event) => { drag.current = { x: event.clientX, y: event.clientY, view: state.current.view, moved: false, background: event.target === event.currentTarget }; event.currentTarget.setPointerCapture(event.pointerId) }}
         onPointerMove={(event) => {
           if (!drag.current) return
           const dx = event.clientX - drag.current.x
@@ -93,7 +93,7 @@ export default function ImageViewer({ src, alt, onClose }) {
           if (Math.abs(dx) + Math.abs(dy) > 3) drag.current.moved = true
           setView({ ...drag.current.view, x: drag.current.view.x + dx, y: drag.current.view.y + dy })
         }}
-        onPointerUp={(event) => { const moved = drag.current?.moved; drag.current = null; if (!moved && event.target === event.currentTarget) onClose() }}
+        onPointerUp={() => { const gesture = drag.current; drag.current = null; if (gesture?.background && !gesture.moved) onClose() }}
         onPointerCancel={() => { drag.current = null }}
         onDoubleClick={(event) => { const box = stage.current.getBoundingClientRect(); toggle(event.clientX - box.left, event.clientY - box.top) }}
       >
