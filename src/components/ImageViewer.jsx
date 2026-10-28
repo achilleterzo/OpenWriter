@@ -14,6 +14,7 @@ export default function ImageViewer({ src, alt, onClose }) {
   const [size, setSize] = useState(null)
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 })
   const stage = useRef(null)
+  const dialog = useRef(null)
   const drag = useRef(null)
   const state = useRef({ view, size })
   state.current = { view, size }
@@ -41,13 +42,22 @@ export default function ImageViewer({ src, alt, onClose }) {
 
   useEffect(() => {
     const onKey = (event) => {
-      if (event.key === 'Escape') { event.stopPropagation(); onClose() }
-      else if (event.key === '+' || event.key === '=') zoomCentered(1.25)
-      else if (event.key === '-') zoomCentered(1 / 1.25)
+      // I tasti gestiti vanno consumati: il fuoco può essere ancora nell'editor sotto, che altrimenti vi scriverebbe il carattere.
+      const consume = () => { event.preventDefault(); event.stopPropagation() }
+      if (event.key === 'Escape') { consume(); onClose() }
+      else if (event.key === '+' || event.key === '=') { consume(); zoomCentered(1.25) }
+      else if (event.key === '-') { consume(); zoomCentered(1 / 1.25) }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
+
+  // Il fuoco passa al visualizzatore, così nessun altro tasto raggiunge l'editor sottostante; alla chiusura torna dov'era.
+  useEffect(() => {
+    const previous = document.activeElement
+    dialog.current?.focus()
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true }) }
+  }, [])
 
   // La rotella non può essere passiva: deve impedire lo scorrimento del documento sotto.
   useEffect(() => {
@@ -63,7 +73,7 @@ export default function ImageViewer({ src, alt, onClose }) {
 
   const percent = Math.round(view.scale * 100)
   return (
-    <div role="dialog" aria-modal="true" aria-label={alt || t('View image')} className="fixed inset-0 z-50 flex flex-col bg-black/90">
+    <div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={alt || t('View image')} className="fixed inset-0 z-50 flex flex-col bg-black/90 outline-none">
       <div className="flex shrink-0 items-center gap-1 px-3 py-2 text-xs text-slate-300">
         <span className="min-w-0 flex-1 truncate">{alt}{size ? ` · ${size.width}×${size.height}` : ''}</span>
         <button type="button" aria-label={t('Zoom out')} title={t('Zoom out')} className={button} disabled={!size} onClick={() => zoomCentered(1 / 1.25)}><ZoomOut size={16} /></button>
