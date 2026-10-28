@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { t } from '../i18n/index.js'
+import { getPreference, setPreference } from '../lib/preferences.js'
 
 const electronAPI = window.electronAPI
 
@@ -58,7 +59,7 @@ function snippets({ command, args, env, platform }) {
 function HttpServer() {
   const [status, setStatus] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [readOnly, setReadOnly] = useState(() => electronAPI.preferences?.values?.[HTTP_READ_ONLY_PREFERENCE] === 'on')
+  const [readOnly, setReadOnly] = useState(() => getPreference(HTTP_READ_ONLY_PREFERENCE) === 'on')
   const [copied, setCopied] = useState('')
   const [showToken, setShowToken] = useState(false)
 
@@ -75,7 +76,7 @@ function HttpServer() {
 
   function changeReadOnly(value) {
     setReadOnly(value)
-    electronAPI.preferences?.set(HTTP_READ_ONLY_PREFERENCE, value ? 'on' : 'off')
+    setPreference(HTTP_READ_ONLY_PREFERENCE, value ? 'on' : 'off')
     if (status?.running) apply({ enabled: true })
   }
 
@@ -136,8 +137,8 @@ export default function McpSettings({ project }) {
   const [pinProject, setPinProject] = useState(false)
   const [readOnly, setReadOnly] = useState(false)
   // Modifiche degli agenti ai documenti aperti: attive salvo scelta contraria (preferenza dell'app, valida subito, senza rigenerare la configurazione).
-  const [allowEdits, setAllowEdits] = useState(() => electronAPI.preferences?.values?.[EDIT_PREFERENCE] !== 'off')
-  const changeAllowEdits = (value) => { setAllowEdits(value); electronAPI.preferences?.set(EDIT_PREFERENCE, value ? 'on' : 'off') }
+  const [allowEdits, setAllowEdits] = useState(() => getPreference(EDIT_PREFERENCE) !== 'off')
+  const changeAllowEdits = (value) => { setAllowEdits(value); setPreference(EDIT_PREFERENCE, value ? 'on' : 'off') }
   const [clientId, setClientId] = useState('claude-code')
   const [copied, setCopied] = useState(false)
 
