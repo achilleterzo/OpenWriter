@@ -19,7 +19,6 @@ const safe = (value) => String(value).replace(/[^\p{L}\p{N}._-]+/gu, '-').replac
 /** `directory`: dove scrivere le immagini; `link`: prefisso del percorso relativo nel Markdown (default "images"). */
 function extractImages(markdown, { directory, link = 'images', stem = 'image' }) {
   const names = new Map() // contenuto → nome
-  const taken = new Set()
   let count = 0
   let bytes = 0
 
@@ -30,14 +29,20 @@ function extractImages(markdown, { directory, link = 'images', stem = 'image' })
     const extension = /^jpe?g$/i.test(type) ? 'jpg' : type.toLowerCase()
     let base = label ? safe(label) : ''
     if (!base) base = `${safe(stem) || 'image'}-${hash}`
-    let name = `${base}.${extension}`
-    if (taken.has(name)) name = `${base}-${hash}.${extension}`
-    taken.add(name)
     fs.mkdirSync(directory, { recursive: true })
-    const target = path.join(directory, name)
-    let same = false
-    try { same = fs.statSync(target).size === buffer.length } catch { /* nuovo */ }
-    if (!same) fs.writeFileSync(target, buffer)
+    // Un file già presente si riusa solo se ha esattamente gli stessi byte; altrimenti si cerca un nome libero, senza mai sovrascrivere altre immagini.
+    let name = ''
+    let write = true
+    for (let attempt = 0; ; attempt += 1) {
+      const suffix = attempt === 0 ? '' : attempt === 1 ? `-${hash}` : `-${hash}-${attempt}`
+      const candidate = `${base}${suffix}.${extension}`
+      const target = path.join(directory, candidate)
+      let existing = null
+      try { existing = fs.readFileSync(target) } catch { /* libero */ }
+      if (!existing) { name = candidate; break }
+      if (existing.equals(buffer)) { name = candidate; write = false; break }
+    }
+    if (write) fs.writeFileSync(path.join(directory, name), buffer, { flag: 'wx' })
     count += 1
     bytes += buffer.length
     names.set(data, name)
