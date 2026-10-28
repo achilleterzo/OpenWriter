@@ -52,11 +52,27 @@ function createMcpHttp({ directory, serverPath, packaged, execPath }) {
     return { running: Boolean(running), error: lastError, ...(state ? { port: state.port, token: state.token, url: `http://127.0.0.1:${state.port}/mcp` } : {}) }
   }
 
+  // Gli avvii si accodano e ogni richiesta (avvio o arresto) invalida le precedenti: un avvio superato non lancia più nulla, quindi non resta
+  // mai un server (magari scrivibile) che `stop()` non conosce. Prima di lanciare il nuovo si attende l'uscita del vecchio, che libera la porta.
+  let generation = 0
+  let queue = Promise.resolve()
+  let exiting = Promise.resolve()
+
   // Avvia (o riavvia) il server; risolve quando ha scritto di essere in ascolto o è terminato.
-  async function start({ readOnly = false, renewToken = false } = {}) {
-    stop()
+  function start(options = {}) {
+    const mine = ++generation
+    const result = queue.then(() => launch(options, mine))
+    queue = result.catch(() => {})
+    return result
+  }
+
+  async function launch({ readOnly = false, renewToken = false }, mine) {
+    terminate()
+    await exiting
+    if (mine !== generation) return status()
     lastError = ''
     const state = await ensureState({ renewToken })
+    if (mine !== generation) return status()
     const args = [serverPath, '--http', '--port', String(state.port), '--token', state.token, '--data', directory, ...(readOnly ? ['--read-only'] : [])]
     const process_ = spawn(packaged ? execPath : 'node', args, { cwd: directory, env: { ...process.env, ...(packaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true })
     child = process_
@@ -80,11 +96,18 @@ function createMcpHttp({ directory, serverPath, packaged, execPath }) {
     return status()
   }
 
-  function stop() {
+  function terminate() {
     const current = child
     child = null
     running = null
-    try { current?.kill() } catch { /* già terminato */ }
+    if (!current) return
+    if (current.exitCode === null && current.signalCode === null) exiting = Promise.all([exiting, new Promise((resolve) => { current.once('exit', resolve); setTimeout(resolve, 3000).unref?.() })])
+    try { current.kill() } catch { /* già terminato */ }
+  }
+
+  function stop() {
+    generation += 1
+    terminate()
   }
 
   return { start, stop, status }
