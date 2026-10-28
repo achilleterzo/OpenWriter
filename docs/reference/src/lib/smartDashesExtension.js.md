@@ -1,6 +1,6 @@
 # smartDashesExtension.js
 
-Source: [`src/lib/smartDashesExtension.js`](../../../src/lib/smartDashesExtension.js)
+Source: [`src/lib/smartDashesExtension.js`](../../../../src/lib/smartDashesExtension.js)
 
 Typographic rules applied while typing in the visual editor (not in the source view): `--` becomes the en dash «–», `–-` (a third dash) the em dash «—», and `...` the true ellipsis «…».
 

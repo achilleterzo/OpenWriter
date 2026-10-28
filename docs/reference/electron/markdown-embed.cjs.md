@@ -1,6 +1,6 @@
 # electron/markdown-embed.cjs
 
-Source: [`electron/markdown-embed.cjs`](../../electron/markdown-embed.cjs)
+Source: [`electron/markdown-embed.cjs`](../../../electron/markdown-embed.cjs)
 
 Self-contained Markdown export: the images of a document — files next to it, in the project, or elsewhere on disk — are embedded in the text as `data:` URIs, so the `.md` file can be shared on its own, without the `images/` folder and without a zip.
 

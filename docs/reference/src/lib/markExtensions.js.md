@@ -1,6 +1,6 @@
 # markExtensions.js
 
-Source: [`src/lib/markExtensions.js`](../../../src/lib/markExtensions.js)
+Source: [`src/lib/markExtensions.js`](../../../../src/lib/markExtensions.js)
 
 Safe writing of the Markdown marks (bold, italic, strikethrough…).
 

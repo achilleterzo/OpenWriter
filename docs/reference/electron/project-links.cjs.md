@@ -1,7 +1,8 @@
 ---
+
 # electron/project-links.cjs
 
-Source: [`electron/project-links.cjs`](../../electron/project-links.cjs)
+Source: [`electron/project-links.cjs`](../../../electron/project-links.cjs)
 
 Markdown documents linked to a project: files that live outside its folder and that the project points to without copying them. They are listed in `<project>/.ow/links.json` as `[{ path (absolute), addedAt }]`, written atomically, with a maximum of 200 links (`MAX_LINKS`). The original is always the file that is edited: history and notes stay tied to the file's own path, as for any loose document.
 

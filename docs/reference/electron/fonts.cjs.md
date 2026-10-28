@@ -1,6 +1,6 @@
 # electron/fonts.cjs
 
-Source: [`electron/fonts.cjs`](../../electron/fonts.cjs)
+Source: [`electron/fonts.cjs`](../../../electron/fonts.cjs)
 
 Google Fonts downloaded on request and kept in the application data directory, so that after the installation they work without a connection. Only latin and latin-ext subsets are taken: enough for the interface languages and light enough to keep.
 

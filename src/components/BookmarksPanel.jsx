@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useEditorState } from '@tiptap/react'
 import { Bookmark, BookmarkPlus, Bot, Check, Copy, Flag, Link as LinkIcon, Pencil, Trash2, X } from 'lucide-react'
 import { anchorContext, buildTextIndex, locateQuote } from '../lib/anchoring.js'
@@ -36,11 +36,16 @@ export default function BookmarksPanel({ tab, editor, project, bookmarks, active
   const [everything, setEverything] = useState([])
 
   // Dove sta ogni segnalibro nel documento (posizione di inizio, o null se il testo non c'è più): si aggiorna a ogni modifica.
+  const cache = useRef({ doc: null, bookmarks: null, value: '[]' })
   const located = useEditorState({
     editor,
     selector: ({ editor: current }) => {
-      const index = buildTextIndex(current.state.doc)
-      return JSON.stringify(bookmarks.map((item) => locateQuote(current.state.doc, item, index)?.from ?? null))
+      const { doc } = current.state
+      if (cache.current.doc === doc && cache.current.bookmarks === bookmarks) return cache.current.value
+      const index = buildTextIndex(doc)
+      const value = JSON.stringify(bookmarks.map((item) => locateQuote(doc, item, index)?.from ?? null))
+      cache.current = { doc, bookmarks, value }
+      return value
     },
   })
   const positions = JSON.parse(located)

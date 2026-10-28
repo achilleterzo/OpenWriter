@@ -1,7 +1,8 @@
 ---
+
 # electron/project-owner.cjs
 
-Source: [`electron/project-owner.cjs`](../../electron/project-owner.cjs)
+Source: [`electron/project-owner.cjs`](../../../electron/project-owner.cjs)
 
 The "nearest `.ow`" rule, as with Git: the history and the notes of a file belong to the `.ow` directory nearest to it, walking up from the file's folder to the root of the open project (which is always the last possible owner). A sub-project is therefore a folder with its own `.ow`; the open project never looks beyond its own root.
 

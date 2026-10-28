@@ -1,6 +1,6 @@
 # electron/notes-store.cjs
 
-Source: [`electron/notes-store.cjs`](../../electron/notes-store.cjs)
+Source: [`electron/notes-store.cjs`](../../../electron/notes-store.cjs)
 
 Anchored note store under `.ow/notes/`. For each document, notes live in a JSON file mirroring the project path: `.ow/notes/<document-path>.json`. The file sits in the nearest `.ow` above the document ([project-owner.cjs](project-owner.cjs.md)), so the notes of a sub-project stay in the sub-project; a document outside the open project goes to the main project under `loose/`.
 

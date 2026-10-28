@@ -1,6 +1,6 @@
 # layout.js
 
-Source: [`src/lib/layout.js`](../../../src/lib/layout.js)
+Source: [`src/lib/layout.js`](../../../../src/lib/layout.js)
 
 Panel layout helper (persisted in `localStorage` as `openwriter.layout`).
 

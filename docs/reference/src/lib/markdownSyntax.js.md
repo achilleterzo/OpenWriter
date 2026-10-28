@@ -1,6 +1,6 @@
 # markdownSyntax.js
 
-Source: [`src/lib/markdownSyntax.js`](../../../src/lib/markdownSyntax.js)
+Source: [`src/lib/markdownSyntax.js`](../../../../src/lib/markdownSyntax.js)
 
 The Markdown syntax of links and images, written correctly: destination, text (`alt`) and title. Wrapping the destination in `<…>` is not enough: inside, `\`, `<` and `>` must be protected, a text with `[` or `]` and a title with `"` would break the line (or change its meaning) if written as they are. Used by [imageExtension.js](imageExtension.js.md) and by the link of the editor (`DocumentLink`, in [DocumentPane.jsx](../components/pages/DocumentPane.jsx.md)). The same rule for destinations lives in [markdown-images.cjs](../../electron/markdown-images.cjs.md): they have to stay aligned.
 

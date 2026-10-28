@@ -11,6 +11,8 @@ const { createProjectsStore } = require('./projects.cjs')
 const { createChatStore } = require('./chat-store.cjs')
 const { createMemoryStore } = require('./memory-store.cjs')
 const { createMcpBridge } = require('./mcp-bridge.cjs')
+const { createMcpHttp } = require('./mcp-http.cjs')
+const { formatSearch } = require('./project-search.cjs')
 const { isSameOrInside, samePath } = require('./path-compare.cjs')
 const { fetchLatestRelease } = require('./updates.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
@@ -26,6 +28,7 @@ const { createReferencesStore } = require('./project-references.cjs')
 const projectPack = require('./project-pack.cjs')
 const { createBookmarksStore } = require('./bookmarks-store.cjs')
 const { embedImages } = require('./markdown-embed.cjs')
+const { extractImages } = require('./markdown-extract.cjs')
 const fileClipboard = require('./file-clipboard.cjs')
 const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-links.cjs')
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
@@ -36,6 +39,29 @@ const { t, setLocale, getLocale } = require('./i18n.cjs')
 
 const isDevelopment = !app.isPackaged
 let mainWindow
+
+// Errori e avvisi del processo principale (anche quelli che Electron stampa per un comando IPC fallito): oltre che nel terminale, arrivano alla finestra come
+// notifiche (canale `app:notice`, vedi src/lib/toasts.js). Un errore di un comando diventa "motivo" + comando nel dettaglio.
+const NOTICE_IGNORED = [/^\(node:\d+\)/, /ExperimentalWarning|DeprecationWarning/, /Electron Security Warning/i, /Autofill\./, /Request Autofill/]
+let forwarding = false
+function forwardNotice(level, args) {
+  if (forwarding || !mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+  forwarding = true
+  try {
+    const lines = require('node:util').format(...args).split('\n').map((line) => line.trim()).filter(Boolean)
+    if (!lines.length || NOTICE_IGNORED.some((pattern) => pattern.test(lines[0]))) return
+    const handler = /^Error occurred in handler for '([^']+)':\s*(?:Error:\s*)?(.*)$/.exec(lines[0])
+    const message = (handler ? handler[2] || lines[0] : lines[0]).slice(0, 300)
+    const detail = [handler ? `(${handler[1]})` : '', ...lines.slice(1, 7)].filter(Boolean).join('\n')
+    mainWindow.webContents.send('app:notice', { level, message, detail })
+  } catch { /* le notifiche non devono mai far fallire il resto */ } finally { forwarding = false }
+}
+for (const [method, level] of [['error', 'error'], ['warn', 'warning']]) {
+  const original = console[method].bind(console)
+  console[method] = (...args) => { original(...args); forwardNotice(level, args) }
+}
+// Solo osservare (non cambia il comportamento di Electron davanti a un errore non gestito).
+process.on('uncaughtExceptionMonitor', (error) => { forwardNotice('error', [error?.message || String(error)]) })
 // Le immagini dei documenti (percorsi relativi al documento) si mostrano tramite ow-file://: solo file immagine, in sola lettura.
 protocol.registerSchemesAsPrivileged([{ scheme: 'ow-file', privileges: { standard: true, secure: true } }])
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
@@ -541,6 +567,13 @@ async function listDirectory(directory) {
     .sort((left, right) => Number(right.isDirectory) - Number(left.isDirectory) || left.name.localeCompare(right.name, 'it', { sensitivity: 'base' }))
 }
 
+// Percorso iniziale di una finestra di scelta: un nome nella cartella del documento (se si conosce) o, altrimenti, in quella del progetto aperto. Senza un percorso
+// il sistema riparte dall'ultima cartella usata, che può essere quella di un altro progetto.
+function startingPath(name, documentPath) {
+  const directory = documentPath && path.isAbsolute(String(documentPath)) ? path.dirname(String(documentPath)) : projectPath || app.getPath('documents')
+  return path.join(directory, name)
+}
+
 async function chooseSavePath({ filePath, saveAs, filters, defaultPath }) {
   if (filePath && !saveAs) return filePath
 
@@ -644,6 +677,8 @@ function trackWindowState(window, initial) {
 
 function createWindow() {
   const windowState = loadWindowState()
+  // Tasti Indietro / Avanti del mouse e della tastiera multimediale (Windows): navigazione nella cronologia dei salti del documento.
+  const navigationCommand = { 'browser-backward': 'nav-back', 'browser-forward': 'nav-forward' }
   mainWindow = new BrowserWindow({
     width: windowState.width,
     height: windowState.height,
@@ -663,6 +698,7 @@ function createWindow() {
   })
 
   applySpellcheck()
+  mainWindow.on('app-command', (_event, command) => { if (navigationCommand[command]) mainWindow.webContents.send('app:command', navigationCommand[command]) })
   // Se il processo dell'interfaccia muore la finestra resta vuota e la console non dice nulla: si registra il motivo e si riprova a ricaricare (al massimo due volte).
   let reloads = 0
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
@@ -794,6 +830,7 @@ const pendingSetups = new Map()
 ipcMain.handle('projects:import-setup-choose', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: t('Import a project setup'),
+    defaultPath: projectPath || undefined,
     properties: ['openFile'],
     filters: [{ name: t('OpenWriter project setup'), extensions: ['json'] }],
   })
@@ -863,7 +900,7 @@ ipcMain.handle('skills:delete', (_event, request) => skillsStore.remove(request 
 ipcMain.handle('skills:parse', (_event, markdown) => skillsStore.parse(markdown))
 // Skill da un file Markdown con le direttive: si legge e si interpreta, il salvataggio avviene dopo la revisione nell'editor.
 ipcMain.handle('skills:import-file', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }] })
+  const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openFile'], filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }] })
   if (result.canceled || !result.filePaths[0]) return null
   const file = result.filePaths[0]
   const stat = await fs.stat(file)
@@ -880,6 +917,8 @@ ipcMain.handle('skills:set-active', (_event, { directory, active } = {}) => {
   return projectFile.setActiveSkills(active)
 })
 ipcMain.handle('project:get-settings', () => projectFile.getSettings())
+// Azioni rapide del progetto aperto (vedi project-file.cjs).
+ipcMain.handle('project:set-quick-actions', (_event, value) => projectFile.setQuickActions(value))
 // Contesto dell'assistente per il documento attivo: le istruzioni di tutti i progetti coinvolti, dal più esterno al più vicino.
 ipcMain.handle('project:context-chain', (_event, filePath) => projectFile.getContextChain(filePath))
 ipcMain.handle('project:save-settings', (_event, settings) => {
@@ -888,13 +927,15 @@ ipcMain.handle('project:save-settings', (_event, settings) => {
   return saved
 })
 // Chat in streaming: gli eventi (testo, ragionamento, stato) arrivano al renderer man mano, e la richiesta si può interrompere.
-ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools }) => {
+ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools, reasoningCap, use }) => {
   const controller = new AbortController()
   aiRequests.set(requestId, controller)
   try {
     return await aiProviders.chatStream(messages, {
       signal: controller.signal,
       tools: Array.isArray(tools) ? tools : [],
+      reasoningCap: reasoningCap === 'low' || reasoningCap === 'instant' ? reasoningCap : null,
+      use: use && typeof use === 'object' ? { provider: String(use.provider || ''), model: String(use.model || '') } : null,
       onEvent: (payload) => { if (!event.sender.isDestroyed()) event.sender.send('ai:stream', { requestId, event: payload }) },
     })
   } catch (error) {
@@ -906,6 +947,13 @@ ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools }) =
   }
 })
 ipcMain.handle('ai:cancel', (_event, requestId) => { aiRequests.get(requestId)?.abort(); return true })
+// Ricerca nei file per l'assistente: vale anche per le cartelle di riferimento (`@sigla/…`), i cui percorsi tornano con il prefisso.
+ipcMain.handle('tools:search-files', async (_event, args = {}) => {
+  const { tools, relative, prefix } = toolsFor(String(args.path || ''))
+  const result = await tools.search({ ...args, path: relative || '.' })
+  if (prefix && result.results) result.results = result.results.map((entry) => ({ ...entry, path: withPrefix(prefix, entry.path) }))
+  return formatSearch(result)
+})
 // Gli strumenti di lettura valgono anche per le cartelle di riferimento: un percorso `@sigla/…` si legge dentro quella cartella (e solo lì).
 function toolsFor(given) {
   const reference = projectPath ? referencesStore.resolve(given) : null
@@ -918,12 +966,19 @@ ipcMain.handle('tools:list-directory', async (_event, relativePath, options = {}
   const { tools, relative, prefix } = toolsFor(relativePath)
   const result = await tools.listDirectory(relative, { sort: options?.sort === 'date' ? 'date' : 'name' })
   if (prefix) result.path = withPrefix(prefix, result.path)
-  else if (result.path === '.') { result.linked = linksStore.list(); result.references = referencesStore.list() }
+  else {
+    // Immagini con una descrizione salvata (describe_image): l'assistente, anche in un'altra chat, sa che può leggerla.
+    for (const entry of result.entries) {
+      if (entry.type !== 'file' || !/\.(png|jpe?g|gif|webp|bmp)$/i.test(entry.name)) continue
+      try { if (fsSync.existsSync(imageDescriptionFile(result.path === '.' ? entry.name : `${result.path}/${entry.name}`))) entry.described = true } catch { /* nome non valido */ }
+    }
+  }
+  if (!prefix && result.path === '.') { result.linked = linksStore.list(); result.references = referencesStore.list() }
   return result
 })
-ipcMain.handle('tools:read-file', async (_event, { path: relativePath, offset, limit } = {}) => {
+ipcMain.handle('tools:read-file', async (_event, { path: relativePath, offset, limit, startLine, endLine } = {}) => {
   const { tools, relative, prefix } = toolsFor(relativePath)
-  const result = await tools.readFile(relative, { offset, limit, absolute: !prefix && linksStore.has(relativePath) })
+  const result = await tools.readFile(relative, { offset, limit, startLine, endLine, absolute: !prefix && linksStore.has(relativePath) })
   if (prefix) result.path = withPrefix(prefix, result.path)
   return result
 })
@@ -953,6 +1008,20 @@ ipcMain.handle('images:capture-webview', async (_event, contentsId) => {
   const contents = webContents.fromId(Number(contentsId))
   if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) throw new Error(t('Invalid browser tab'))
   return images.prepareImage(await contents.capturePage())
+})
+// Le pagine del browser integrato seguono il tema del sistema operativo, non quello dell'app: con l'app in tema chiaro e il sistema scuro una pagina "scura" mostrava
+// testo chiaro su fondo bianco. Qui si fa sì che dichiarino lo stesso tema dell'app (prefers-color-scheme).
+ipcMain.handle('browser:set-color-scheme', async (_event, { contentsId, dark } = {}) => {
+  const contents = webContents.fromId(Number(contentsId))
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) return false
+  try {
+    if (!contents.debugger.isAttached()) contents.debugger.attach('1.3')
+    await contents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: dark ? 'dark' : 'light' }] })
+    return true
+  } catch (error) {
+    console.warn('Tema della pagina non applicato:', error.message)
+    return false
+  }
 })
 // Schermata della scheda del browser, a piena risoluzione, salvata come PNG in <progetto>/screenshots/. Restituisce il percorso del file.
 ipcMain.handle('browser:save-screenshot', async (_event, { contentsId, title } = {}) => {
@@ -1006,7 +1075,7 @@ async function readChatAttachment(filePath) {
 ipcMain.handle('chat:pick-attachments', async (_event, { images: allowImages = false, pdf = false } = {}) => {
   const extensions = [...(allowImages ? CHAT_IMAGE_EXTENSIONS : []), ...(pdf ? ['pdf'] : [])]
   if (!extensions.length) return []
-  const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile', 'multiSelections'], filters: [{ name: t('Attachments'), extensions }] })
+  const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openFile', 'multiSelections'], filters: [{ name: t('Attachments'), extensions }] })
   return result.canceled ? [] : result.filePaths
 })
 ipcMain.handle('chat:read-attachment', (_event, filePath) => readChatAttachment(filePath))
@@ -1168,7 +1237,7 @@ ipcMain.handle('tools:move-path', async (_event, { from, to } = {}) => {
   return { from: source.target, to: destination.target, path: destination.relative }
 })
 ipcMain.handle('tools:create-directory', (_event, relativePath) => projectTools.createDirectory(relativePath))
-ipcMain.handle('tools:create-file', (_event, { path: relativePath, content, allowSameName } = {}) => projectTools.createFile(relativePath, content, { allowSameName: allowSameName === true }))
+ipcMain.handle('tools:create-file', (_event, { path: relativePath, content } = {}) => projectTools.createFile(relativePath, content))
 // Dal file manager: nuova cartella o nuovo documento Markdown vuoto dentro `parent`; restituisce il percorso assoluto creato.
 ipcMain.handle('workspace:create-entry', async (_event, { parent, name, type } = {}) => {
   const base = resolveInProject(parent)
@@ -1179,7 +1248,7 @@ ipcMain.handle('workspace:create-entry', async (_event, { parent, name, type } =
   const final = directory || path.extname(clean) ? relative : `${relative}.md`
   if (fsSync.existsSync(path.join(projectPath, final))) throw new Error(t('An item with this name already exists'))
   // Dall'albero il nome lo sceglie l'utente: lo stesso nome in un'altra cartella è lecito (README.md, index.md…); il controllo sui doppioni vale per l'assistente.
-  return (directory ? await projectTools.createDirectory(final) : await projectTools.createFile(final, '', { allowSameName: true })).absolute
+  return (directory ? await projectTools.createDirectory(final) : await projectTools.createFile(final, '')).absolute
 })
 ipcMain.handle('app:open-link', (_event, url) => (/^https?:\/\//i.test(String(url)) ? shell.openExternal(String(url)) : false))
 ipcMain.handle('images:pick', async () => {
@@ -1380,7 +1449,7 @@ ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, sa
     filePath,
     saveAs,
     // `defaultName` (es. il titolo di un articolo salvato dal browser): propone quel nome nella cartella del progetto.
-    defaultPath: defaultName ? path.join(projectPath || '', `${path.basename(String(defaultName))}.md`) : `${t('New document')}.md`,
+    defaultPath: startingPath(`${defaultName ? path.basename(String(defaultName)) : t('New document')}.md`),
     filters: [markdownFilter],
   })
   if (!targetPath) return null
@@ -1395,9 +1464,11 @@ ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, sa
   }
   return markdownPath
 })
-ipcMain.handle('document:export-docx', async (_event, { html }) => {
+// Nome proposto per un'esportazione: il titolo del documento (senza estensione né caratteri non ammessi), o "Nuovo documento".
+const exportName = (name) => String(name || '').replace(/\.[^.]*$/, '').replace(/[\\/:*?"<>|\r\n]+/g, ' ').trim() || t('New document')
+ipcMain.handle('document:export-docx', async (_event, { html, documentPath, name }) => {
   const targetPath = await chooseSavePath({
-    defaultPath: `${t('New document')}.docx`,
+    defaultPath: startingPath(`${exportName(name)}.docx`, documentPath),
     filters: [{ name: 'Word', extensions: ['docx'] }],
   })
   if (!targetPath) return null
@@ -1412,7 +1483,7 @@ ipcMain.handle('document:export-docx', async (_event, { html }) => {
 ipcMain.handle('document:export-markdown-embedded', async (_event, { markdown, documentPath, name } = {}) => {
   const base = String(name || '').replace(/\.[^.]*$/, '').replace(/[\\/:*?"<>|\r\n]+/g, ' ').trim() || t('New document')
   const targetPath = await chooseSavePath({
-    defaultPath: documentPath ? path.join(path.dirname(documentPath), `${base} (embedded).md`) : `${base} (embedded).md`,
+    defaultPath: startingPath(`${base} (embedded).md`, documentPath),
     filters: [markdownFilter],
   })
   if (!targetPath) return null
@@ -1421,10 +1492,33 @@ ipcMain.handle('document:export-markdown-embedded', async (_event, { markdown, d
   await fs.writeFile(markdownPath, result.markdown, 'utf8')
   return { path: markdownPath, embedded: result.embedded, missing: result.missing.length, tooLarge: result.tooLarge.length, remote: result.remote }
 })
+// L'inverso: da un Markdown con le immagini incorporate si ricava un .md leggero e le immagini in images/ accanto. Si lavora sul file su disco (anche decine
+// di MB), senza passare dall'editor; il file originale non cambia. `source`: il file da convertire (altrimenti si sceglie).
+ipcMain.handle('document:extract-markdown-images', async (_event, { source, directory } = {}) => {
+  let file = source ? String(source) : null
+  if (!file) {
+    const picked = await dialog.showOpenDialog(mainWindow, { title: t('Markdown file with embedded images'), defaultPath: directory || projectPath || undefined, properties: ['openFile'], filters: [markdownFilter] })
+    if (picked.canceled || !picked.filePaths[0]) return null
+    file = picked.filePaths[0]
+  }
+  const base = path.basename(file).replace(/\.[^.]*$/, '')
+  const text = await fs.readFile(file, 'utf8')
+  if (!/data:image\/(png|jpe?g|gif|webp|bmp);base64,/i.test(text)) return { path: null, count: 0 }
+  const targetPath = await chooseSavePath({ defaultPath: path.join(path.dirname(file), `${base} (linked images).md`), filters: [markdownFilter] })
+  if (!targetPath) return null
+  const markdownPath = /\.(md|markdown|mdown)$/i.test(targetPath) ? targetPath : `${targetPath}.md`
+  if (path.resolve(markdownPath).toLowerCase() === path.resolve(file).toLowerCase()) throw new Error(t('Choose a different file: the original is not modified'))
+  // Il lavoro blocca questo processo per un po': prima si avvisa la finestra (che ha un processo suo) perché mostri l'attesa.
+  mainWindow.webContents.send('document:extract-markdown-images-start', { name: path.basename(file), size: (text.length / 1048576).toFixed(1) })
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  const result = extractImages(text, { directory: path.join(path.dirname(markdownPath), 'images'), stem: base })
+  await fs.writeFile(markdownPath, result.markdown, 'utf8')
+  return { path: markdownPath, count: result.count, bytes: result.bytes }
+})
 ipcMain.handle('document:print', (_event, { html }) => printDocument(String(html || '')))
-ipcMain.handle('document:export-pdf', async (_event, { html }) => {
+ipcMain.handle('document:export-pdf', async (_event, { html, documentPath, name }) => {
   const targetPath = await chooseSavePath({
-    defaultPath: `${t('New document')}.pdf`,
+    defaultPath: startingPath(`${exportName(name)}.pdf`, documentPath),
     filters: [{ name: 'PDF', extensions: ['pdf'] }],
   })
   if (!targetPath) return null
@@ -1629,6 +1723,21 @@ const mcpBridge = createMcpBridge({
   isEnabled: () => loadPreferences()['openwriter.mcpEdit'] !== 'off',
 })
 ipcMain.on('mcp:response', (_event, id, payload) => mcpBridge.answer(id, payload))
+
+// Trasporto HTTP del server MCP (vedi mcp-http.cjs): spento di default, lo attiva l'utente dalle impostazioni. Preferenze: openwriter.mcpHttp = "on",
+// openwriter.mcpHttpReadOnly = "on" (senza strumenti di scrittura).
+const mcpHttp = createMcpHttp({ directory: app.getPath('userData'), serverPath: path.join(__dirname, 'mcp-server.cjs'), packaged: app.isPackaged, execPath: process.execPath })
+const startMcpHttp = (options = {}) => mcpHttp.start({ readOnly: loadPreferences()['openwriter.mcpHttpReadOnly'] === 'on', ...options })
+ipcMain.handle('mcp:http-status', () => mcpHttp.status())
+ipcMain.handle('mcp:http-set', async (_event, { enabled, renewToken } = {}) => {
+  const preferencesNow = loadPreferences()
+  if (enabled === false) { mcpHttp.stop(); preferencesNow['openwriter.mcpHttp'] = 'off'; flushPreferences(); return mcpHttp.status() }
+  preferencesNow['openwriter.mcpHttp'] = 'on'
+  flushPreferences()
+  return startMcpHttp({ renewToken: renewToken === true })
+})
+app.on('will-quit', () => mcpHttp.stop())
+if (loadPreferences()['openwriter.mcpHttp'] === 'on') app.whenReady().then(() => startMcpHttp()).catch((error) => console.error('Server MCP HTTP non avviato:', error.message))
 app.on('will-quit', () => mcpBridge.stop())
 
 // Il browser integrato mantiene i login dopo un riavvio. I cookie con scadenza li tiene già la partizione persistente; quelli "di sessione"

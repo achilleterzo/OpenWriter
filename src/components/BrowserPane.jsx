@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { subscribeAppearance } from '../appearance.js'
-import { ArrowLeft, ArrowRight, BookOpen, Camera, Clock, FileDown, Loader2, Minus, Moon, Plus, RotateCw, Sun, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BookOpen, Camera, Clock, ExternalLink, FileDown, Loader2, Minus, Moon, Plus, RotateCw, Sun, X } from 'lucide-react'
 import { articleFileName, articleToMarkdown, extractArticle, readerDocument } from '../lib/readerMode.js'
 import { t } from '../i18n/index.js'
 
@@ -64,8 +64,9 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
   // Tema della vista lettura: segue quello dell'app (chiaro/scuro/sistema) finché non lo si cambia a mano con il pulsante, per questa scheda.
   const [readerDarkChoice, setReaderDarkChoice] = useState(null)
   const [, setThemeTick] = useState(0)
+  const schemeRef = useRef(null)
   useEffect(() => {
-    const refresh = () => setThemeTick((value) => value + 1)
+    const refresh = () => { setThemeTick((value) => value + 1); schemeRef.current?.() }
     const query = window.matchMedia('(prefers-color-scheme: dark)')
     query.addEventListener('change', refresh)
     const unsubscribe = subscribeAppearance(refresh)
@@ -92,7 +93,13 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
       if (!domReady) return
       setHistory({ back: view.canGoBack(), forward: view.canGoForward() })
     }
-    const onDomReady = () => { domReady = true }
+    // La pagina dichiara lo stesso tema dell'app (chiaro/scuro), non quello del sistema: altrimenti con l'app chiara e il sistema scuro si leggerebbe testo bianco su bianco.
+    const applyScheme = () => {
+      if (!domReady) return
+      window.electronAPI.setBrowserColorScheme?.({ contentsId: view.getWebContentsId(), dark: document.documentElement.dataset.theme !== 'light' }).catch(() => {})
+    }
+    schemeRef.current = applyScheme
+    const onDomReady = () => { domReady = true; applyScheme() }
     // Cronologia del progetto: le pagine http(s) visitate (non i cambi interni di una stessa pagina); il titolo arriva dopo.
     // Le navigazioni comandate dall'assistente (controller qui sotto) vanno nella sua cronologia, a parte; il resto è dell'utente.
     let agentActive = 0
@@ -129,6 +136,8 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
     }).then(() => sleep(SETTLE_MS))
 
     onRegister(tab.id, {
+      // Apertura chiesta dall'utente (per esempio "Cerca sul web" dal testo selezionato): non conta come navigazione dell'assistente nella cronologia.
+      open: async (target) => { await whenReady(); view.loadURL(target).catch(() => {}) },
       navigate: (target) => byAgent(async () => {
         await whenReady()
         await settle(() => view.loadURL(target).catch(() => {}))
@@ -280,6 +289,7 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
           onKeyDown={onAddressKeyDown}
         />
         <button type="button" aria-label={t('History')} title={t('History')} aria-expanded={suggestOpen} className={`${buttonClass} ${suggestOpen ? 'bg-slate-800 text-accent-400' : ''}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (suggestOpen) { closeSuggestions(); inputRef.current?.blur() } else { inputRef.current?.focus() } }}><Clock size={16} /></button>
+        <button type="button" aria-label={t('Open in the system browser')} title={t('Open in the system browser')} className={buttonClass} onClick={() => { const url = viewRef.current?.getURL?.(); if (/^https?:\/\//i.test(url || '')) window.electronAPI.openLink(url) }}><ExternalLink size={16} /></button>
         <button type="button" aria-label={t('Save a screenshot')} title={t('Save a screenshot')} disabled={shotBusy || Boolean(reader)} className={buttonClass} onClick={saveScreenshot}>{shotBusy ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}</button>
         <button type="button" aria-label={reader ? t('Exit reading view') : t('Reading view')} title={reader ? t('Exit reading view') : t('Reading view')} aria-pressed={Boolean(reader)} disabled={readerBusy} className={`${buttonClass} ${reader ? 'bg-slate-800 text-accent-400' : ''}`} onClick={toggleReader}>{readerBusy ? <Loader2 size={16} className="animate-spin" /> : <BookOpen size={16} />}</button>
         {reader && (

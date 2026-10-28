@@ -1,5 +1,7 @@
 import { buildTextIndex, locateQuote } from './anchoring.js'
 import { CASE_INSENSITIVE } from './pathCompare.js'
+import { TextSelection } from '@tiptap/pm/state'
+import { collectAnchors } from './rawMarkdownExtensions.js'
 
 /**
  * Link ai segnalibri: `file.md#nome` (o `#nome` nello stesso documento). Il frammento indica un segnalibro del documento;
@@ -13,11 +15,18 @@ export function headingSlug(text) {
 
 const foldName = (value) => String(value || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
 
-// Dove porta il frammento in un editor: { from, to, kind: 'bookmark' | 'heading' } oppure null.
+// Dove porta il frammento in un editor: { from, to, kind: 'anchor' | 'bookmark' | 'heading' } oppure null. Prima le ancore HTML (`<a id="nome"></a>`), poi i segnalibri, poi i titoli.
 export function findFragmentTarget(editor, bookmarks, fragment) {
   const wanted = foldName(fragment)
   if (!wanted || !editor || editor.isDestroyed) return null
   const { doc } = editor.state
+  const anchor = collectAnchors(doc).find((item) => foldName(item.id) === wanted)
+  if (anchor) {
+    // Il cursore va dove l'ancora indica: l'inizio del testo che la segue (o, in linea, subito dopo di essa).
+    const node = doc.nodeAt(anchor.pos)
+    const after = TextSelection.near(doc.resolve(Math.min(doc.content.size, anchor.pos + (node?.nodeSize || 1))), 1)
+    return { from: after.from, to: after.from, kind: 'anchor' }
+  }
   const bookmark = (bookmarks || []).find((item) => foldName(item.name) === wanted)
   if (bookmark) {
     const location = locateQuote(doc, bookmark, buildTextIndex(doc))

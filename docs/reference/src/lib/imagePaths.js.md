@@ -1,6 +1,6 @@
 # imagePaths.js
 
-Source: [`src/lib/imagePaths.js`](../../../src/lib/imagePaths.js)
+Source: [`src/lib/imagePaths.js`](../../../../src/lib/imagePaths.js)
 
 Image path handling for Markdown documents (Windows-separator tolerant, case-insensitive for drive paths).
 

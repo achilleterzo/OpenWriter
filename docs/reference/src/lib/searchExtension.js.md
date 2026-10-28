@@ -1,6 +1,6 @@
 # searchExtension.js
 
-Source: [`src/lib/searchExtension.js`](../../../src/lib/searchExtension.js)
+Source: [`src/lib/searchExtension.js`](../../../../src/lib/searchExtension.js)
 
 Tiptap extension (`Search`, plugin key `owSearch`) powering find and replace: matches are rendered as decorations (`ow-find`, `ow-find-current`) without touching the text.
 

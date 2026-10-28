@@ -1,6 +1,6 @@
 # embeddedImages.js
 
-Source: [`src/lib/embeddedImages.js`](../../../src/lib/embeddedImages.js)
+Source: [`src/lib/embeddedImages.js`](../../../../src/lib/embeddedImages.js)
 
 Images embedded in Markdown as base64 `data:` URIs are hugely long lines that are of no use to someone reading the text. In the source view and in the assistant's context they are shown abbreviated, while the document keeps them whole.
 

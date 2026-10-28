@@ -1,6 +1,6 @@
 # electron/menu.cjs
 
-Source: [`electron/menu.cjs`](../../electron/menu.cjs)
+Source: [`electron/menu.cjs`](../../../electron/menu.cjs)
 
 Builds the native application menu through `createApplicationMenu(sendCommand, state)`. Commands are sent to the renderer as app command events.
 

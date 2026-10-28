@@ -1,6 +1,6 @@
 # fonts.js
 
-Source: [`src/lib/fonts.js`](../../../src/lib/fonts.js)
+Source: [`src/lib/fonts.js`](../../../../src/lib/fonts.js)
 
 Editor fonts on the renderer side: a small set of Google Fonts bundled with the application (loaded only when needed) and the ones installed from the Google Fonts catalog. Purely aesthetic: the font goes neither into the document nor into the exports.
 

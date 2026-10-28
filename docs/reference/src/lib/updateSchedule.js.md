@@ -1,6 +1,6 @@
 # updateSchedule.js
 
-Source: [`src/lib/updateSchedule.js`](../../../src/lib/updateSchedule.js)
+Source: [`src/lib/updateSchedule.js`](../../../../src/lib/updateSchedule.js)
 
 When the application checks by itself whether a new version exists (GitHub, silently: it warns only when it finds one). The preference is saved through [preferences.js](preferences.js.md) under `openwriter.updateCheck`.
 
@@ -8,3 +8,4 @@ When the application checks by itself whether a new version exists (GitHub, sile
 - `getUpdateSchedule()` and `scheduleOf(value)`: the current choice and its entry (`{ value, label, interval }`, in milliseconds; 0 means no repeating check).
 - `setUpdateSchedule(value)`: changes it, saving it and notifying the subscribers; an unknown value is ignored.
 - `subscribeUpdateSchedule(listener)`: listens for changes.
+

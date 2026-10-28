@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { useEditorState } from '@tiptap/react'
 import { t } from '../i18n/index.js'
 
@@ -9,10 +10,15 @@ function headingsOf(editor) {
   return headings
 }
 
-function Outline({ editor }) {
+function Outline({ editor, onJump }) {
+  const cache = useRef({ doc: null, value: '[]' })
   const serialized = useEditorState({
     editor,
-    selector: ({ editor: current }) => JSON.stringify(headingsOf(current)),
+    selector: ({ editor: current }) => {
+      const { doc } = current.state
+      if (cache.current.doc !== doc) cache.current = { doc, value: JSON.stringify(headingsOf(current)) }
+      return cache.current.value
+    },
   })
   const items = JSON.parse(serialized)
 
@@ -26,7 +32,7 @@ function Outline({ editor }) {
           type="button"
           style={{ paddingLeft: 12 + (item.level - 1) * 12 }}
           className="block w-full truncate py-1 pr-2 text-left text-sm text-slate-400 transition hover:bg-slate-800/70 hover:text-slate-50"
-          onClick={() => editor.chain().focus().setTextSelection(item.pos + 1).scrollIntoView().run()}
+          onClick={() => { onJump?.(); editor.chain().focus().setTextSelection(item.pos + 1).scrollIntoView().run() }}
         >
           {item.text}
         </button>
@@ -35,6 +41,6 @@ function Outline({ editor }) {
   )
 }
 
-export default function OutlinePanel({ editor }) {
-  return editor ? <Outline editor={editor} /> : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>
+export default function OutlinePanel({ editor, onJump }) {
+  return editor ? <Outline editor={editor} onJump={onJump} /> : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>
 }

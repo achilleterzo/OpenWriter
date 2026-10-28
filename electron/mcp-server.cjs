@@ -53,6 +53,8 @@ function parseArguments(argv) {
     const flag = argv[index]
     if (flag === '--project' || flag === '--data') result[flag.slice(2)] = argv[(index += 1)]
     else if (flag === '--read-only') result.readOnly = true
+    else if (flag === '--http') result.http = true
+    else if (flag === '--port' || flag === '--token') result[flag.slice(2)] = argv[(index += 1)]
     else if (flag.startsWith('--project=')) result.project = flag.slice('--project='.length)
     else if (flag.startsWith('--data=')) result.data = flag.slice('--data='.length)
   }
@@ -282,6 +284,50 @@ const PROJECT_TREE_TOOL = {
   run: projectTree,
 }
 
+// Chat dell'assistente di OpenWriter (.ow/chat/<id>.json), lette direttamente dal disco.
+const CHAT_ID = /^[A-Za-z0-9_-]{1,80}$/
+const chatDirectory = () => path.join(projectPath(), '.ow', 'chat')
+function chatFiles() {
+  let names = []
+  try { names = fs.readdirSync(chatDirectory()).filter((name) => name.endsWith('.json') && CHAT_ID.test(name.slice(0, -5))) } catch { return [] }
+  return names.map((name) => {
+    const file = path.join(chatDirectory(), name)
+    let modified = 0
+    try { modified = fs.statSync(file).mtimeMs } catch { /* sparito */ }
+    return { id: name.slice(0, -5), file, modified }
+  }).sort((left, right) => right.modified - left.modified)
+}
+function loadChat(id) {
+  const found = id ? (CHAT_ID.test(String(id)) ? chatFiles().find((item) => item.id === id) : null) : chatFiles()[0]
+  if (!found) throw new Error(id ? `Chat not found: ${id} (see list_chats)` : 'There are no chats in this project')
+  try { return JSON.parse(fs.readFileSync(found.file, 'utf8')) } catch { throw new Error(`The chat ${found.id} cannot be read`) }
+}
+function listChats(limit) {
+  const chats = chatFiles().slice(0, limit).map((item) => {
+    try {
+      const chat = JSON.parse(fs.readFileSync(item.file, 'utf8'))
+      const messages = Array.isArray(chat.messages) ? chat.messages : []
+      return { id: item.id, title: chat.title || '', updatedAt: chat.updatedAt || null, messages: messages.length, lastRole: messages.length ? messages[messages.length - 1].role : null }
+    } catch { return { id: item.id, unreadable: true } }
+  })
+  return chats.length ? chats : 'There are no chats in this project'
+}
+function readChat({ id, from, limit, includeTools }) {
+  const chat = loadChat(id)
+  const all = Array.isArray(chat.messages) ? chat.messages : []
+  const showTools = includeTools === undefined || isTrue(includeTools) || includeTools === null
+  const size = Math.min(100, Math.max(1, Number(limit) || 20))
+  const start = Number.isInteger(Number(from)) && from !== undefined && from !== null && from !== '' ? Math.max(0, Number(from)) : Math.max(0, all.length - size)
+  const clip = (value, max) => { const body = text(value); return body.length > max ? `${body.slice(0, max)}… [${body.length - max} more characters]` : body }
+  const messages = all.slice(start, start + size).map((message, offset) => ({ index: start + offset, message })).filter(({ message }) => showTools || (message.role !== 'tool' && !/^\s*<tool_call>/.test(text(message.content)))).map(({ index, message }) => {
+    if (message.role === 'tool') return { index, role: 'tool', tool: message.name || '', result: clip(message.content, 300) }
+    const toolCall = message.role === 'assistant' && /<tool_call>/.test(text(message.content))
+    return { index, role: message.role, at: message.at, ...(message.error ? { error: true } : {}), content: clip(message.content, toolCall ? 400 : 4000), ...(message.attachment?.label ? { attachment: message.attachment.label } : {}), ...(message.attachment?.source === 'mcp' ? { sentBy: `${message.attachment.agent || 'external agent'} (via MCP, not the user)` } : {}) }
+  })
+  const end = Math.min(all.length, start + size)
+  return { id: chat.id, title: chat.title || '', updatedAt: chat.updatedAt || null, totalMessages: all.length, lastRole: all.length ? all[all.length - 1].role : null, from: start, to: end, hasEarlier: start > 0, hasLater: end < all.length, messages }
+}
+
 const TOOLS = [
   {
     name: 'project_info',
@@ -376,14 +422,14 @@ const TOOLS = [
   },
   {
     name: 'read_document',
-    description: 'Reads a document as text (.md, .txt, .docx): a document of the project, a document linked to the project, or a document open in OpenWriter (see project_info). Long ones come in chunks: use `offset` with the `nextOffset` of the previous answer. It returns what is saved on disk: edits still being reviewed in OpenWriter are not included.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document: path relative to the project root, or the absolute path of a linked or open document (default: the document in front in OpenWriter)' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, description: 'maximum characters (default 20000, max 40000)' } }, additionalProperties: false },
-    run({ path: file, offset, limit }) {
+    description: 'Reads a document as text (.md, .txt, .docx): a document of the project, a document linked to the project, or a document open in OpenWriter (see project_info). Long ones come in chunks: use `offset` with the `nextOffset` of the previous answer, or read just the lines you need with `startLine` / `endLine` (the line numbers of search_files). It returns what is saved on disk: edits still being reviewed in OpenWriter are not included.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document: path relative to the project root, or the absolute path of a linked or open document (default: the document in front in OpenWriter)' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, description: 'maximum characters (default 20000, max 40000)' }, startLine: { type: 'integer', minimum: 1, description: 'read by lines instead: first line (the numbers search_files shows)' }, endLine: { type: 'integer', minimum: 1, description: 'with startLine: last line, inclusive (default: 50 lines from startLine)' } }, additionalProperties: false },
+    run({ path: file, offset, limit, startLine, endLine }) {
       const target = text(file).trim() ? authorizedDocument(file) : activeDocumentFile()
       if (!target) throw new Error('Missing parameter "path", and OpenWriter has no document in front (see project_info)')
       const project = projectPath()
       // Dentro il progetto con il percorso relativo; un documento collegato o aperto fuori dalla cartella con il percorso assoluto (già autorizzato qui sopra).
-      return isSameOrInside(project, target) ? projectTools.readFile(relativeTo(project, target), { offset, limit }) : projectTools.readFile(target, { offset, limit, absolute: true })
+      return isSameOrInside(project, target) ? projectTools.readFile(relativeTo(project, target), { offset, limit, startLine, endLine }) : projectTools.readFile(target, { offset, limit, startLine, endLine, absolute: true })
     },
   },
   {
@@ -393,38 +439,28 @@ const TOOLS = [
     run: (args) => bridgeCall('read_open_document', args),
   },
   {
-    name: 'search_documents',
-    description: 'Case-insensitive text search in the project Markdown and text files (sub-projects included). Returns file, line number and the line.',
-    inputSchema: { type: 'object', properties: { query: { type: 'string' }, path: { type: 'string', description: 'optional: limit to a folder relative to the project root' }, maxResults: { type: 'integer', minimum: 1, maximum: MAX_SEARCH_RESULTS } }, required: ['query'], additionalProperties: false },
-    run({ query, path: folder, maxResults }) {
-      const needle = String(query || '').toLowerCase()
-      if (!needle.trim()) throw new Error('The query is empty')
-      const project = projectPath()
-      const start = folder ? projectPathInside(folder) : project
-      const limit = Math.min(MAX_SEARCH_RESULTS, Math.max(1, Number(maxResults) || 20))
-      const matches = []
-      let total = 0
-      const walk = (directory) => {
-        let entries = []
-        try { entries = fs.readdirSync(directory, { withFileTypes: true }) } catch { return }
-        entries.sort((left, right) => left.name.localeCompare(right.name))
-        for (const entry of entries) {
-          if (SKIPPED_NAMES.has(entry.name) || entry.name.startsWith('.')) continue
-          const full = path.join(directory, entry.name)
-          if (entry.isDirectory()) { walk(full); continue }
-          if (!SEARCH_EXTENSIONS.test(entry.name)) continue
-          let text
-          try { if (fs.statSync(full).size > MAX_SEARCH_FILE_BYTES) continue; text = fs.readFileSync(full, 'utf8') } catch { continue }
-          if (!text.toLowerCase().includes(needle)) continue
-          text.split(/\r?\n/).forEach((line, index) => {
-            if (!line.toLowerCase().includes(needle)) return
-            total += 1
-            if (matches.length < limit) matches.push({ path: relativeTo(project, full), line: index + 1, text: line.trim().slice(0, 240) })
-          })
-        }
-      }
-      walk(start)
-      return { query, total, shown: matches.length, matches }
+    name: 'search_files',
+    description: 'Searches the text of the project files for a word, a phrase or a regular expression, so you read only the files that matter. By default it returns the LIST OF FILES that contain it, with the number of matches; to judge whether a file really is about the subject do not open it whole: output=lines gives the matching lines (long lines are shown around the match) (with "context" lines around them), output=count only the totals. Case-insensitive and literal unless regex=true. Searches .md, .markdown and .txt unless you give "glob" (for example "*.md, *.js", "src/**/*.js"), so it also covers code. Sub-projects included; .ow, .git, node_modules, hidden folders, binaries and files over 2 MB are skipped. It uses the unsaved text of the documents open in OpenWriter when the app is running (otherwise the files on disk). search_documents is an alias.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'text to find, or a regular expression with regex=true' },
+        query: { type: 'string', description: 'alias of pattern' },
+        regex: { type: 'boolean', description: 'true to read the pattern as a regular expression (default: literal text, but a pattern with | or other regex symbols such as \s, \w, .* is read as a regular expression, so a|b works); false forces literal text' },
+        caseSensitive: { type: 'boolean', description: 'default false' },
+        path: { type: 'string', description: 'optional: folder (or file) relative to the project root' },
+        glob: { type: 'string', description: 'optional: file names to search, comma separated (default: .md, .markdown, .txt)' },
+        output: { type: 'string', enum: ['files', 'lines', 'count'], description: 'default "files"' },
+        context: { type: 'integer', minimum: 0, maximum: 5, description: 'with output=lines: lines of context around each match' },
+        maxResults: { type: 'integer', minimum: 1, maximum: 500, description: 'maximum files or lines (default 50)' },
+      },
+      additionalProperties: false,
+    },
+    async run(args) {
+      // Con l'app aperta, il testo non salvato dei documenti aperti vale al posto del file su disco (altrimenti si cercherebbe in una versione vecchia).
+      let overrides = []
+      try { overrides = JSON.parse(await bridgeCall('dirty_documents', {})) } catch { /* app chiusa o modifiche degli agenti spente: si cerca su disco */ }
+      return projectTools.search({ overrides, pattern: args.pattern ?? args.query, regex: args.regex === undefined || args.regex === null || args.regex === '' ? undefined : isTrue(args.regex), caseSensitive: isTrue(args.caseSensitive), path: args.path, glob: args.glob, output: args.output || 'files', context: args.context, maxResults: args.maxResults })
     },
   },
   {
@@ -437,6 +473,18 @@ const TOOLS = [
       if (document) return { documents: [{ path: document, notes: pick(notesStore.list(authorizedDocument(document))) }] }
       return { documents: notesStore.listAll().map((entry) => ({ path: entry.path, notes: pick(entry.notes) })).filter((entry) => entry.notes.length) }
     },
+  },
+  {
+    name: 'list_chats',
+    description: 'Lists the chats of the OpenWriter assistant in this project (newest first): id, title, last update, number of messages and the role of the last message (an "assistant" last message means the assistant has answered; "user" means it may still be working or waiting). Use it with read_chat to see what the assistant did, especially after ask_agent.',
+    inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 100, description: 'how many chats (default 20)' } }, additionalProperties: false },
+    run: ({ limit }) => listChats(Math.min(100, Math.max(1, Number(limit) || 20))),
+  },
+  {
+    name: 'read_chat',
+    description: 'Reads a chat of the OpenWriter assistant: what was asked and what the assistant answered and did (the tools it called, shortly). Without "id" it reads the most recent chat, which is the one started by ask_agent. By default it returns the LAST messages (up to "limit"); use "from" (message index) to read earlier ones. Reasoning is not included. Use it to follow the work the assistant is doing in parallel, to check its result, or to continue from it.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'chat id from list_chats (default: the most recent chat)' }, from: { type: 'integer', minimum: 0, description: 'index of the first message to return (default: so that the last "limit" messages are returned)' }, limit: { type: 'integer', minimum: 1, maximum: 100, description: 'maximum number of messages (default 20)' }, includeTools: { type: 'boolean', description: 'false to hide the tool calls and their results (default true, shown in short)' } }, additionalProperties: false },
+    run: (args) => readChat(args),
   },
   {
     name: 'list_bookmarks',
@@ -575,10 +623,10 @@ const EDIT_NOTE = 'It happens in the OpenWriter editor: the change is marked for
 const WRITE_TOOLS = [
   {
     name: 'create_file',
-    description: 'Creates a NEW document in the project (.md, or .txt; ".md" is added if the path has no extension), with the given content, creating the missing folders. It never overwrites: an existing path is refused, and so is a name already used by another document of the project unless allowSameName is true. The file is written straight to disk (a new file replaces nothing, and the user can delete it) and appears in the OpenWriter explorer at once. Only inside the project folder, never in .ow, .git or node_modules. Once created you can add notes and bookmarks to it.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'path of the new file, relative to the project root (folders are created as needed)' }, content: { type: 'string', description: 'full text of the document (Markdown for .md); empty by default' }, allowSameName: { type: 'boolean', description: 'true only if a second document with the same name as one in another folder is really wanted' } }, required: ['path'], additionalProperties: false },
-    async run({ path: file, content, allowSameName }) {
-      const result = await projectTools.createFile(text(file), text(content), { allowSameName: isTrue(allowSameName) })
+    description: 'Creates a NEW document in the project (.md, or .txt; ".md" is added if the path has no extension), with the given content, creating the missing folders. It never overwrites: an existing path is refused, and so is a name already used by another file in the same folder (the same name in a different folder is fine). The file is written straight to disk (a new file replaces nothing, and the user can delete it) and appears in the OpenWriter explorer at once. Only inside the project folder, never in .ow, .git or node_modules. Once created you can add notes and bookmarks to it.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'path of the new file, relative to the project root (folders are created as needed)' }, content: { type: 'string', description: 'full text of the document (Markdown for .md); empty by default' } }, required: ['path'], additionalProperties: false },
+    async run({ path: file, content }) {
+      const result = await projectTools.createFile(text(file), text(content))
       return `Created ${result.path} (${text(content).length} characters).`
     },
   },
@@ -599,8 +647,8 @@ const WRITE_TOOLS = [
   },
   {
     name: 'ask_agent',
-    description: 'Hands a task to the OpenWriter writing assistant, which works in the app IN PARALLEL with you: it starts a chat (a new one by default) with your prompt as a normal user request, and the user follows it in OpenWriter. Use it once your own work is done, or while you go on, to delegate the writing side: update or create documentation, write documents, reorganise or edit documents. (To open a project or a document use open_project / open_document yourself.) The assistant has the instructions, skills and memory, and its own tools (read and write files, notes, browser). Write the prompt as complete instructions (what to do, which files, what changed in the code, the tone), because the assistant has no access to your conversation. The call returns as soon as the request is sent: the result is not returned, the user reviews it in the app. Needs the OpenWriter app running with this project open and the assistant configured.',
-    inputSchema: { type: 'object', properties: { prompt: { type: 'string', description: 'the complete instructions for the assistant' }, newChat: { type: 'boolean', description: 'true by default: start a new chat; false: continue in the chat currently open in the app' } }, required: ['prompt'], additionalProperties: false },
+    description: 'Hands a task to the OpenWriter writing assistant, which works in the app IN PARALLEL with you: it starts a chat (a new one by default) with your prompt as a normal user request, and the user follows it in OpenWriter. Use it once your own work is done, or while you go on, to delegate the writing side: update or create documentation, write documents, reorganise or edit documents. (To open a project or a document use open_project / open_document yourself.) The assistant has the instructions, skills and memory, and its own tools (read and write files, notes, browser). Write the prompt as complete instructions (what to do, which files, what changed in the code, the tone), because the assistant has no access to your conversation. The call returns when the request is saved in the chat, with the chatId and the messageIndex of your message (signed with your name): follow the work and read the answer with read_chat (id = chatId; list_chats shows whether the assistant has answered), then check the files it touched. The user also reviews it in the app. Needs the OpenWriter app running with this project open and the assistant configured.',
+    inputSchema: { type: 'object', properties: { prompt: { type: 'string', description: 'the complete instructions for the assistant' }, agent: { type: 'string', description: 'your name (for example "Claude Code"): the message is signed with it in the chat, so the user can tell it from their own requests' }, newChat: { type: 'boolean', description: 'true by default: start a new chat; false: continue in the chat currently open in the app' } }, required: ['prompt'], additionalProperties: false },
     run: (args) => bridgeCall('ask_agent', args),
   },
   {
@@ -822,7 +870,9 @@ async function handle(message) {
     case 'tools/list':
       return { tools: ACTIVE_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema, annotations: { readOnlyHint: !WRITE_TOOLS.some((tool) => tool.name === name), destructiveHint: false, idempotentHint: !WRITE_TOOLS.some((tool) => tool.name === name), openWorldHint: false } })) }
     case 'tools/call': {
-      const tool = ACTIVE_TOOLS.find((item) => item.name === message.params?.name)
+      // search_documents è il vecchio nome di search_files.
+      const requested = message.params?.name === 'search_documents' ? 'search_files' : message.params?.name
+      const tool = ACTIVE_TOOLS.find((item) => item.name === requested)
       if (!tool) throw Object.assign(new Error(`Unknown tool: ${message.params?.name}`), { code: -32602 })
       try {
         return textResult(await tool.run(message.params?.arguments || {}))
@@ -836,29 +886,83 @@ async function handle(message) {
   }
 }
 
+// Trasporto HTTP (Streamable HTTP, solo risposte JSON) per i client che non possono avviare un processo: `--http --port <n> --token <segreto>`.
+// Ascolta solo su 127.0.0.1; ogni richiesta richiede il token (Authorization: Bearer) e niente Origin (contro le pagine web e il DNS rebinding).
+function startHttp() {
+  const crypto = require('node:crypto')
+  const token = String(args.token || '')
+  if (token.length < 16) { log('--token (at least 16 characters) is required with --http'); process.exit(2) }
+  const port = Number.parseInt(args.port, 10)
+  const expected = Buffer.from(`Bearer ${token}`)
+  const reply = (response, status, body, headers = {}) => {
+    const payload = body === undefined ? '' : JSON.stringify(body)
+    response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers })
+    response.end(payload)
+  }
+  const failure = (id, code, message) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } })
+  const answer = async (message) => {
+    if (!message || typeof message !== 'object') return failure(null, -32600, 'Invalid request')
+    // Le notifiche (nessun id) non hanno risposta.
+    if (message.id === undefined || message.id === null) return null
+    try { return { jsonrpc: '2.0', id: message.id, result: await handle(message) } } catch (error) { return failure(message.id, error.code || -32603, error.message || 'Internal error') }
+  }
+  const server = http.createServer(async (request, response) => {
+    try {
+      const host = String(request.headers.host || '').toLowerCase()
+      if (request.headers.origin || !server.address() || ![`127.0.0.1:${server.address().port}`, `localhost:${server.address().port}`].includes(host)) { reply(response, 403, { error: 'Forbidden' }); return }
+      const given = Buffer.from(String(request.headers.authorization || ''))
+      if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) { reply(response, 401, { error: 'Unauthorized' }, { 'WWW-Authenticate': 'Bearer' }); return }
+      if (request.url.split('?')[0] !== '/mcp') { reply(response, 404, { error: 'Not found' }); return }
+      if (request.method === 'DELETE') { reply(response, 200, {}); return }
+      if (request.method !== 'POST') { reply(response, 405, { error: 'Use POST' }, { Allow: 'POST' }); return }
+      let body = ''
+      for await (const chunk of request) {
+        body += chunk
+        if (body.length > 8 * 1024 * 1024) { reply(response, 413, { error: 'The request is too large' }); return }
+      }
+      let parsed
+      try { parsed = JSON.parse(body) } catch { reply(response, 400, failure(null, -32700, 'Parse error')); return }
+      if (Array.isArray(parsed)) {
+        const results = (await Promise.all(parsed.map(answer))).filter(Boolean)
+        if (results.length) reply(response, 200, results); else reply(response, 202)
+        return
+      }
+      const result = await answer(parsed)
+      if (result) reply(response, 200, result); else reply(response, 202)
+    } catch (error) {
+      try { reply(response, 500, failure(null, -32603, error.message)) } catch { /* connessione chiusa */ }
+    }
+  })
+  server.on('error', (error) => { log('HTTP server error:', error.message); process.exit(1) })
+  server.listen(Number.isInteger(port) ? port : 0, '127.0.0.1', () => log(`HTTP listening on http://127.0.0.1:${server.address().port}/mcp (data: ${dataDirectory})`))
+}
+
 const send = (payload) => process.stdout.write(`${JSON.stringify(payload)}\n`)
 
-const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })
-let inFlight = 0
-let closed = false
-const finishIfIdle = () => { if (closed && inFlight === 0) process.exit(0) }
-lines.on('line', async (line) => {
-  if (!line.trim()) return
-  let message
-  try { message = JSON.parse(line) } catch { send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); return }
-  // Le notifiche (nessun id: es. notifications/initialized) non hanno risposta.
-  if (message.id === undefined || message.id === null) return
-  inFlight += 1
-  try {
-    send({ jsonrpc: '2.0', id: message.id, result: await handle(message) })
-  } catch (error) {
-    send({ jsonrpc: '2.0', id: message.id, error: { code: error.code || -32603, message: error.message || 'Internal error' } })
-  } finally {
-    inFlight -= 1
-    finishIfIdle()
-  }
-})
-// Il client chiude stdin quando ha finito: il processo termina dopo aver risposto alle richieste ancora in corso.
-lines.on('close', () => { closed = true; finishIfIdle() })
+if (args.http) startHttp()
+else {
+  const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })
+  let inFlight = 0
+  let closed = false
+  const finishIfIdle = () => { if (closed && inFlight === 0) process.exit(0) }
+  lines.on('line', async (line) => {
+    if (!line.trim()) return
+    let message
+    try { message = JSON.parse(line) } catch { send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); return }
+    // Le notifiche (nessun id: es. notifications/initialized) non hanno risposta.
+    if (message.id === undefined || message.id === null) return
+    inFlight += 1
+    try {
+      send({ jsonrpc: '2.0', id: message.id, result: await handle(message) })
+    } catch (error) {
+      send({ jsonrpc: '2.0', id: message.id, error: { code: error.code || -32603, message: error.message || 'Internal error' } })
+    } finally {
+      inFlight -= 1
+      finishIfIdle()
+    }
+  })
+  // Il client chiude stdin quando ha finito: il processo termina dopo aver risposto alle richieste ancora in corso.
+  lines.on('close', () => { closed = true; finishIfIdle() })
+}
 process.on('uncaughtException', (error) => log('uncaught:', error.stack || error.message))
-log(`started (data: ${dataDirectory})`)
+if (!args.http) log(`started (data: ${dataDirectory})`)

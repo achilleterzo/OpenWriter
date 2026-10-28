@@ -1,6 +1,6 @@
 # bookmarkLinks.js
 
-Source: [`src/lib/bookmarkLinks.js`](../../../src/lib/bookmarkLinks.js)
+Source: [`src/lib/bookmarkLinks.js`](../../../../src/lib/bookmarkLinks.js)
 
 Links to bookmarks: `file.md#name`, or `#name` inside the same document. The fragment names a bookmark of the document; when there is none, it falls back to a heading with that name, as on GitHub (lower case, words joined by hyphens).
 

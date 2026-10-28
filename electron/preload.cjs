@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDroppedPaths: (files) => [...new Set(files.map((file) => { try { return webUtils.getPathForFile(file) } catch { return '' } }).filter(Boolean))],
   importFiles: (request) => ipcRenderer.invoke('workspace:import-files', request),
   getProjectSettings: () => ipcRenderer.invoke('project:get-settings'),
+  setProjectQuickActions: (value) => ipcRenderer.invoke('project:set-quick-actions', value),
   getContextChain: (filePath) => ipcRenderer.invoke('project:context-chain', filePath),
   moveIntoDirectory: (request) => ipcRenderer.invoke('workspace:move-path', request),
   saveProjectSettings: (settings) => ipcRenderer.invoke('project:save-settings', settings),
@@ -60,6 +61,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   answerDialog: (id, answer) => ipcRenderer.send('dialog:answer', id, answer),
   // Comando e argomenti per avviare il server MCP (sola lettura) da un client di agenti.
   getMcpConfig: () => ipcRenderer.invoke('mcp:get-config'),
+  getMcpHttp: () => ipcRenderer.invoke('mcp:http-status'),
+  setMcpHttp: (request) => ipcRenderer.invoke('mcp:http-set', request),
   // Richieste di modifica dal server MCP (un agente): l'interfaccia le esegue sull'editor e risponde con answerMcp.
   onMcpRequest: (callback) => {
     const listener = (_event, request) => callback(request)
@@ -96,6 +99,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteBookmark: (request) => ipcRenderer.invoke('bookmarks:delete', request),
   fetchImage: (url) => ipcRenderer.invoke('images:fetch', url),
   readImageFile: (path) => ipcRenderer.invoke('images:read-file', path),
+  searchFilesForAi: (args) => ipcRenderer.invoke('tools:search-files', args),
   readImageDescription: (path) => ipcRenderer.invoke('images:read-description', path),
   writeImageDescription: (path, description) => ipcRenderer.invoke('images:write-description', path, description),
   captureRect: (rect) => ipcRenderer.invoke('images:capture-page', rect),
@@ -107,6 +111,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     remove: (url, options) => ipcRenderer.invoke('browser-history:remove', url, options),
     clear: (options) => ipcRenderer.invoke('browser-history:clear', options),
   },
+  setBrowserColorScheme: (request) => ipcRenderer.invoke('browser:set-color-scheme', request),
   saveBrowserScreenshot: (request) => ipcRenderer.invoke('browser:save-screenshot', request),
   saveAttachment: (attachment) => ipcRenderer.invoke('chat:save-attachment', attachment),
   getAttachment: (id) => ipcRenderer.invoke('chat:get-attachment', id),
@@ -160,10 +165,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   chooseProject: () => ipcRenderer.invoke('workspace:choose-project'),
   listDirectory: (directory) => ipcRenderer.invoke('workspace:list-directory', directory),
   saveMarkdown: (payload) => ipcRenderer.invoke('document:save-markdown', payload),
+  onExtractMarkdownImagesStart: (callback) => {
+    const listener = (_event, info) => callback(info)
+    ipcRenderer.on('document:extract-markdown-images-start', listener)
+    return () => ipcRenderer.removeListener('document:extract-markdown-images-start', listener)
+  },
+  extractMarkdownImages: (request) => ipcRenderer.invoke('document:extract-markdown-images', request),
   exportMarkdownEmbedded: (request) => ipcRenderer.invoke('document:export-markdown-embedded', request),
-  exportDocx: (html) => ipcRenderer.invoke('document:export-docx', { html }),
+  exportDocx: (html, options) => ipcRenderer.invoke('document:export-docx', { html, ...options }),
   printDocument: (html) => ipcRenderer.invoke('document:print', { html }),
-  exportPdf: (html) => ipcRenderer.invoke('document:export-pdf', { html }),
+  exportPdf: (html, options) => ipcRenderer.invoke('document:export-pdf', { html, ...options }),
   skills: {
     list: (request) => ipcRenderer.invoke('skills:list', request),
     get: (request) => ipcRenderer.invoke('skills:get', request),
@@ -196,7 +207,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
       const listener = (_event, payload) => { if (payload.requestId === requestId) onEvent(payload.event) }
       ipcRenderer.on('ai:stream', listener)
-      const promise = ipcRenderer.invoke('ai:chat-stream', { requestId, messages, tools: options.tools }).then((result) => {
+      const promise = ipcRenderer.invoke('ai:chat-stream', { requestId, messages, tools: options.tools, reasoningCap: options.reasoningCap, use: options.use }).then((result) => {
         if (result === null) throw new Error('Richiesta interrotta')
         return result
       }).finally(() => ipcRenderer.removeListener('ai:stream', listener))
@@ -205,6 +216,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // Documenti aperti dal sistema: quelli arrivati prima che il renderer fosse pronto, poi quelli successivi.
   takeExternalDocuments: () => ipcRenderer.invoke('document:take-external'),
+  // Errori e avvisi del processo principale, da mostrare come notifiche: { level, message, detail }.
+  onAppNotice: (callback) => {
+    const listener = (_event, notice) => callback(notice)
+    ipcRenderer.on('app:notice', listener)
+    return () => ipcRenderer.removeListener('app:notice', listener)
+  },
   onExternalDocument: (callback) => {
     const listener = (_event, document) => callback(document)
     ipcRenderer.on('document:external', listener)

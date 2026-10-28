@@ -20,11 +20,17 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
   const [closing, setClosing] = useState(null)
 
   // Dove sta il testo di ogni nota nel documento (posizione di inizio, o null se non c'è più); si aggiorna a ogni modifica.
+  // Il calcolo è proporzionale al documento: si rifà solo se cambia il documento o l'elenco delle note, non a ogni spostamento del cursore.
+  const cache = useRef({ doc: null, notes: null, value: '[]' })
   const located = useEditorState({
     editor,
     selector: ({ editor: current }) => {
-      const index = buildTextIndex(current.state.doc)
-      return JSON.stringify(notes.map((note) => locateNote(current.state.doc, note, index)?.from ?? null))
+      const { doc } = current.state
+      if (cache.current.doc === doc && cache.current.notes === notes) return cache.current.value
+      const index = buildTextIndex(doc)
+      const value = JSON.stringify(notes.map((note) => locateNote(doc, note, index)?.from ?? null))
+      cache.current = { doc, notes, value }
+      return value
     },
   })
   // Testo citato con la formattazione che ha nel documento (la nota ne conserva solo il testo semplice); se non si trova, il testo semplice.
