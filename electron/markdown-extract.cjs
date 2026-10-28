@@ -53,8 +53,8 @@ function extractImages(markdown, { directory, link = 'images', stem = 'image' })
   const lines = String(markdown).split('\n').map((line) => {
     const open = FENCE.exec(line)
     if (open) {
-      if (!fence) fence = open[1][0]
-      else if (fence === open[1][0]) fence = null
+      if (!fence) fence = { marker: open[1][0], length: open[1].length }
+      else if (fence.marker === open[1][0] && open[1].length >= fence.length && /^\s*$/.test(line.slice(open[0].length))) fence = null
       return line
     }
     if (fence || !line.includes('data:image/')) return line
