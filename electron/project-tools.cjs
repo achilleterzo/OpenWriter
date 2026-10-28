@@ -91,14 +91,30 @@ function createProjectTools({ getProjectPath, readDocument }) {
 
     const firstLine = Number.parseInt(startLine, 10)
     if (firstLine > 0) {
-      const lines = text.split(/\r?\n/)
-      const from = Math.min(firstLine, lines.length)
+      // Posizione (in caratteri) dell'inizio di ogni riga: serve a indicare dove riprendere se il limite di caratteri taglia una riga a metà.
+      const starts = [0]
+      for (let index = text.indexOf('\n'); index !== -1; index = text.indexOf('\n', index + 1)) starts.push(index + 1)
+      const totalLines = starts.length
+      const from = Math.min(firstLine, totalLines)
       const last = Number.parseInt(endLine, 10)
-      const to = Math.min(lines.length, last >= from ? last : from + 49)
-      let content = lines.slice(from - 1, to).join('\n')
+      const to = Math.min(totalLines, last >= from ? last : from + 49)
+      const begin = starts[from - 1]
+      let finish = to < totalLines ? starts[to] - 1 : text.length
+      if (finish > begin && text[finish - 1] === '\r') finish -= 1
       let stop = to
-      if (content.length > MAX_READ_CHARS) { content = content.slice(0, MAX_READ_CHARS); stop = from + content.split('\n').length - 1 }
-      return { path: relative, ...(embedded ? { embeddedImages: embedded } : {}), totalChars: text.length, totalLines: lines.length, startLine: from, endLine: stop, content, truncated: stop < lines.length, nextLine: stop < lines.length ? stop + 1 : null }
+      let partial = false
+      let cut = finish
+      if (finish - begin > MAX_READ_CHARS) {
+        cut = begin + MAX_READ_CHARS
+        const raw = text.slice(begin, cut)
+        stop = from + raw.split('\n').length - 1
+        partial = text[cut] !== '\n' && !(text[cut] === '\r' && text[cut + 1] === '\n')
+      }
+      const content = text.slice(begin, cut).replace(/\r\n/g, '\n')
+      const result = { path: relative, ...(embedded ? { embeddedImages: embedded } : {}), totalChars: text.length, totalLines, startLine: from, endLine: stop, content }
+      // Riga tagliata dal limite: `nextOffset` (da usare con `offset`, senza startLine) riprende dal primo carattere non restituito.
+      if (partial) return { ...result, truncated: true, lastLineTruncated: true, nextLine: null, nextOffset: cut }
+      return { ...result, truncated: stop < totalLines, nextLine: stop < totalLines ? stop + 1 : null }
     }
 
     const start = Math.max(0, Number.parseInt(offset, 10) || 0)
