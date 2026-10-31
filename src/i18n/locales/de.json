@@ -1158,5 +1158,13 @@
   "Discuss with AI in a new chat": "Mit der KI in einem neuen Chat besprechen",
   "Discuss with AI in the current chat": "Mit der KI im aktuellen Chat besprechen",
   "Passages under discussion": "Besprochene Passagen",
-  "Remove the passage": "Passage entfernen"
+  "Remove the passage": "Passage entfernen",
+  "Temperature in this project": "Temperatur in diesem Projekt",
+  "Precise": "Präzise",
+  "Careful": "Vorsichtig",
+  "Balanced": "Ausgewogen",
+  "Creative": "Kreativ",
+  "Wild": "Wild",
+  "Claude and Codex have no temperature setting. The temperature chosen in the project settings reaches them only as a style hint in the prompt, and only at the extremes (very low or very high).": "Claude und Codex haben keine Temperatureinstellung. Die in den Projekteinstellungen gewählte Temperatur erreicht sie nur als Stilhinweis im Prompt, und nur an den Extremen (sehr niedrig oder sehr hoch).",
+  "Chat options": "Chat-Optionen"
 }
