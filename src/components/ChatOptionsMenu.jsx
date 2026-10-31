@@ -13,7 +13,12 @@ export default function ChatOptionsMenu({ children }) {
   useEffect(() => {
     if (!open) return undefined
     const onDown = (event) => { if (!root.current?.contains(event.target)) setOpen(false) }
-    const onKey = (event) => { if (event.key === 'Escape') setOpen(false) }
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return
+      const focusInside = root.current?.contains(document.activeElement)
+      setOpen(false)
+      if (focusInside) { event.preventDefault(); root.current?.querySelector('button')?.focus() }
+    }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
