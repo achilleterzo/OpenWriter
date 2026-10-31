@@ -5,6 +5,7 @@ const path = require('node:path')
 const { t } = require('./i18n.cjs')
 const { writeFileAtomic } = require('./atomic-write.cjs')
 const { ownerRoot, parentOwner, looseKey } = require('./project-owner.cjs')
+const { cleanTemperature } = require('./temperature.cjs')
 
 const DIRECTORY_NAME = '.ow'
 const FORMAT_VERSION = 1
@@ -13,7 +14,7 @@ const MAX_CONTEXT_CHARS = 20000
 
 /**
  * La directory `.ow` nella radice del progetto contiene:
- *   project.json                         { name, ai: { language, documentLanguage }, options: { autoVersions } }
+ *   project.json                         { name, ai: { language, documentLanguage, temperature }, options: { autoVersions } }
  *   context.md                           contesto per l'assistente AI (testo libero)
  *   skills/<id>.md                       skill di scrittura del progetto (vedi skills-store.cjs); quelle attive di default in project.json → skills.active
  *   history/<documento>/index.json       metadati delle versioni di un documento
@@ -221,7 +222,7 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
       // Sopra questo progetto c'è un altro progetto (`.ow`)? Se sì, si può scegliere di ereditarne il contesto.
       parent: parentProject(),
       inherit: settings.inherit === true,
-      ai: { context, extraContext: readExtraContext(), language: String(settings.ai.language || ''), documentLanguage: String(settings.ai.documentLanguage || '') },
+      ai: { context, extraContext: readExtraContext(), language: String(settings.ai.language || ''), documentLanguage: String(settings.ai.documentLanguage || ''), temperature: cleanTemperature(settings.ai.temperature) },
       options: { autoVersions: settings.options.autoVersions !== false },
       spellcheck: { languages: cleanLanguages(settings.spellcheck.languages) },
       editor: cleanEditor(settings.editor),
@@ -236,6 +237,8 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     if (inherit !== undefined) settings.inherit = Boolean(inherit)
     settings.name = String(name || '').slice(0, 200)
     settings.ai = { ...settings.ai, language: String(ai?.language || '').slice(0, 50), documentLanguage: String(ai?.documentLanguage || '').slice(0, 50) }
+    // Come `skills` e `editor`: chi non lo passa (es. la copia del contesto) lascia intatta la temperatura.
+    if (ai && 'temperature' in ai) settings.ai.temperature = cleanTemperature(ai.temperature)
     settings.options = { ...settings.options, autoVersions: options?.autoVersions !== false }
     settings.spellcheck = { ...settings.spellcheck, languages: cleanLanguages(spellcheck?.languages) }
     if (skills !== undefined) settings.skills = { ...settings.skills, active: cleanSkillIds(skills?.active) }
@@ -342,7 +345,12 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     return true
   }
 
-  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, getContextChain, saveSettings, setQuickActions, setActiveSkills, autoVersionsEnabled, addVersion, listVersions, getVersion, deleteVersion }
+  // Temperatura del progetto aperto ('' = nessuna scelta). Non lancia: un project.json illeggibile non deve bloccare la chat.
+  function getTemperature() {
+    try { return getProjectPath() ? cleanTemperature(readSettings().ai.temperature) : '' } catch { return '' }
+  }
+
+  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, getTemperature, getContextChain, saveSettings, setQuickActions, setActiveSkills, autoVersionsEnabled, addVersion, listVersions, getVersion, deleteVersion }
 }
 
 module.exports = { createProjectFile }

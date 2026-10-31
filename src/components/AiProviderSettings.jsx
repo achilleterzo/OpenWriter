@@ -63,6 +63,7 @@ export default function AiProviderSettings() {
   const provider = settings?.provider
   const config = settings?.providers?.[provider] || {}
   const native = provider === 'codex' || provider === 'claude'
+  const cliTemperatureNote = t('Claude and Codex have no temperature setting. The temperature chosen in the project settings reaches them only as a style hint in the prompt, and only at the extremes (very low or very high).')
   const cloud = provider === 'ollama-cloud'
   const openRouter = provider === 'openrouter'
   const gemini = provider === 'gemini'
@@ -341,6 +342,14 @@ export default function AiProviderSettings() {
               {config.sandbox === 'danger-full-access' && (
                 <p className="mt-2 text-xs text-amber-400">{t('Without a sandbox, if Codex ever runs commands, they would have full access to your files. Use it only if the sandbox gets in the way.')}</p>
               )}
+              <p className="mt-2 text-xs text-slate-500">{cliTemperatureNote}</p>
+            </details>
+          )}
+
+          {provider === 'claude' && (
+            <details className="rounded-lg border border-slate-800 p-3 text-sm text-slate-300">
+              <summary className="cursor-pointer select-none text-slate-300">{t('Advanced')}</summary>
+              <p className="mt-3 text-xs text-slate-500">{cliTemperatureNote}</p>
             </details>
           )}
 

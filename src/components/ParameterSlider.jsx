@@ -18,15 +18,17 @@ const nearestStop = (stops, value) => stops.reduce((best, stop, index) => (Math.
  * Parametro numerico come cursore. Il valore vuoto ('') significa "predefinito del modello": il cursore resta attenuato
  * finché non lo si muove, e "Ripristina" lo riporta a vuoto. Con `stops` il cursore scorre tra valori fissi, altrimenti tra min e max.
  */
-export default function ParameterSlider({ id, label, help, value, onChange, stops, min, max, step, format = String }) {
+export default function ParameterSlider({ id, label, help, value, onChange, stops, min, max, step, format = String, inherited = '' }) {
   const isDefault = value === '' || value == null
-  const position = stops ? (isDefault ? Math.floor((stops.length - 1) / 2) : nearestStop(stops, Number(value))) : isDefault ? (min + max) / 2 : Number(value)
+  // Senza valore proprio il cursore mostra, attenuato, quello che si eredita (se c'è).
+  const shown = isDefault && inherited !== '' && inherited != null ? Number(inherited) : null
+  const position = stops ? (isDefault ? (shown != null ? nearestStop(stops, shown) : Math.floor((stops.length - 1) / 2)) : nearestStop(stops, Number(value))) : isDefault ? (shown ?? (min + max) / 2) : Number(value)
   return (
     <div className="relative block text-xs text-slate-400">
       <div className="flex items-center gap-1.5">
         <label htmlFor={id}>{label}</label>
-        <InfoTip text={help} />
-        <span className="ml-auto tabular-nums text-slate-200">{isDefault ? t('Default') : format(Number(value))}</span>
+        {help && <InfoTip text={help} />}
+        <span className="ml-auto tabular-nums text-slate-200">{isDefault ? (shown != null ? format(shown) : t('Default')) : format(Number(value))}</span>
         {!isDefault && <button type="button" className="rounded px-1 text-slate-500 transition hover:text-slate-100" onClick={() => onChange('')}>{t('Reset')}</button>}
       </div>
       <input

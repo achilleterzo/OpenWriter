@@ -3,6 +3,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
 const { writeFileAtomic } = require('./atomic-write.cjs')
+const { cleanTemperature } = require('./temperature.cjs')
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/
 const MAX_TITLE_CHARS = 200
@@ -54,6 +55,8 @@ function createChatStore({ getProjectPath }) {
       branchedAt: Number.isInteger(input.branchedAt) ? input.branchedAt : null,
       contextFrom: [...new Set((Array.isArray(input.contextFrom) ? input.contextFrom : []).map(optionalId).filter(Boolean))].filter((id) => id !== input.id),
       skillOverrides: { add: skillIds(input.skillOverrides?.add), remove: skillIds(input.skillOverrides?.remove) },
+      // Temperatura propria della conversazione ('' = segue quella del progetto).
+      temperature: cleanTemperature(input.temperature),
       passages: (Array.isArray(input.passages) ? input.passages : [])
         .filter((passage) => passage && typeof passage.text === 'string' && passage.text.trim())
         .slice(0, MAX_PASSAGES)
