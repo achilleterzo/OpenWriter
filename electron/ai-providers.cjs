@@ -6,7 +6,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
-const { cleanTemperature, styleHint } = require('./temperature.cjs')
+const { cleanTemperature, nativeTemperature, styleHint } = require('./temperature.cjs')
 
 const PROVIDERS = ['ollama', 'ollama-cloud', 'openrouter', 'codex', 'claude', 'gemini']
 const CODEX_SANDBOXES = ['read-only', 'workspace-write', 'danger-full-access']
@@ -453,12 +453,15 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
 
   const activeProvider = () => getSettings().provider
   const providerConfig = (provider = activeProvider()) => getSettings().providers[provider] || normalizeProviderConfig(provider)
-  // Temperatura effettiva ('' = predefinito del modello): quella della conversazione, se c'è, poi quella del progetto aperto, poi quella del provider.
-  const temperatureFor = (provider, conversation = '') => {
+  // Livello di temperatura (0-1) in vigore: quello della conversazione, se c'è, altrimenti quello del progetto aperto ('' = nessuno).
+  const levelFor = (conversation = '') => {
     const own = cleanTemperature(conversation)
-    if (own !== '') return own
-    const project = cleanTemperature(getProjectTemperature())
-    return project !== '' ? project : providerConfig(provider).temperature ?? ''
+    return own !== '' ? own : cleanTemperature(getProjectTemperature())
+  }
+  // Temperatura effettiva nei gradi del provider ('' = predefinito del modello): il livello convertito, altrimenti la temperatura generale del provider.
+  const temperatureFor = (provider, conversation = '') => {
+    const level = levelFor(conversation)
+    return level !== '' ? nativeTemperature(provider, level) : providerConfig(provider).temperature ?? ''
   }
 
   function loadApiKey(provider) {
@@ -539,7 +542,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
   // Invia il prompt alla CLI in modalità streaming e traduce i suoi eventi in { type: 'text' | 'thinking' | 'status', ... }.
   // `images`: [{ mime, data(base64) }] allegate al prompt, nello stesso ordine dei segnaposto [Immagine N] nel testo.
   // `documents`: [{ mime: 'application/pdf', name, data(base64) }], segnaposto [Document N: nome]; li legge solo Claude.
-  async function streamCliPrompt(provider, prompt, onEvent, signal, images = [], documents = [], level = providerConfig(provider).reasoning, temperature = temperatureFor(provider)) {
+  async function streamCliPrompt(provider, prompt, onEvent, signal, images = [], documents = [], level = providerConfig(provider).reasoning, temperatureLevel = levelFor()) {
     const rawModel = String(providerConfig(provider).model || '').trim()
     const model = /^[A-Za-z0-9._:/-]+$/.test(rawModel) ? rawModel : ''
     const reasoning = level
@@ -549,7 +552,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     // Senza strumenti nella conversazione si evita di nominarli.
     const baseSuffix = prompt.includes('<tool_call>') ? toolsSuffix : 'You are the assistant described in the conversation above, not a coding agent: do not run shell commands or use any other tool. Reply to the last message of the conversation.'
     // Le CLI non hanno la temperatura: quella del progetto diventa, nelle fasce estreme, un'indicazione di stile.
-    const hint = styleHint(temperature)
+    const hint = styleHint(temperatureLevel)
     const suffix = hint ? `${baseSuffix}\n\n${hint}` : baseSuffix
     const cwd = getWorkingDirectory()
     const state = { text: '', result: '' }
@@ -911,7 +914,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     }).join('\n\n')
     // Ultimo prompt inviato alla CLI, per capire cosa vede il modello quando si comporta in modo inatteso (viene sovrascritto a ogni richiesta, resta in locale).
     try { fs.writeFileSync(path.join(app.getPath('userData'), 'ai-last-prompt.txt'), prompt) } catch { /* solo diagnostica */ }
-    return streamCliPrompt(provider, prompt, onEvent, signal, attached, documents, level, temperature)
+    return streamCliPrompt(provider, prompt, onEvent, signal, attached, documents, level, levelFor(conversationTemperature))
   }
 
   const chat = (messages) => chatStream(messages)

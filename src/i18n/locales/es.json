@@ -1165,5 +1165,6 @@
   "Balanced": "Equilibrada",
   "Creative": "Creativa",
   "Wild": "Salvaje",
-  "Claude and Codex have no temperature setting. The temperature chosen in the project settings reaches them only as a style hint in the prompt, and only at the extremes (very low or very high).": "Claude y Codex no tienen ajuste de temperatura. La elegida en los ajustes del proyecto les llega solo como indicación de estilo en el prompt, y únicamente en los extremos (muy baja o muy alta)."
+  "Claude and Codex have no temperature setting. The temperature chosen in the project settings reaches them only as a style hint in the prompt, and only at the extremes (very low or very high).": "Claude y Codex no tienen ajuste de temperatura. La elegida en los ajustes del proyecto les llega solo como indicación de estilo en el prompt, y únicamente en los extremos (muy baja o muy alta).",
+  "Chat options": "Opciones del chat"
 }

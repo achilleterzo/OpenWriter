@@ -6,7 +6,7 @@ import { chooseProjectIcon, invalidateProjectIcon, useProjectIcon } from '../lib
 import SpellcheckLanguages from './SpellcheckLanguages.jsx'
 import { EditorFontChoice } from './FontPicker.jsx'
 import ParameterSlider from './ParameterSlider.jsx'
-import { TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP, formatTemperature } from '../lib/temperature.js'
+import { TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP, formatTemperature, levelOf } from '../lib/temperature.js'
 import { setProjectEditor } from '../appearance.js'
 import { formatNumber } from '../i18n/index.js'
 import { samePath } from '../lib/pathCompare.js'
@@ -81,7 +81,7 @@ function ProjectIconField({ directory, name, onChanged, onError }) {
 export default function ProjectSettings({ project, projectPath = null, onChanged, onEditContext, onMove, embedded = false }) {
   const [form, setForm] = useState(null)
   const [spellcheck, setSpellcheck] = useState({ available: [], global: [] })
-  // Temperatura generale del provider attivo: è quella che il progetto eredita finché non ne sceglie una.
+  // Livello della temperatura generale del provider attivo: è quello che il progetto eredita finché non ne sceglie uno.
   const [generalTemperature, setGeneralTemperature] = useState('')
   const [info, setInfo] = useState({ available: false })
   const [error, setError] = useState('')
@@ -90,7 +90,7 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
 
   useEffect(() => {
     electronAPI.getSpellcheck().then(setSpellcheck)
-    electronAPI.ai.getSettings().then((ai) => setGeneralTemperature(ai.providers?.[ai.provider]?.temperature ?? '')).catch(() => {})
+    electronAPI.ai.getSettings().then((ai) => setGeneralTemperature(levelOf(ai.provider, ai.providers?.[ai.provider]?.temperature))).catch(() => {})
   }, [])
 
   useEffect(() => {

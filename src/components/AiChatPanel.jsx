@@ -5,7 +5,8 @@ import { useDialogs } from './Dialogs.jsx'
 import { GenerateSkillDialog, SkillEditor } from './SkillsManager.jsx'
 import ModelPicker from './ModelPicker.jsx'
 import ParameterSlider from './ParameterSlider.jsx'
-import { TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP, formatTemperature } from '../lib/temperature.js'
+import ChatOptionsMenu from './ChatOptionsMenu.jsx'
+import { TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP, firstLevel, formatTemperature, levelOf } from '../lib/temperature.js'
 import { runResearch } from '../lib/researchAgent.js'
 import { reasoningByProvider, toolLabels } from '../lib/aiOptions.js'
 import { formatDateTime, languageEnglishName } from '../i18n/index.js'
@@ -1567,8 +1568,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
                 })}
               </div>
             )}
-            <div className="mb-2 grid grid-cols-2 gap-2 text-xs text-slate-400">
-              <div className="grid min-w-0 gap-0.5">{t('Model')}
+            <div className="mb-2 flex items-end gap-2 text-xs text-slate-400">
+              <div className="grid min-w-0 flex-1 gap-0.5">{t('Model')}
                 <ModelPicker
                   compact
                   placement="top"
@@ -1581,34 +1582,34 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
                   onChange={(name) => changeProviderSetting({ model: name })}
                 />
               </div>
-              <label className="grid min-w-0 gap-0.5">{t('Effort')}<select
-                  aria-label={t('Reasoning effort')}
-                  disabled={busy}
-                  value={settings.providers?.[provider]?.reasoning || reasoningByProvider[provider][0].value}
-                  className="w-full min-w-0 rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs text-slate-100 outline-none focus:border-accent-400 disabled:opacity-50"
-                  onChange={(event) => changeProviderSetting({ reasoning: event.target.value })}
-                >
-                  {reasoningByProvider[provider].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
+              <ChatOptionsMenu>
+                <label className="grid min-w-0 gap-0.5">{t('Effort')}<select
+                    aria-label={t('Reasoning effort')}
+                    disabled={busy}
+                    value={settings.providers?.[provider]?.reasoning || reasoningByProvider[provider][0].value}
+                    className="w-full min-w-0 rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs text-slate-100 outline-none focus:border-accent-400 disabled:opacity-50"
+                    onChange={(event) => changeProviderSetting({ reasoning: event.target.value })}
+                  >
+                    {reasoningByProvider[provider].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+                <ParameterSlider id="chat-temperature" label={t('Temperature')} value={current.temperature ?? ''} inherited={firstLevel(projectSettings?.ai?.temperature, levelOf(provider, settings.providers?.[provider]?.temperature))} onChange={(value) => updateConversation({ temperature: value })} min={TEMPERATURE_MIN} max={TEMPERATURE_MAX} step={TEMPERATURE_STEP} format={formatTemperature} />
+                {project && !loose && (
+                  <label className="grid min-w-0 gap-0.5">{t('Edits to the documents')}
+                    <select
+                      aria-label={t('Edits to the documents')}
+                      title={t('“Approve for me”: when the work is done the assistant\'s edits are accepted and saved, and the documents it opened are closed again. The previous version stays in the history.')}
+                      value={autoApprove ? 'auto' : 'review'}
+                      className="w-full min-w-0 rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs text-slate-100 outline-none focus:border-accent-400"
+                      onChange={(event) => changeAutoApprove(event.target.value === 'auto')}
+                    >
+                      <option value="review">{t('I review them')}</option>
+                      <option value="auto">{t('Approve for me')}</option>
+                    </select>
+                  </label>
+                )}
+              </ChatOptionsMenu>
             </div>
-            <div className="mb-2">
-              <ParameterSlider id="chat-temperature" label={t('Temperature')} value={current.temperature ?? ''} inherited={projectSettings?.ai?.temperature || settings.providers?.[provider]?.temperature || ''} onChange={(value) => updateConversation({ temperature: value })} min={TEMPERATURE_MIN} max={TEMPERATURE_MAX} step={TEMPERATURE_STEP} format={formatTemperature} />
-            </div>
-            {project && !loose && (
-              <label className="mb-2 grid min-w-0 gap-0.5 text-xs text-slate-400">{t('Edits to the documents')}
-                <select
-                  aria-label={t('Edits to the documents')}
-                  title={t('“Approve for me”: when the work is done the assistant\'s edits are accepted and saved, and the documents it opened are closed again. The previous version stays in the history.')}
-                  value={autoApprove ? 'auto' : 'review'}
-                  className="w-full min-w-0 rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs text-slate-100 outline-none focus:border-accent-400"
-                  onChange={(event) => changeAutoApprove(event.target.value === 'auto')}
-                >
-                  <option value="review">{t('I review them')}</option>
-                  <option value="auto">{t('Approve for me')}</option>
-                </select>
-              </label>
-            )}
             {project && (current.contextFrom.length > 0 || attachable.length > 0) && (
               <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                 {current.contextFrom.map((id) => (
