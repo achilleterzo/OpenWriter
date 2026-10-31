@@ -1593,7 +1593,9 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
                     {reasoningByProvider[provider].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </select>
                 </label>
-                <ParameterSlider id="chat-temperature" label={t('Temperature')} value={current.temperature ?? ''} inherited={firstLevel(projectSettings?.ai?.temperature, levelOf(provider, settings.providers?.[provider]?.temperature))} onChange={(value) => updateConversation({ temperature: value })} min={TEMPERATURE_MIN} max={TEMPERATURE_MAX} step={TEMPERATURE_STEP} format={formatTemperature} />
+                <fieldset disabled={busy} className="min-w-0">
+                  <ParameterSlider id="chat-temperature" label={t('Temperature')} value={current.temperature ?? ''} inherited={firstLevel(projectSettings?.ai?.temperature, levelOf(provider, settings.providers?.[provider]?.temperature))} onChange={(value) => updateConversation({ temperature: value })} min={TEMPERATURE_MIN} max={TEMPERATURE_MAX} step={TEMPERATURE_STEP} format={formatTemperature} />
+                </fieldset>
                 {project && !loose && (
                   <label className="grid min-w-0 gap-0.5">{t('Edits to the documents')}
                     <select
