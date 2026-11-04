@@ -3,12 +3,37 @@ import { getMarkRange } from '@tiptap/core'
 import { useEditorState } from '@tiptap/react'
 import { Anchor as AnchorIcon, Asterisk, Bold, Check, Code, ExternalLink, Image as ImageIcon, Italic, Maximize2, Link as LinkIcon, MessageSquarePlus, MessageSquareText, Pencil, Search, Strikethrough, Trash2, Unlink, X } from 'lucide-react'
 import FloatingToolbar, { FloatingButton, FloatingDivider } from './FloatingToolbar.jsx'
-import { resolveDocumentLink } from '../lib/imagePaths.js'
+import { isInside, linkForDocument, resolveDocumentLink } from '../lib/imagePaths.js'
+import { pathKey } from '../lib/pathCompare.js'
 import { anchorIds, anchorRaw, isAnchorHtml } from '../lib/rawMarkdownExtensions.js'
 import { selectedText } from '../lib/selectionText.js'
 import { t } from '../i18n/index.js'
 
 const SETTLE_MS = 350
+const MAX_SUGGESTIONS = 8
+const electronAPI = window.electronAPI
+
+// Documenti del progetto che corrispondono a quanto digitato nel campo dell'indirizzo (tutte le parole, in qualunque punto del percorso).
+// Niente suggerimenti per indirizzi veri e propri (schema, ancora, percorso già scritto a mano).
+function matchDocuments(documents, query, project, documentPath) {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length || /^([a-z][a-z0-9+.-]*:|#|\.{0,2}\/)/i.test(query.trim())) return []
+  const root = project.replace(/\\/g, '/').replace(/\/$/, '')
+  const current = pathKey(documentPath.replace(/\\/g, '/'))
+  const scored = []
+  for (const path of documents) {
+    const normalized = path.replace(/\\/g, '/')
+    if (pathKey(normalized) === current) continue
+    const relative = normalized.slice(root.length + 1)
+    const haystack = relative.toLowerCase()
+    if (!words.every((word) => haystack.includes(word))) continue
+    const name = relative.split('/').pop().toLowerCase()
+    // Prima i nomi che iniziano con la prima parola, poi quelli che la contengono, poi il resto; a parità, i percorsi più corti.
+    const rank = name.startsWith(words[0]) ? 0 : name.includes(words[0]) ? 1 : 2
+    scored.push({ path, relative, rank })
+  }
+  return scored.sort((a, b) => a.rank - b.rank || a.relative.length - b.relative.length || a.relative.localeCompare(b.relative)).slice(0, MAX_SUGGESTIONS)
+}
 const fieldClass = 'h-7 min-w-0 rounded border border-slate-700 bg-slate-800 px-2 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400'
 
 // Indirizzo scritto a mano: "esempio.it" diventa https://esempio.it; schemi (https:, mailto:), percorsi e ancore restano come sono.
@@ -66,7 +91,7 @@ function useSettledSelection(editor) {
  * `onDiscuss(text, { newChat })`, se c'è (assistente attivo), aggiunge i pulsanti per discutere il testo selezionato con l'assistente,
  * in una chat nuova o in quella aperta.
  */
-export default function SelectionToolbar({ editor, containerRef, request, documentPath, onOpenLink, onReplaceImage, onViewImage, onDiscuss }) {
+export default function SelectionToolbar({ editor, containerRef, request, documentPath, project, onOpenLink, onReplaceImage, onViewImage, onDiscuss }) {
   const state = useEditorState({
     editor,
     selector: ({ editor: current }) => (current
@@ -90,6 +115,21 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
   // In modifica: { mode: 'link' | 'selection' | 'create', range, originalText, text, url } oppure, per un'immagine, { mode: 'image', range, alt, title } (descrizione) o { mode: 'imageLink', range, url } (collegamento).
   const [editing, setEditing] = useState(null)
   const urlRef = useRef(null)
+  // Documenti del progetto da proporre mentre si scrive l'indirizzo (letti all'avvio della modifica di un collegamento) e voce evidenziata (-1 = nessuna).
+  const [documents, setDocuments] = useState([])
+  const [highlighted, setHighlighted] = useState(-1)
+  const [menuDismissed, setMenuDismissed] = useState(false)
+  const linkMode = editing && (editing.mode === 'link' || editing.mode === 'selection' || editing.mode === 'create')
+  const suggestions = linkMode && !menuDismissed && project && documentPath && isInside(documentPath, project)
+    ? matchDocuments(documents, editing.url, project, documentPath)
+    : []
+
+  useEffect(() => {
+    if (!linkMode || !project || !documentPath) return undefined
+    let cancelled = false
+    electronAPI.listProjectDocuments?.().then((list) => { if (!cancelled) setDocuments(list || []) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [linkMode, project, documentPath])
 
   function linkRange() {
     const { doc, selection, schema } = editor.state
@@ -152,35 +192,37 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
     editor.commands.focus()
   }
 
-  function apply() {
-    const url = normalizeUrl(editing.url)
+  function apply(override) {
+    const edit = override || editing
+    // Il percorso scelto da un suggerimento è già completo: normalizzarlo trasformerebbe "capitolo.md" in https://capitolo.md.
+    const url = edit.verbatim ? edit.url : normalizeUrl(edit.url)
     const chain = editor.chain().focus()
-    if (editing.mode === 'anchor') {
+    if (edit.mode === 'anchor') {
       // Nomi separati da spazi; senza virgolette né simboli che romperebbero il tag. Vuoto = si toglie l'ancora.
-      const ids = [...new Set(editing.text.split(/\s+/).map((id) => id.replace(/["'<>&#]/g, '')).filter(Boolean))]
-      const selected = chain.setNodeSelection(editing.range.from)
+      const ids = [...new Set(edit.text.split(/\s+/).map((id) => id.replace(/["'<>&#]/g, '')).filter(Boolean))]
+      const selected = chain.setNodeSelection(edit.range.from)
       if (!ids.length) selected.deleteSelection().run()
-      else if (editing.kind === 'block') selected.updateAttributes('htmlAnchor', { raw: anchorRaw(ids) }).run()
+      else if (edit.kind === 'block') selected.updateAttributes('htmlAnchor', { raw: anchorRaw(ids) }).run()
       else selected.updateAttributes('htmlInline', { html: anchorRaw(ids.slice(0, 1)) }).run()
-    } else if (editing.mode === 'image') {
+    } else if (edit.mode === 'image') {
       // Testo alternativo (per chi non vede l'immagine) e titolo (suggerimento al passaggio del mouse): finiscono nel Markdown come ![alt](src "titolo").
       // Nel Markdown il testo alternativo sta tra [ ] e il titolo tra virgolette, su una riga: si ripuliscono i caratteri che romperebbero la sintassi.
-      const alt = editing.alt.replace(/\s+/g, ' ').replace(/\[/g, '(').replace(/\]/g, ')').trim()
-      const title = editing.title.replace(/\s+/g, ' ').replace(/"/g, "'").trim()
-      chain.setNodeSelection(editing.range.from).updateAttributes('image', { alt, title: title || null }).run()
-    } else if (editing.mode === 'imageLink') {
+      const alt = edit.alt.replace(/\s+/g, ' ').replace(/\[/g, '(').replace(/\]/g, ')').trim()
+      const title = edit.title.replace(/\s+/g, ' ').replace(/"/g, "'").trim()
+      chain.setNodeSelection(edit.range.from).updateAttributes('image', { alt, title: title || null }).run()
+    } else if (edit.mode === 'imageLink') {
       // Indirizzo a cui porta l'immagine (vuoto = nessun collegamento): nel Markdown diventa [![alt](src)](indirizzo).
       const current = editor.getAttributes('image')
-      chain.setNodeSelection(editing.range.from).updateAttributes('image', { href: url || null, linkTitle: url ? current.linkTitle || null : null }).run()
-    } else if (editing.mode === 'link') {
-      const text = editing.text.trim()
-      if (!url) chain.setTextSelection(editing.range).unsetLink().run()
-      else if (text && editing.text !== editing.originalText) chain.insertContentAt(editing.range, { type: 'text', text: editing.text, marks: [{ type: 'link', attrs: { href: url } }] }).run()
-      else chain.setTextSelection(editing.range).setLink({ href: url }).run()
-    } else if (editing.mode === 'selection') {
-      if (url) chain.setTextSelection(editing.range).setLink({ href: url }).run()
+      chain.setNodeSelection(edit.range.from).updateAttributes('image', { href: url || null, linkTitle: url ? current.linkTitle || null : null }).run()
+    } else if (edit.mode === 'link') {
+      const text = edit.text.trim()
+      if (!url) chain.setTextSelection(edit.range).unsetLink().run()
+      else if (text && edit.text !== edit.originalText) chain.insertContentAt(edit.range, { type: 'text', text: edit.text, marks: [{ type: 'link', attrs: { href: url } }] }).run()
+      else chain.setTextSelection(edit.range).setLink({ href: url }).run()
+    } else if (edit.mode === 'selection') {
+      if (url) chain.setTextSelection(edit.range).setLink({ href: url }).run()
     } else if (url) {
-      chain.insertContent({ type: 'text', text: editing.text.trim() || url, marks: [{ type: 'link', attrs: { href: url } }] }).run()
+      chain.insertContent({ type: 'text', text: edit.text.trim() || url, marks: [{ type: 'link', attrs: { href: url } }] }).run()
     }
     setEditing(null)
   }
@@ -191,6 +233,34 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
 
   function removeImageLink() {
     editor.chain().focus().updateAttributes('image', { href: null, linkTitle: null }).run()
+  }
+
+  // Scelto un documento: il collegamento è quello relativo alla cartella del documento corrente; se manca il testo si usa il nome del file.
+  function pickSuggestion(suggestion) {
+    const url = linkForDocument(suggestion.path, documentPath)
+    const stem = suggestion.relative.split('/').pop().replace(/\.[^.]*$/, '')
+    apply({ ...editing, verbatim: true, url, text: editing.text.trim() ? editing.text : stem })
+  }
+
+  function onUrlChange(event) {
+    setEditing({ ...editing, url: event.target.value })
+    setHighlighted(-1)
+    setMenuDismissed(false)
+  }
+
+  function onUrlKeyDown(event) {
+    if (suggestions.length) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        const step = event.key === 'ArrowDown' ? 1 : -1
+        setHighlighted(highlighted < 0 ? (step > 0 ? 0 : suggestions.length - 1) : (highlighted + step + suggestions.length) % suggestions.length)
+        return
+      }
+      if (event.key === 'Enter' && highlighted >= 0) { event.preventDefault(); pickSuggestion(suggestions[highlighted]); return }
+      // Il primo Esc chiude solo l'elenco; il secondo annulla la modifica.
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setMenuDismissed(true); return }
+    }
+    onKeyDown(event)
   }
 
   function onKeyDown(event) {
@@ -267,15 +337,34 @@ export default function SelectionToolbar({ editor, containerRef, request, docume
             onKeyDown={onKeyDown}
           />
         )}
-        <input
-          ref={urlRef}
-          value={editing.url}
-          aria-label={t('Link address')}
-          placeholder={t('Link address')}
-          className={`${fieldClass} w-56`}
-          onChange={(event) => setEditing({ ...editing, url: event.target.value })}
-          onKeyDown={onKeyDown}
-        />
+        <div className="relative">
+          <input
+            ref={urlRef}
+            value={editing.url}
+            aria-label={t('Link address')}
+            placeholder={t('Link address')}
+            className={`${fieldClass} w-56`}
+            onChange={onUrlChange}
+            onKeyDown={onUrlKeyDown}
+          />
+          {suggestions.length > 0 && (
+            <ul role="listbox" aria-label={t('Project documents')} className="absolute left-0 top-full z-30 mt-1.5 max-h-64 w-72 overflow-auto rounded-lg border border-slate-700 bg-slate-900 p-1 shadow-xl">
+              {suggestions.map((suggestion, index) => (
+                <li key={suggestion.path} role="option" aria-selected={index === highlighted}>
+                  <button
+                    type="button"
+                    title={suggestion.relative}
+                    className={`block w-full truncate rounded px-2 py-1 text-left text-xs ${index === highlighted ? 'bg-accent-500/20 text-accent-300' : 'text-slate-300 hover:bg-slate-700 hover:text-slate-50'}`}
+                    onMouseEnter={() => setHighlighted(index)}
+                    onClick={() => pickSuggestion(suggestion)}
+                  >
+                    {suggestion.relative}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         <FloatingButton label={t('Apply')} onClick={apply}><Check size={15} /></FloatingButton>
         <FloatingButton label={t('Cancel')} onClick={finish}><X size={15} /></FloatingButton>
       </>

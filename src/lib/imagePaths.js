@@ -46,6 +46,11 @@ export function sourceForImage(imagePath, documentPath, project) {
   return encodeURI(`file://${image.startsWith('/') ? '' : '/'}${image}`)
 }
 
+/** Collegamento da scrivere nel Markdown per il file `targetPath` (assoluto), relativo alla cartella del documento `documentPath`. */
+export function linkForDocument(targetPath, documentPath) {
+  return encodeURI(relativePath(dirname(documentPath), targetPath))
+}
+
 /** Indirizzo da caricare nell'editor per il `src` scritto nel Markdown; stringa vuota se non si può risolvere. */
 export function displaySource(src, documentPath) {
   const value = String(src || '')
