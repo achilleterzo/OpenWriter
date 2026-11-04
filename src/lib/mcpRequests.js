@@ -19,6 +19,8 @@ const isAbsolute = (value) => /^([A-Za-z]:[\\/]|\\\\|\/)/.test(value)
 // aprirli nell'editor li rende parte dell'area di lavoro attiva). Qualunque altro percorso è rifiutato prima di aprire o toccare qualcosa.
 async function authorizeDocument(given, { api, toolBridge, project }) {
   if (!isAbsolute(given)) {
+    // Fanno eccezione i file di istruzioni nella radice di `.ow` (context.md e simili), che l'agente deve poter leggere e modificare.
+    if (/^\.ow\/[^/]+\.md$/i.test(given.replace(/\\/g, '/'))) return
     if (given.replace(/\\/g, '/').split('/').some((part) => part === '..' || part === '.ow')) throw new Error('The path is not accessible: it must be a document of the project, a document linked to the project, or a document open in OpenWriter')
     return
   }

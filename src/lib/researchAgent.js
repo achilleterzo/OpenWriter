@@ -3,11 +3,11 @@ import { t } from '../i18n/index.js'
 
 /**
  * Assistente di ricerca: un secondo modello (impostazioni → assistente di ricerca) che l'assistente principale chiama come strumento (`research`)
- * per esplorare il progetto. Lavora a parte, con i soli strumenti di lettura (search_files, list_directory, read_file, list_versions, read_version),
+ * per esplorare il progetto. Lavora a parte, con i soli strumenti di lettura (search_knowledge, search_files, list_directory, read_file, list_versions, read_version),
  * e restituisce un rapporto breve con percorsi e righe: l'esplorazione, con le sue tante letture, resta fuori dal contesto del principale.
  * Non scrive nulla e non mostra nulla nella chat, se non lo stato ("Ricerca…") e il rapporto come risultato dello strumento.
  */
-const READ_ONLY_TOOLS = new Set(['search_files', 'list_directory', 'read_file', 'list_versions', 'read_version'])
+const READ_ONLY_TOOLS = new Set(['search_knowledge', 'search_files', 'list_directory', 'read_file', 'list_versions', 'read_version'])
 const KEEP_FULL_RESULTS = 6
 const OLD_RESULT_CHARS = 500
 const MAX_REPORT_CHARS = 8000
@@ -15,7 +15,7 @@ const MAX_RESULT_CHARS = 12000
 
 const SYSTEM_PROMPT = [
   'You are the research assistant of OpenWriter, a Markdown document editor. Another assistant gives you a question about the project: your job is to find the files and passages that answer it, using ONLY your read-only tools, and to report back. You never change anything.',
-  'Tools: search_files (start with output=files to see which files contain something; then output=lines with a little context to judge them; a pattern like a|b is read as alternatives), list_directory (recursive by default: one call shows the whole tree), read_file (read only the lines you need with startLine/endLine around a match, not whole files unless they are small).',
+  'Tools: search_knowledge (the documents ranked by relevance: a few significant words, no sentence, no exact phrase needed; it returns passages with file, lines and headings, so START HERE when the question is about a subject and you do not know the exact words; it does not understand synonyms, so try other words; it covers .md and .txt only, not code), search_files (start with output=files to see which files contain something; then output=lines with a little context to judge them; a pattern like a|b is read as alternatives), list_directory (recursive by default: one call shows the whole tree), read_file (read only the lines you need with startLine/endLine around a match, not whole files unless they are small).',
   'IMPORTANT: search_files looks only in .md, .markdown and .txt files unless you pass glob. To search source code pass glob, for example "*.js, *.jsx, *.cjs" (or "src/**/*.js"); to search everything relevant, pass both documentation and code: "*.md, *.js, *.jsx, *.cjs". When the question is about how something works, look in the code, not only in the documentation, and quote file and line numbers of the code.',
   'Work efficiently: a few well-aimed searches beat many readings. Search for synonyms and related words when the first search finds little. Do not open a file to check something a search with context already shows. Never run the same search twice: remember what you already found. For an inventory or a comparison ("list X and which are missing from Y"), first get the exact list from one source (one search with output=lines or one read), then check every item against the other source with a few searches that use alternatives (a|b|c), and report exact counts and the exact names, not approximations. NUMBER every item of a list (1., 2., 3., …) and give the total as the last number: never add counts in your head.',
   'Be thorough before saying something is not there: when the question is about how something works in the project, search ALL the places where it could live (documentation in docs/, and the code in every source folder: src/, electron/, and any other you see in the tree) and read the passages that matter, not just the first matches. Do not stop at the first few findings.',
@@ -31,7 +31,7 @@ function prune(messages) {
 }
 
 const brief = (name, args) => {
-  const first = args?.pattern ?? args?.path ?? args?.id ?? ''
+  const first = args?.pattern ?? args?.query ?? args?.path ?? args?.id ?? ''
   return `${name}${first ? ` ${String(first).slice(0, 50)}` : ''}`
 }
 

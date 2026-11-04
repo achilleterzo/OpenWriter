@@ -30,6 +30,7 @@ const { createBookmarksStore } = require('./bookmarks-store.cjs')
 const { createMemoryStore } = require('./memory-store.cjs')
 const { createSkillsStore } = require('./skills-store.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
+const { projectKey, formatKnowledgeResults } = require('./knowledge-service.cjs')
 const { createLinksStore } = require('./project-links.cjs')
 const { isSameOrInside, samePath } = require('./path-compare.cjs')
 const { findOwners } = require('./project-owner.cjs')
@@ -464,6 +465,27 @@ const TOOLS = [
     },
   },
   {
+    name: 'search_knowledge',
+    description: 'Finds the PASSAGES of the project documents (.md, .markdown, .txt) that best deal with a subject, ranked by relevance, from the search index that OpenWriter keeps up to date. Write a few significant words, not a sentence; accents and capitals do not matter and the last word also matches its beginnings. Each result gives file, line range and the path of its headings, plus the text around the match: read the lines with read_document startLine/endLine before relying on them. It does NOT understand synonyms (try other words) and it reflects the saved files, a few seconds behind. Use it to explore ("where do we talk about X?"); use search_files for an exact phrase, a regular expression, code files or every occurrence. Needs OpenWriter to have opened the project at least once.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'a few significant words to look for' }, path: { type: 'string', description: 'optional: folder or file relative to the project root' }, maxResults: { type: 'integer', minimum: 1, maximum: 50, description: 'maximum passages (default 10)' } }, required: ['query'], additionalProperties: false },
+    run(args) {
+      const query = String(args.query ?? '').trim()
+      if (!query) throw new Error('Missing parameter "query"')
+      const project = projectPath()
+      let folder = ''
+      if (String(args.path || '').trim() && String(args.path).trim() !== '.') folder = path.relative(project, projectPathInside(args.path)).split(path.sep).join('/')
+      const file = path.join(dataDirectory, 'knowledge.db')
+      const unavailable = (reason) => `The search index is not available (${reason}). Use search_files.`
+      if (!fs.existsSync(file)) return unavailable('OpenWriter has not built it yet: open the project in OpenWriter')
+      let index
+      try { index = require('./knowledge-index.cjs').createKnowledgeIndex({ file, readOnly: true }) } catch (error) { return unavailable(error.message) }
+      try {
+        const key = projectKey(project)
+        return formatKnowledgeResults(query, index.search(key, query, { folder, limit: Number(args.maxResults) || 10 }), index.stats(key), 'read_document')
+      } finally { index.close() }
+    },
+  },
+  {
     name: 'list_notes',
     description: 'Notes (comments and suggested replacements) attached to passages of the project documents, with the quoted text they refer to, author (user or ai) and status (open, accepted, rejected, resolved). Without `document` it lists all the notes of the project, grouped by document. By default only open ones.',
     inputSchema: { type: 'object', properties: { document: { type: 'string', description: 'only this document (relative to the project root, or the absolute path of a linked or open one); omit for all the documents of the project' }, status: { type: 'string', enum: ['open', 'accepted', 'rejected', 'resolved', 'all'], description: 'default "open"' } }, additionalProperties: false },
@@ -641,7 +663,7 @@ const WRITE_TOOLS = [
   },
   {
     name: 'open_document',
-    description: 'Opens a document in a tab of the OpenWriter editor and brings it in front, so the user sees it. The path is relative to the project root, or the absolute path of a file OUTSIDE the project (.md, .txt, .docx, .pdf): opening it makes it part of the active workspace, so afterwards you can read it (read_open_document, read_document) and annotate it. Needs the OpenWriter app running with this project open.',
+    description: 'Opens a document in a tab of the OpenWriter editor and brings it in front, so the user sees it. The path is relative to the project root, or the absolute path of a file OUTSIDE the project (.md, .txt, .docx, .pdf): opening it makes it part of the active workspace, so afterwards you can read it (read_open_document, read_document) and annotate it. The instruction files for the assistant (.ow/context.md and the other .md files in the root of .ow) can be opened this way too, to edit them. Needs the OpenWriter app running with this project open.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'path relative to the project root, or absolute path of a document outside the project' } }, required: ['path'], additionalProperties: false },
     run: (args) => bridgeCall('open_document', args),
   },
