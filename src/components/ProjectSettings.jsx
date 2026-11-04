@@ -98,7 +98,7 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
     // Con `projectPath` si modificano le impostazioni di quel progetto (anche non aperto); altrimenti quelle del progetto aperto.
     ;(projectPath ? electronAPI.getProjectSettingsFor(projectPath) : electronAPI.getProjectSettings()).then((settings) => {
       setInfo(settings)
-      setForm({ name: settings.name, language: settings.ai.language, documentLanguage: settings.ai.documentLanguage || '', temperature: settings.ai.temperature ?? '', context: settings.ai.context, autoVersions: settings.options.autoVersions, inherit: settings.inherit === true, spellcheck: settings.spellcheck.languages, editor: settings.editor })
+      setForm({ name: settings.name, language: settings.ai.language, documentLanguage: settings.ai.documentLanguage || '', temperature: settings.ai.temperature ?? '', context: settings.ai.context, autoVersions: settings.options.autoVersions, searchIndex: settings.options.searchIndex !== false, semanticSearch: settings.options.semanticSearch === true, inherit: settings.inherit === true, spellcheck: settings.spellcheck.languages, editor: settings.editor })
     }).catch((reason) => setError(reason.message))
   }, [project, projectPath, reloadToken])
 
@@ -109,7 +109,7 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
 
   async function save() {
     try {
-      const payload = ({ name: form.name, ai: { context: form.context, language: form.language, documentLanguage: form.documentLanguage, temperature: form.temperature }, options: { autoVersions: form.autoVersions }, ...(info.parent ? { inherit: form.inherit } : {}), spellcheck: { languages: form.spellcheck }, editor: form.editor })
+      const payload = ({ name: form.name, ai: { context: form.context, language: form.language, documentLanguage: form.documentLanguage, temperature: form.temperature }, options: { autoVersions: form.autoVersions, searchIndex: form.searchIndex, semanticSearch: form.semanticSearch }, ...(info.parent ? { inherit: form.inherit } : {}), spellcheck: { languages: form.spellcheck }, editor: form.editor })
       const result = await (projectPath ? electronAPI.saveProjectSettingsFor(projectPath, payload) : electronAPI.saveProjectSettings(payload))
       // Se è il progetto aperto, il carattere cambia subito.
       const open = await electronAPI.getProject()
@@ -211,6 +211,8 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
         </span>
       </label>
 
+      <SearchIndex directory={projectPath || ''} enabled={form.searchIndex} saved={info.options?.searchIndex !== false} onToggle={(value) => update({ searchIndex: value })} semantic={form.semanticSearch === true} savedSemantic={info.options?.semanticSearch === true} onToggleSemantic={(value) => update({ semanticSearch: value })} onError={setError} />
+
       <div className="grid gap-2 text-sm text-slate-300">
         <span>{t('Writing skills')}<span className="mt-1 block text-xs text-slate-500">{t('Tick the skills that the assistant applies by default in every conversation of this project; in the chat you can add or remove them for a single conversation. Project skills are saved in .ow/skills.')}</span></span>
         <SkillsManager scope="project" projectPath={projectPath} onChanged={onChanged} />
@@ -226,6 +228,110 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
         {error && <span className="text-sm text-rose-400">{error}</span>}
       </div>
     </section>
+  )
+}
+
+// Indice di ricerca per rilevanza (vedi knowledge-index.cjs): una copia derivata dai file, fuori dal progetto. Si accende e spegne per progetto
+// (options.searchIndex in .ow/project.json); qui si vede quanto è aggiornato e lo si ricostruisce dai file.
+function SearchIndex({ directory, enabled, saved, onToggle, semantic, savedSemantic, onToggleSemantic, onError }) {
+  const [status, setStatus] = useState(null)
+  const [meaning, setMeaning] = useState(null)
+  const [downloading, setDownloading] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    const load = () => {
+      electronAPI.getKnowledgeStatus(directory || undefined).then((value) => { if (!cancelled) setStatus(value) }).catch(() => {})
+      electronAPI.getSemanticStatus?.(directory || undefined).then((value) => { if (!cancelled) setMeaning(value) }).catch(() => {})
+    }
+    load()
+    // Subito dopo l'apertura la prima scansione è ancora in corso: il conteggio si aggiorna da solo. Durante lo scaricamento del modello, più spesso.
+    const timer = setInterval(load, downloading ? 1000 : 4000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [directory, saved, savedSemantic, downloading])
+
+  async function downloadModel() {
+    setDownloading(true)
+    setMessage('')
+    try {
+      setMeaning(await electronAPI.installSemanticPack(directory || undefined))
+    } catch (reason) {
+      onError(reason.message)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  async function removeModel() {
+    try {
+      setMeaning(await electronAPI.removeSemanticPack(directory || undefined))
+    } catch (reason) {
+      onError(reason.message)
+    }
+  }
+
+  async function rebuild() {
+    setBusy(true)
+    setMessage('')
+    try {
+      setStatus(await electronAPI.rebuildKnowledge(directory || undefined))
+      setMessage(t('Index rebuilt'))
+    } catch (reason) {
+      onError(reason.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  let summary = ''
+  if (status && !status.available) summary = t('The search index is not available on this system')
+  else if (status && !status.enabled) summary = t('The index is turned off for this project')
+  else if (status && !status.files) summary = t('Nothing indexed yet')
+  else if (status) summary = t('{files} documents, {chunks} passages, updated {date}', { files: formatNumber(status.files), chunks: formatNumber(status.chunks), date: status.updatedAt ? new Date(status.updatedAt).toLocaleString() : '-' })
+
+  return (
+    <div className="grid gap-2 rounded-lg border border-slate-800 p-3 text-sm text-slate-300">
+      <label className="flex items-start gap-3">
+        <input type="checkbox" checked={enabled} className="mt-1 accent-accent-500" onChange={(event) => onToggle(event.target.checked)} />
+        <span>{t('Search index for the assistant')}<span className="block text-xs text-slate-500">{t('Lets the assistant and external agents find the passages that deal with a subject (search_knowledge). It is a copy built from the project files and kept outside the project: it is never needed to open the project, and it is rebuilt from the files whenever necessary.')}</span>
+        </span>
+      </label>
+      {summary && <span className="text-xs text-slate-400">{summary}</span>}
+      {enabled && <SemanticSearch pack={meaning?.pack} progress={meaning?.progress} active={semantic} saved={savedSemantic} downloading={downloading} onToggle={onToggleSemantic} onDownload={downloadModel} onRemove={removeModel} />}
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" disabled={busy || !status?.available || !saved} className="rounded-md bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-100 transition hover:bg-slate-600 disabled:opacity-50" onClick={rebuild}>{busy ? t('Rebuilding…') : t('Rebuild the index')}</button>
+        {(enabled !== saved || semantic !== savedSemantic) && <span className="text-xs text-slate-500">{t('Save the settings to apply the change.')}</span>}
+        {message && <span className="text-xs text-emerald-400">{message}</span>}
+      </div>
+    </div>
+  )
+}
+
+// Ricerca per significato (options.semanticSearch): richiede il modello (semantic-pack.cjs), che non è nell'installer e si scarica una volta, a richiesta.
+const megabytes = (bytes) => formatNumber(Math.round((bytes || 0) / 1e6))
+function SemanticSearch({ pack, progress, active, saved, downloading, onToggle, onDownload, onRemove }) {
+  const installing = downloading || pack?.state === 'installing'
+  let state = ''
+  if (installing) state = t('Downloading… {done} of {total} MB', { done: megabytes(pack?.received), total: megabytes(pack?.total || pack?.totalBytes) })
+  else if (pack?.state === 'ready' && saved && progress && !progress.error) state = t('Passages understood: {done} of {total}', { done: formatNumber(progress.embedded), total: formatNumber(progress.total) })
+  else if (pack?.state === 'ready') state = t('The model is installed')
+  const failure = !installing && (pack?.error || progress?.error)
+  return (
+    <div className="grid gap-2 border-t border-slate-800 pt-2">
+      <label className="flex items-start gap-3">
+        <input type="checkbox" checked={active} className="mt-1 accent-accent-500" onChange={(event) => onToggle(event.target.checked)} />
+        <span>{t('Also search by meaning')}<span className="block text-xs text-slate-500">{t('Finds passages that treat the subject even when they use other words (“penalty for late delivery” also finds “fine for delay”). It needs a language model, downloaded once (about {size} MB) and kept in the app data, never in the project. Without it the search by words keeps working.', { size: megabytes(pack?.totalBytes) })}</span>
+        </span>
+      </label>
+      {state && <span className="text-xs text-slate-400">{state}</span>}
+      {failure && <span className="text-xs text-rose-400">{t('The download did not complete')}: {failure}</span>}
+      <div className="flex flex-wrap items-center gap-3">
+        {pack && pack.state !== 'ready' && <button type="button" disabled={installing} className="rounded-md bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-100 transition hover:bg-slate-600 disabled:opacity-50" onClick={onDownload}>{t('Download the model ({size} MB)', { size: megabytes(pack.totalBytes) })}</button>}
+        {pack?.state === 'ready' && <button type="button" className="rounded-md bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-100 transition hover:bg-slate-600" onClick={onRemove}>{t('Remove the model')}</button>}
+      </div>
+    </div>
   )
 }
 
