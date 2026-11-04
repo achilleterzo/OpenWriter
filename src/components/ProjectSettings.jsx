@@ -322,7 +322,7 @@ function SemanticSearch({ pack, progress, active, saved, downloading, onToggle, 
     <div className="grid gap-2 border-t border-slate-800 pt-2">
       <label className="flex items-start gap-3">
         <input type="checkbox" checked={active} className="mt-1 accent-accent-500" onChange={(event) => onToggle(event.target.checked)} />
-        <span>{t('Also search by meaning')}<span className="block text-xs text-slate-500">{t('Finds passages that treat the subject even when they use other words (“penalty for late delivery” also finds “fine for delay”). It needs a language model, downloaded once (about {size} MB) and kept in the app data, never in the project. Without it the search by words keeps working.', { size: megabytes(pack?.totalBytes) })}</span>
+        <span>{t('Also search by meaning')}<span className="block text-xs text-slate-500">{t('Finds passages that treat the subject even when they use other words (“penalty for late delivery” also finds “fine for delay”). It needs a language model, downloaded once (about {size} MB).', { size: megabytes(pack?.totalBytes) })}</span>
         </span>
       </label>
       {state && <span className="text-xs text-slate-400">{state}</span>}

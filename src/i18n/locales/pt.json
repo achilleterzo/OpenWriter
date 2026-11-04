@@ -1179,7 +1179,7 @@
   "Index rebuilt": "Índice reconstruído",
   "Save the settings to apply the change.": "Guarde as definições para aplicar a alteração.",
   "Also search by meaning": "Pesquisar também por significado",
-  "Finds passages that treat the subject even when they use other words (“penalty for late delivery” also finds “fine for delay”). It needs a language model, downloaded once (about {size} MB) and kept in the app data, never in the project. Without it the search by words keeps working.": "Encontra as passagens que tratam do assunto mesmo com outras palavras (“penalização por entrega tardia” também encontra “multa por atraso”). Precisa de um modelo de linguagem, descarregado uma só vez (cerca de {size} MB) e guardado nos dados da aplicação, nunca no projeto. Sem ele, a pesquisa por palavras continua a funcionar.",
+  "Finds passages that treat the subject even when they use other words (“penalty for late delivery” also finds “fine for delay”). It needs a language model, downloaded once (about {size} MB).": "Encontra as passagens que tratam do assunto mesmo com outras palavras (“penalização por entrega tardia” também encontra “multa por atraso”). Precisa de um modelo de linguagem descarregado uma só vez (cerca de {size} MB).",
   "Download the model ({size} MB)": "Descarregar o modelo ({size} MB)",
   "Downloading… {done} of {total} MB": "A descarregar… {done} de {total} MB",
   "The model is installed": "O modelo está instalado",
