@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, nativeImage, net, protocol, safeStorage, screen, session, shell, webContents } = require('electron')
 const { pathToFileURL } = require('node:url')
+const { Worker } = require('node:worker_threads')
 const fs = require('node:fs/promises')
 const fsSync = require('node:fs')
 const path = require('node:path')
@@ -33,6 +34,8 @@ const { extractImages } = require('./markdown-extract.cjs')
 const fileClipboard = require('./file-clipboard.cjs')
 const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-links.cjs')
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
+const { createKnowledgeService, formatKnowledgeResults } = require('./knowledge-service.cjs')
+const { createSemanticPack } = require('./semantic-pack.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
 const MAX_SKILL_FILE_BYTES = MAX_SKILL_CHARS * 4
 const images = require('./images.cjs')
@@ -132,6 +135,72 @@ const documentExtensions = ['.md', '.markdown', '.mdown', '.docx', '.pdf']
 // Quel che l'albero dei file mostra: i documenti e le immagini (che si aprono in una scheda di visualizzazione).
 const listedExtensions = [...documentExtensions, ...IMAGE_EXTENSIONS]
 const hiddenDirectories = new Set(['node_modules', 'dist', 'out'])
+
+// Indice di ricerca per rilevanza (knowledge-index.cjs): derivato dai file, in un thread a parte. Un errore qui non deve mai impedire di lavorare.
+const knowledge = createKnowledgeService({
+  file: path.join(app.getPath('userData'), 'knowledge.db'),
+  hiddenDirectories: [...hiddenDirectories],
+  createWorker: (workerData) => new Worker(path.join(__dirname, 'knowledge-worker.cjs'), { workerData }),
+})
+// Il pacchetto della ricerca per significato (modello + runtime, circa 135 MB): non è nell'installer, si scarica quando l'utente lo chiede dalle
+// impostazioni del progetto e vive nei dati dell'app (semantic-pack.cjs).
+function packageRoot(name) {
+  let directory = path.dirname(require.resolve(name))
+  while (!(fsSync.existsSync(path.join(directory, 'package.json')) && JSON.parse(fsSync.readFileSync(path.join(directory, 'package.json'), 'utf8')).name === name)) {
+    const parent = path.dirname(directory)
+    if (parent === directory) throw new Error(`Package ${name} not found`)
+    directory = parent
+  }
+  return directory
+}
+const semanticPack = createSemanticPack({
+  directory: path.join(app.getPath('userData'), 'semantic'),
+  fetchImpl: (url, init) => net.fetch(url, init),
+  commonSource: packageRoot('onnxruntime-common'),
+})
+// L'indice è attivo per il progetto aperto salvo che le sue impostazioni lo spengano (options.searchIndex); la ricerca per significato solo se il
+// progetto la accende (options.semanticSearch) e il pacchetto è installato.
+let knowledgeOn = true
+let semanticOn = false
+const semanticTargets = () => (projectPath && knowledgeOn && semanticOn && semanticPack.ready ? [projectPath, ...referenceFolders().map((item) => item.path)] : [])
+function configureSemantic({ purge = false } = {}) {
+  if (!knowledge.available) return Promise.resolve(false)
+  const projects = semanticTargets()
+  return knowledge.semanticConfigure({ directory: projects.length ? semanticPack.directory : null, projects, model: semanticPack.id, purge }).catch((error) => { console.error('Ricerca per significato non configurata:', error.message); return false })
+}
+function startKnowledge() {
+  if (!projectPath) return
+  try { knowledgeOn = projectFile.searchIndexEnabled() } catch { knowledgeOn = true }
+  try { semanticOn = projectFile.semanticSearchEnabled() } catch { semanticOn = false }
+  if (!knowledgeOn) { configureSemantic(); return }
+  knowledge.sync(projectPath).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
+  // Le cartelle di riferimento del progetto (collegate dall'utente, quindi con il suo consenso) si indicizzano a parte: una sola volta anche se più progetti le usano.
+  for (const reference of referenceFolders()) knowledge.sync(reference.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
+  watchReferences()
+  configureSemantic()
+}
+const referenceFolders = () => { try { return projectPath ? referencesStore.list().filter((item) => !item.missing) : [] } catch { return [] } }
+// Chi cambia una cartella di riferimento (di solito un altro programma) la tiene aggiornata nell'indice, come per il progetto.
+let referenceWatchers = []
+function stopReferenceWatch() {
+  for (const watcher of referenceWatchers) { try { watcher.close() } catch { /* già chiuso */ } }
+  referenceWatchers = []
+}
+function watchReferences() {
+  stopReferenceWatch()
+  if (!knowledgeOn) return
+  for (const reference of referenceFolders()) {
+    try {
+      const watcher = fsSync.watch(reference.path, { recursive: true }, (_event, name) => {
+        const parts = name ? String(name).split(/[\\/]/) : []
+        if (parts.some((part) => CLIPBOARD_IGNORED.has(part))) return
+        knowledge.changed(reference.path, name ? [parts.join('/')] : null)
+      })
+      watcher.on('error', () => { try { watcher.close() } catch { /* già chiuso */ } })
+      referenceWatchers.push(watcher)
+    } catch { /* senza sorveglianza resta la scansione all'apertura del progetto */ }
+  }
+}
 
 async function readDocument(filePath) {
   const extension = path.extname(filePath).toLowerCase()
@@ -280,6 +349,7 @@ function initializeProject() {
   if (projectPath) {
     try { createProjectFile({ getProjectPath: mainDirectory }).initialize() } catch (error) { console.error('Inizializzazione .ow del progetto main non riuscita:', error.message) }
   }
+  startKnowledge()
 }
 
 async function setProject(directory) {
@@ -790,7 +860,7 @@ ipcMain.handle('projects:save-settings', (_event, { directory, settings } = {}) 
   const { target, file } = projectFileFor(directory)
   file.initialize()
   const saved = file.saveSettings(settings)
-  if (projectPath && samePath(projectPath, target)) applySpellcheck()
+  if (projectPath && samePath(projectPath, target)) { applySpellcheck(); applyKnowledgeChoice(target, saved.options.searchIndex, saved.options.semanticSearch) } else if (!saved.options.searchIndex) knowledge.clear(target).catch(() => {})
   return saved
 })
 // Icona di un progetto (anche non aperto): un'immagine in `.ow`, ridimensionata; qui si legge, si sceglie e si toglie.
@@ -926,6 +996,7 @@ ipcMain.handle('project:context-chain', (_event, filePath) => projectFile.getCon
 ipcMain.handle('project:save-settings', (_event, settings) => {
   const saved = projectFile.saveSettings(settings)
   applySpellcheck()
+  applyKnowledgeChoice(projectPath, saved.options.searchIndex, saved.options.semanticSearch)
   return saved
 })
 // Chat in streaming: gli eventi (testo, ragionamento, stato) arrivano al renderer man mano, e la richiesta si può interrompere.
@@ -956,6 +1027,89 @@ ipcMain.handle('tools:search-files', async (_event, args = {}) => {
   const result = await tools.search({ ...args, path: relative || '.' })
   if (prefix && result.results) result.results = result.results.map((entry) => ({ ...entry, path: withPrefix(prefix, entry.path) }))
   return formatSearch(result)
+})
+// Acceso o spento dalle impostazioni del progetto: spento, l'indice del progetto si svuota (si ricostruisce riaccendendolo).
+function applyKnowledgeChoice(directory, enabled, semantic) {
+  if (!directory) return
+  const isOpen = projectPath && samePath(projectPath, directory)
+  if (isOpen) { knowledgeOn = enabled !== false; semanticOn = semantic === true }
+  if (enabled === false) { knowledge.clear(directory).catch(() => {}); if (isOpen) { stopReferenceWatch(); configureSemantic() } }
+  else if (isOpen) startKnowledge()
+}
+// Ricerca per significato: stato del pacchetto (scaricato o no) e avanzamento dei vettori per il progetto aperto.
+async function semanticStatus(directory) {
+  const target = directory ? path.resolve(String(directory)) : projectPath
+  const isOpen = Boolean(projectPath && target && samePath(projectPath, target))
+  const enabled = isOpen ? semanticOn && knowledgeOn : Boolean(target && createProjectFile({ getProjectPath: () => target }).semanticSearchEnabled())
+  const result = { pack: semanticPack.status(), enabled, progress: null }
+  const targets = isOpen ? semanticTargets() : []
+  if (targets.length && knowledge.available) {
+    try { result.progress = await knowledge.semanticStatus(targets) } catch (error) { result.progress = { error: error.message } }
+  }
+  return result
+}
+ipcMain.handle('semantic:status', (_event, directory) => semanticStatus(directory))
+// Scarica il pacchetto (qualche minuto): l'interfaccia ne segue l'avanzamento chiedendo lo stato. Niente parte da solo: è l'utente a chiederlo.
+ipcMain.handle('semantic:install', async (_event, directory) => {
+  await semanticPack.install()
+  await configureSemantic()
+  return semanticStatus(directory)
+})
+ipcMain.handle('semantic:remove', async (_event, directory) => {
+  semanticPack.remove()
+  await configureSemantic({ purge: true })
+  return semanticStatus(directory)
+})
+// Stato dell'indice di un progetto (aperto o no) e ricostruzione dai file.
+async function knowledgeStatus(directory) {
+  const target = directory ? path.resolve(String(directory)) : projectPath
+  if (!target) return { enabled: false, available: false, files: 0, chunks: 0, updatedAt: null }
+  const enabled = projectPath && samePath(projectPath, target) ? knowledgeOn : createProjectFile({ getProjectPath: () => target }).searchIndexEnabled()
+  if (!knowledge.available) return { enabled, available: false, error: knowledge.error, files: 0, chunks: 0, updatedAt: null }
+  try { return { enabled, available: true, ...(await knowledge.stats(target)) } } catch (error) { return { enabled, available: false, error: error.message, files: 0, chunks: 0, updatedAt: null } }
+}
+ipcMain.handle('project:knowledge-status', (_event, directory) => knowledgeStatus(directory))
+ipcMain.handle('project:knowledge-rebuild', async (_event, directory) => {
+  const target = directory ? path.resolve(String(directory)) : projectPath
+  if (!target) throw new Error(t('No project open'))
+  if (!knowledge.available) throw new Error(knowledge.error || 'The search index is not available')
+  await knowledge.rebuild(target)
+  return knowledgeStatus(target)
+})
+// Ricerca per rilevanza sull'indice (knowledge-index.cjs): passaggi con file e righe. Non vale per le cartelle di riferimento.
+ipcMain.handle('tools:search-knowledge', async (_event, args = {}) => {
+  if (!projectPath) throw new Error(t('No project open'))
+  const query = String(args.query || '').trim()
+  if (!query) throw new Error('Missing parameter "query"')
+  if (!knowledgeOn) throw new Error('The search index is turned off for this project: use search_files')
+  if (!knowledge.available) throw new Error('The search index is not available: use search_files')
+  const given = String(args.path || '').trim().replace(/\\/g, '/')
+  const scope = ['project', 'references'].includes(String(args.scope || '').toLowerCase()) ? String(args.scope).toLowerCase() : 'all'
+  // Fonti: il progetto e le sue cartelle di riferimento (`@sigla/…`, collegate dall'utente: è il suo consenso a condividerle con questo progetto).
+  const projectSource = { key: knowledge.key(projectPath), prefix: '' }
+  const referenceSources = () => referenceFolders().map((item) => ({ key: knowledge.key(item.path), prefix: `@${item.name}` }))
+  let sources
+  let folder = ''
+  if (given.startsWith('@')) {
+    const reference = referencesStore.resolve(given)
+    sources = [{ key: knowledge.key(reference.root), prefix: `@${reference.name}` }]
+    folder = reference.relative
+  } else {
+    if (given && given !== '.' && given !== '/') {
+      const resolved = resolveInProject(path.join(projectPath, given))
+      folder = path.relative(projectPath, resolved).split(path.sep).join('/')
+    }
+    // Un percorso del progetto restringe la ricerca al progetto.
+    sources = folder ? [projectSource] : [...(scope === 'references' ? [] : [projectSource]), ...(scope === 'project' ? [] : referenceSources())]
+  }
+  if (!sources.length) throw new Error('This project has no reference folders: use scope "project" or leave it out')
+  const [found, ...stats] = await Promise.all([
+    knowledge.search(sources.map((source) => source.key), query, { folder, limit: Number(args.maxResults) || 10, semantic: semanticTargets().length > 0 }),
+    ...sources.map((source) => knowledge.stats(source.key)),
+  ])
+  const prefixes = new Map(sources.map((source) => [source.key, source.prefix]))
+  found.results = found.results.map((entry) => ({ ...entry, path: withPrefix(prefixes.get(entry.project) ?? '', entry.path) }))
+  return formatKnowledgeResults(query, found, { files: stats.reduce((total, item) => total + item.files, 0) })
 })
 // Gli strumenti di lettura valgono anche per le cartelle di riferimento: un percorso `@sigla/…` si legge dentro quella cartella (e solo lì).
 function toolsFor(given) {
@@ -1173,7 +1327,9 @@ ipcMain.handle('references:add', async (_event, directory) => {
     if (result.canceled || !result.filePaths[0]) return null
     chosen = result.filePaths[0]
   }
-  return referencesStore.add(chosen)
+  const added = referencesStore.add(chosen)
+  startKnowledge()
+  return added
 })
 // Ricollega un riferimento (di solito perché la cartella è stata spostata o rinominata): si sceglie la nuova posizione, la sigla non cambia.
 ipcMain.handle('references:update', async (_event, name) => {
@@ -1185,9 +1341,19 @@ ipcMain.handle('references:update', async (_event, name) => {
     properties: ['openDirectory'],
   })
   if (result.canceled || !result.filePaths[0]) return null
-  return referencesStore.update(reference.name, result.filePaths[0])
+  const updated = referencesStore.update(reference.name, result.filePaths[0])
+  knowledge.clear(reference.path).catch(() => {})
+  startKnowledge()
+  return updated
 })
-ipcMain.handle('references:remove', (_event, name) => referencesStore.remove(String(name)))
+ipcMain.handle('references:remove', (_event, name) => {
+  const reference = referencesStore.get(String(name))
+  const remaining = referencesStore.remove(String(name))
+  // Le voci della cartella escono dall'indice (se un altro progetto la usa ancora, si rifanno alla sua prossima apertura).
+  if (reference) knowledge.clear(reference.path).catch(() => {})
+  watchReferences()
+  return remaining
+})
 ipcMain.handle('references:reveal', async (_event, name) => {
   const reference = referencesStore.get(String(name))
   if (!reference || !fsSync.existsSync(reference.path)) throw new Error(t('Folder not found'))
@@ -1419,6 +1585,28 @@ ipcMain.handle('workspace:file-info', async (_event, target) => {
 })
 ipcMain.handle('workspace:reveal-path', (_event, target) => { shell.showItemInFolder(resolveInProject(target)) })
 ipcMain.handle('workspace:list-directory', (_event, directory) => listDirectory(directory))
+// Tutti i documenti Markdown del progetto (percorsi assoluti), per proporli mentre si scrive un collegamento.
+const MAX_LINKABLE_DOCUMENTS = 5000
+ipcMain.handle('workspace:list-documents', async () => {
+  if (!projectPath) return []
+  const found = []
+  const walk = async (directory) => {
+    let entries
+    try { entries = await fs.readdir(directory, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      if (found.length >= MAX_LINKABLE_DOCUMENTS) return
+      if (entry.name.startsWith('.')) continue
+      const full = path.join(directory, entry.name)
+      if (entry.isDirectory()) {
+        if (!hiddenDirectories.has(entry.name)) await walk(full)
+      } else if (['.md', '.markdown', '.mdown'].includes(path.extname(entry.name).toLowerCase())) {
+        found.push(full)
+      }
+    }
+  }
+  await walk(projectPath)
+  return found
+})
 // Le immagini incorporate nel testo (data:, per esempio quelle di un PDF o di un DOCX aperto) diventano file nella cartella images/ accanto al documento:
 // il Markdown resta leggibile e le immagini seguono il documento. Il nome deriva dal contenuto, quindi salvare più volte non crea doppioni.
 const EMBEDDED_DESTINATION = /^data:image\/(png|jpe?g|gif|webp|bmp);base64,([A-Za-z0-9+/=]+)$/
@@ -1690,6 +1878,7 @@ function stopWorkspaceWatch() {
   clearTimeout(annotationsWatchTimer)
   try { workspaceWatcher?.close() } catch { /* già chiuso */ }
   workspaceWatcher = null
+  stopReferenceWatch()
 }
 ipcMain.handle('workspace:watch', () => {
   stopWorkspaceWatch()
@@ -1705,10 +1894,13 @@ ipcMain.handle('workspace:watch', () => {
         return
       }
       if (parts.some((part) => CLIPBOARD_IGNORED.has(part))) return
+      // Senza nome del file il sistema non dice cosa è cambiato: riscansione completa. Altrimenti si aggiorna solo quel percorso.
+      if (knowledgeOn) knowledge.changed(projectPath, name ? [parts.join('/')] : null)
       clearTimeout(workspaceWatchTimer)
       workspaceWatchTimer = setTimeout(() => mainWindow?.webContents.send('workspace:changed'), 400)
     })
     workspaceWatcher.on('error', () => stopWorkspaceWatch())
+    watchReferences()
     return true
   } catch {
     // La sorveglianza non è disponibile (es. cartella di rete): resta il pulsante "Aggiorna".
@@ -1716,6 +1908,7 @@ ipcMain.handle('workspace:watch', () => {
   }
 })
 app.on('will-quit', stopWorkspaceWatch)
+app.on('will-quit', () => { knowledge.close().catch(() => {}) })
 
 // Ponte per il server MCP (vedi mcp-bridge.cjs): gli agenti esterni modificano i documenti aperti nell'editor, con le modifiche "da rivedere".
 // L'utente lo spegne dalle impostazioni (Agenti (MCP)): preferenza openwriter.mcpEdit = "off".

@@ -36,6 +36,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDroppedPaths: (files) => [...new Set(files.map((file) => { try { return webUtils.getPathForFile(file) } catch { return '' } }).filter(Boolean))],
   importFiles: (request) => ipcRenderer.invoke('workspace:import-files', request),
   getProjectSettings: () => ipcRenderer.invoke('project:get-settings'),
+  getKnowledgeStatus: (directory) => ipcRenderer.invoke('project:knowledge-status', directory),
+  rebuildKnowledge: (directory) => ipcRenderer.invoke('project:knowledge-rebuild', directory),
+  getSemanticStatus: (directory) => ipcRenderer.invoke('semantic:status', directory),
+  installSemanticPack: (directory) => ipcRenderer.invoke('semantic:install', directory),
+  removeSemanticPack: (directory) => ipcRenderer.invoke('semantic:remove', directory),
   setProjectQuickActions: (value) => ipcRenderer.invoke('project:set-quick-actions', value),
   getContextChain: (filePath) => ipcRenderer.invoke('project:context-chain', filePath),
   moveIntoDirectory: (request) => ipcRenderer.invoke('workspace:move-path', request),
@@ -100,6 +105,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fetchImage: (url) => ipcRenderer.invoke('images:fetch', url),
   readImageFile: (path) => ipcRenderer.invoke('images:read-file', path),
   searchFilesForAi: (args) => ipcRenderer.invoke('tools:search-files', args),
+  searchKnowledgeForAi: (args) => ipcRenderer.invoke('tools:search-knowledge', args),
   readImageDescription: (path) => ipcRenderer.invoke('images:read-description', path),
   writeImageDescription: (path, description) => ipcRenderer.invoke('images:write-description', path, description),
   captureRect: (rect) => ipcRenderer.invoke('images:capture-page', rect),
@@ -164,6 +170,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeProject: (directory) => ipcRenderer.invoke('workspace:remove-project', directory),
   chooseProject: () => ipcRenderer.invoke('workspace:choose-project'),
   listDirectory: (directory) => ipcRenderer.invoke('workspace:list-directory', directory),
+  listProjectDocuments: () => ipcRenderer.invoke('workspace:list-documents'),
   saveMarkdown: (payload) => ipcRenderer.invoke('document:save-markdown', payload),
   onExtractMarkdownImagesStart: (callback) => {
     const listener = (_event, info) => callback(info)
