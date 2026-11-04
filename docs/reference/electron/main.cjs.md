@@ -27,3 +27,7 @@ Other responsibilities:
 - Window state persistence, restored only when still visible on a connected display.
 - The BrowserWindow hosting the renderer loads the Vite dev server in development and the built bundle in production.
 
+
+**Search index** (see [knowledge-service.cjs](knowledge-service.cjs.md)): `project:knowledge-status` / `project:knowledge-rebuild` (also for a project that is not open), `tools:search-knowledge`; saving the project settings applies `options.searchIndex` (`applyKnowledgeChoice`: off clears the project's entries, on starts a scan). `knowledgeOn` caches the choice for the open project so that the watcher does not read the settings at every event.
+
+**Search by meaning**: `semanticPack` (see [semantic-pack.cjs](semantic-pack.cjs.md)) lives in `userData/semantic`; `semanticOn` caches `options.semanticSearch` of the open project and `semanticTargets()` is the project plus its reference folders when the index is on, the option is on **and** the pack is installed (otherwise empty). `configureSemantic()` tells the worker which projects to vectorize (called when a project starts, when its settings are saved, after the pack is installed or removed); `tools:search-knowledge` passes `semantic: true` only when there are targets. IPC: `semantic:status` (pack state plus the vectors progress of the open project), `semantic:install` (downloads; the interface follows it by polling the status), `semantic:remove` (removes the pack and the vectors). Nothing is downloaded unless the user asks for it.

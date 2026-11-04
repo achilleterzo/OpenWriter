@@ -165,6 +165,12 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [chat-store.cjs.md](reference/electron/chat-store.cjs.md) ([chat-store.cjs](../electron/chat-store.cjs)) — Conversations and attachments
   - [notes-store.cjs.md](reference/electron/notes-store.cjs.md) ([notes-store.cjs](../electron/notes-store.cjs)) — Anchored notes and suggestions
   - [bookmarks-store.cjs.md](reference/electron/bookmarks-store.cjs.md) ([bookmarks-store.cjs](../electron/bookmarks-store.cjs)) — Named anchors in documents, linkable as `file.md#name`
+  - [knowledge-index.cjs.md](reference/electron/knowledge-index.cjs.md) ([knowledge-index.cjs](../electron/knowledge-index.cjs)) — Ranked full-text search index (SQLite FTS5) over project documents
+  - [knowledge-sync.cjs.md](reference/electron/knowledge-sync.cjs.md) ([knowledge-sync.cjs](../electron/knowledge-sync.cjs)) — Keeps the search index aligned with the project files
+  - [knowledge-service.cjs.md](reference/electron/knowledge-service.cjs.md) ([knowledge-service.cjs](../electron/knowledge-service.cjs)) — Main-process client of the search index worker
+  - [knowledge-worker.cjs.md](reference/electron/knowledge-worker.cjs.md) ([knowledge-worker.cjs](../electron/knowledge-worker.cjs)) — Worker thread that owns the search index
+  - [semantic-pack.cjs.md](reference/electron/semantic-pack.cjs.md) ([semantic-pack.cjs](../electron/semantic-pack.cjs)) — Downloadable model and runtime for the search by meaning
+  - [semantic-embedder.cjs.md](reference/electron/semantic-embedder.cjs.md) ([semantic-embedder.cjs](../electron/semantic-embedder.cjs)) — Turns texts into embedding vectors (WebAssembly)
   - [memory-store.cjs.md](reference/electron/memory-store.cjs.md) ([memory-store.cjs](../electron/memory-store.cjs)) — Project memory entries and file references
   - [skills-store.cjs.md](reference/electron/skills-store.cjs.md) ([skills-store.cjs](../electron/skills-store.cjs)) — Writing skills: global and project libraries
   - [project-tools.cjs.md](reference/electron/project-tools.cjs.md) ([project-tools.cjs](../electron/project-tools.cjs)) — File tools for the assistant (listing, reading, creating; the search lives in `project-search.cjs`)
