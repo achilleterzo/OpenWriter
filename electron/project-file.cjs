@@ -14,7 +14,7 @@ const MAX_CONTEXT_CHARS = 20000
 
 /**
  * La directory `.ow` nella radice del progetto contiene:
- *   project.json                         { name, ai: { language, documentLanguage, temperature }, options: { autoVersions, searchIndex, semanticSearch } }
+ *   project.json                         { name, ai: { language, documentLanguage, temperature }, options: { autoVersions, searchIndex, semanticSearch, sharedKnowledge } }
  *   context.md                           contesto per l'assistente AI (testo libero)
  *   skills/<id>.md                       skill di scrittura del progetto (vedi skills-store.cjs); quelle attive di default in project.json → skills.active
  *   history/<documento>/index.json       metadati delle versioni di un documento
@@ -96,7 +96,7 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
       format: FORMAT_VERSION,
       name: typeof parsed.name === 'string' ? parsed.name : '',
       ai: { language: '', documentLanguage: '', ...(parsed.ai && typeof parsed.ai === 'object' ? parsed.ai : {}) },
-      options: { autoVersions: true, searchIndex: true, semanticSearch: false, ...(parsed.options && typeof parsed.options === 'object' ? parsed.options : {}) },
+      options: { autoVersions: true, searchIndex: true, semanticSearch: false, sharedKnowledge: true, ...(parsed.options && typeof parsed.options === 'object' ? parsed.options : {}) },
       spellcheck: { languages: [], ...(parsed.spellcheck && typeof parsed.spellcheck === 'object' ? parsed.spellcheck : {}) },
       editor: cleanEditor(parsed.editor),
       quickActions: cleanQuickActions(parsed.quickActions),
@@ -223,7 +223,7 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
       parent: parentProject(),
       inherit: settings.inherit === true,
       ai: { context, extraContext: readExtraContext(), language: String(settings.ai.language || ''), documentLanguage: String(settings.ai.documentLanguage || ''), temperature: cleanTemperature(settings.ai.temperature) },
-      options: { autoVersions: settings.options.autoVersions !== false, searchIndex: settings.options.searchIndex !== false, semanticSearch: settings.options.semanticSearch === true },
+      options: { autoVersions: settings.options.autoVersions !== false, searchIndex: settings.options.searchIndex !== false, semanticSearch: settings.options.semanticSearch === true, sharedKnowledge: settings.options.sharedKnowledge !== false },
       spellcheck: { languages: cleanLanguages(settings.spellcheck.languages) },
       editor: cleanEditor(settings.editor),
       quickActions: cleanQuickActions(settings.quickActions),
@@ -244,6 +244,8 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     if (options && 'searchIndex' in options) settings.options.searchIndex = options.searchIndex !== false
     // Idem per la ricerca per significato: spenta salvo che il progetto la accenda (e serve anche il pacchetto semantico installato).
     if (options && 'semanticSearch' in options) settings.options.semanticSearch = options.semanticSearch === true
+    // Idem per la conoscenza condivisa: acceso salvo che il progetto scelga di restare fuori dalle ricerche degli altri progetti.
+    if (options && 'sharedKnowledge' in options) settings.options.sharedKnowledge = options.sharedKnowledge !== false
     settings.spellcheck = { ...settings.spellcheck, languages: cleanLanguages(spellcheck?.languages) }
     if (skills !== undefined) settings.skills = { ...settings.skills, active: cleanSkillIds(skills?.active) }
     if (editor !== undefined) settings.editor = cleanEditor(editor)
@@ -304,6 +306,8 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
   // L'indice di ricerca per rilevanza è attivo salvo che il progetto lo spenga (options.searchIndex = false).
   const searchIndexEnabled = (base) => readSettings(base).options.searchIndex !== false
   // La ricerca per significato (vettori) è spenta salvo che il progetto la accenda; vale solo con l'indice acceso.
+  // Gli altri progetti possono cercare qui (e leggere i file in sola lettura): acceso salvo scelta contraria, e solo con l'indice acceso.
+  const sharedKnowledgeEnabled = (base) => { const { options } = readSettings(base); return options.searchIndex !== false && options.sharedKnowledge !== false }
   const semanticSearchEnabled = (base) => { const { options } = readSettings(base); return options.searchIndex !== false && options.semanticSearch === true }
   const autoVersionsEnabled = (document) => readSettings(document ? locate(document)?.base : undefined).options.autoVersions !== false
 
@@ -358,7 +362,7 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     try { return getProjectPath() ? cleanTemperature(readSettings().ai.temperature) : '' } catch { return '' }
   }
 
-  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, getTemperature, getContextChain, saveSettings, setQuickActions, setActiveSkills, autoVersionsEnabled, searchIndexEnabled, semanticSearchEnabled, addVersion, listVersions, getVersion, deleteVersion }
+  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, getTemperature, getContextChain, saveSettings, setQuickActions, setActiveSkills, autoVersionsEnabled, searchIndexEnabled, semanticSearchEnabled, sharedKnowledgeEnabled, addVersion, listVersions, getVersion, deleteVersion }
 }
 
 module.exports = { createProjectFile }

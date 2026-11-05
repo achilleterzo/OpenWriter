@@ -108,4 +108,4 @@ function createReferencesStore({ getProjectPath }) {
   return { list, add, update, remove, resolve, get }
 }
 
-module.exports = { createReferencesStore }
+module.exports = { createReferencesStore, cleanName }
