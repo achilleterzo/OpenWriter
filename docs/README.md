@@ -169,7 +169,9 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [knowledge-sync.cjs.md](reference/electron/knowledge-sync.cjs.md) ([knowledge-sync.cjs](../electron/knowledge-sync.cjs)) — Keeps the search index aligned with the project files
   - [knowledge-service.cjs.md](reference/electron/knowledge-service.cjs.md) ([knowledge-service.cjs](../electron/knowledge-service.cjs)) — Main-process client of the search index worker
   - [knowledge-worker.cjs.md](reference/electron/knowledge-worker.cjs.md) ([knowledge-worker.cjs](../electron/knowledge-worker.cjs)) — Worker thread that owns the search index
+  - [shared-knowledge.cjs.md](reference/electron/shared-knowledge.cjs.md) ([shared-knowledge.cjs](../electron/shared-knowledge.cjs)) — Which other projects the relevance search also covers
   - [semantic-pack.cjs.md](reference/electron/semantic-pack.cjs.md) ([semantic-pack.cjs](../electron/semantic-pack.cjs)) — Downloadable model and runtime for the search by meaning
+  - [semantic-embedder-worker.cjs.md](reference/electron/semantic-embedder-worker.cjs.md) ([semantic-embedder-worker.cjs](../electron/semantic-embedder-worker.cjs)) — Thread that runs the embedding model
   - [semantic-embedder.cjs.md](reference/electron/semantic-embedder.cjs.md) ([semantic-embedder.cjs](../electron/semantic-embedder.cjs)) — Turns texts into embedding vectors (WebAssembly)
   - [memory-store.cjs.md](reference/electron/memory-store.cjs.md) ([memory-store.cjs](../electron/memory-store.cjs)) — Project memory entries and file references
   - [skills-store.cjs.md](reference/electron/skills-store.cjs.md) ([skills-store.cjs](../electron/skills-store.cjs)) — Writing skills: global and project libraries

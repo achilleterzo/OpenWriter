@@ -8,6 +8,7 @@ Full-screen settings window: a vertical navigation (horizontal on narrow screens
 - **Project**: [ProjectSettings.jsx](ProjectSettings.jsx.md).
 - **Appearance**: [AppearanceSettings.jsx](AppearanceSettings.jsx.md).
 - **AI**: [AiProviderSettings.jsx](AiProviderSettings.jsx.md).
+- **Local models**: [LocalModelsSettings.jsx](LocalModelsSettings.jsx.md).
 - **Quick actions**: [QuickActionsSettings.jsx](QuickActionsSettings.jsx.md).
 - **Skills**: the global writing skill library, with an explanation and [SkillsManager.jsx](SkillsManager.jsx.md) in the `global` scope.
 - **Agents (MCP)**: [McpSettings.jsx](McpSettings.jsx.md).
