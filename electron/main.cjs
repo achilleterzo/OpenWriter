@@ -36,7 +36,8 @@ const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-link
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
 const { createKnowledgeService, formatKnowledgeResults } = require('./knowledge-service.cjs')
 const { createSemanticPack } = require('./semantic-pack.cjs')
-const { sharedProjects } = require('./shared-knowledge.cjs')
+const { createGpuContext } = require('./gpu-context.cjs')
+const { sharedProjects, outsideFolders: outsideFoldersOf } = require('./shared-knowledge.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
 const MAX_SKILL_FILE_BYTES = MAX_SKILL_CHARS * 4
 const images = require('./images.cjs')
@@ -137,14 +138,9 @@ const documentExtensions = ['.md', '.markdown', '.mdown', '.docx', '.pdf']
 const listedExtensions = [...documentExtensions, ...IMAGE_EXTENSIONS]
 const hiddenDirectories = new Set(['node_modules', 'dist', 'out'])
 
-// Indice di ricerca per rilevanza (knowledge-index.cjs): derivato dai file, in un thread a parte. Un errore qui non deve mai impedire di lavorare.
-const knowledge = createKnowledgeService({
-  file: path.join(app.getPath('userData'), 'knowledge.db'),
-  hiddenDirectories: [...hiddenDirectories],
-  createWorker: (workerData) => new Worker(path.join(__dirname, 'knowledge-worker.cjs'), { workerData }),
-})
-// Il pacchetto della ricerca per significato (modello + runtime, circa 135 MB): non è nell'installer, si scarica quando l'utente lo chiede dalle
-// impostazioni del progetto e vive nei dati dell'app (semantic-pack.cjs).
+// I pacchetti della ricerca per significato (semantic-pack.cjs): non sono nell'installer, si scaricano quando l'utente lo chiede (Impostazioni → Modelli locali) e
+// vivono nei dati dell'app. Ce n'è uno per dispositivo: 'cpu' (modello a 8 bit, WebAssembly in un thread di Node, circa 150 MB) e 'gpu' (modello fp16 su WebGPU
+// in una finestra nascosta, circa 280 MB). I vettori di ciascuno stanno a parte nell'indice, quindi passare dall'uno all'altro calcola solo ciò che manca.
 function packageRoot(name) {
   let directory = path.dirname(require.resolve(name))
   while (!(fsSync.existsSync(path.join(directory, 'package.json')) && JSON.parse(fsSync.readFileSync(path.join(directory, 'package.json'), 'utf8')).name === name)) {
@@ -154,28 +150,68 @@ function packageRoot(name) {
   }
   return directory
 }
-const semanticPack = createSemanticPack({
-  directory: path.join(app.getPath('userData'), 'semantic'),
-  fetchImpl: (url, init) => net.fetch(url, init),
-  commonSource: packageRoot('onnxruntime-common'),
+const semanticDirectory = path.join(app.getPath('userData'), 'semantic')
+const semanticFetch = (url, init) => net.fetch(url, init)
+const semanticPacks = {
+  cpu: createSemanticPack({ directory: semanticDirectory, kind: 'cpu', fetchImpl: semanticFetch, commonSource: packageRoot('onnxruntime-common') }),
+  gpu: createSemanticPack({ directory: semanticDirectory, kind: 'gpu', fetchImpl: semanticFetch }),
+}
+// Il contesto WebGPU (gpu-context.cjs): una finestra nascosta che nasce alla prima richiesta. Il tokenizzatore lo serve dai file dell'app.
+const gpuContext = createGpuContext({
+  BrowserWindow,
+  ipcMain,
+  packDirectory: () => semanticPacks.gpu.directory,
+  tokenizersFile: () => path.join(__dirname, '..', 'node_modules', '@huggingface', 'tokenizers', 'dist', 'tokenizers.mjs'),
+})
+// Ultima descrizione della scheda video (probe) e ultimo guasto della GPU in questa sessione: con un guasto si ripiega sulla CPU finché l'utente non riprova.
+let gpuInfo = null
+let gpuFailure = null
+
+// Indice di ricerca per rilevanza (knowledge-index.cjs): derivato dai file, in un thread a parte. Un errore qui non deve mai impedire di lavorare.
+const knowledge = createKnowledgeService({
+  file: path.join(app.getPath('userData'), 'knowledge.db'),
+  hiddenDirectories: [...hiddenDirectories],
+  createWorker: (workerData) => new Worker(path.join(__dirname, 'knowledge-worker.cjs'), { workerData }),
+  gpuEmbed: (texts, kind) => gpuContext.embed(texts, kind),
+  gpuRelease: () => gpuContext.release(),
+  onSemanticError: (event) => {
+    console.error(`Ricerca per significato (${event.device}):`, event.error)
+    // La scheda video non risponde o non regge il modello: si torna alla CPU (i suoi vettori sono già nell'indice) e l'interfaccia dice perché.
+    if (event.device === 'gpu') { gpuFailure = event.error; configureSemantic() }
+  },
 })
 // L'indice è attivo per il progetto aperto salvo che le sue impostazioni lo spengano (options.searchIndex); la ricerca per significato solo se il
-// progetto la accende (options.semanticSearch) e il pacchetto è installato.
+// modello è installato e abilitato in Impostazioni → Modelli locali. Il progetto non sceglie: se non vuole entrarci spegne l'indice.
 let knowledgeOn = true
-let semanticOn = false
-// Modelli locali (Impostazioni): l'utente può spegnere un modello per tutti i progetti, anche se installato.
+// Modelli locali (Impostazioni): l'utente può spegnere il modello per tutti i progetti, anche se installato, e scegliere il dispositivo.
 const EMBEDDINGS_PREFERENCE = 'openwriter.localModels.embeddings'
+const DEVICE_PREFERENCE = 'openwriter.localModels.device'
 const semanticAllowed = () => loadPreferences()[EMBEDDINGS_PREFERENCE] !== 'off'
-const semanticTargets = () => (projectPath && knowledgeOn && semanticOn && semanticAllowed() && semanticPack.ready ? [projectPath, ...outsideFolders().map((item) => item.path)] : [])
-function configureSemantic({ purge = false } = {}) {
+const wantedDevice = () => (loadPreferences()[DEVICE_PREFERENCE] === 'gpu' ? 'gpu' : 'cpu')
+// Il dispositivo che calcola davvero: la GPU se scelta, installata e senza guasti; altrimenti la CPU se il suo modello c'è; altrimenti nessuno.
+function activeDevice() {
+  if (wantedDevice() === 'gpu' && semanticPacks.gpu.ready && !gpuFailure) return 'gpu'
+  return semanticPacks.cpu.ready ? 'cpu' : null
+}
+// La ricerca per significato non dipende dal progetto aperto: ogni progetto con l'indice acceso ha i suoi vettori e la ricerca li usa tutti. `semanticAvailable`:
+// c'è un modello installato e abilitato, quindi ogni ricerca può essere per parole e per significato.
+const semanticAvailable = () => Boolean(semanticAllowed() && activeDevice())
+// I testi da vettorizzare: il progetto aperto, le sue cartelle di riferimento e gli altri progetti che condividono la conoscenza (tutti con l'indice acceso).
+const semanticTargets = () => {
+  if (!projectPath || !knowledgeOn || !semanticAvailable()) return []
+  return [projectPath, ...referenceFolders().map((item) => item.path), ...sharedFolders().map((item) => item.path)]
+}
+// `purge`: identificativi dei modelli di cui buttare i vettori (si è tolto il loro pacchetto).
+function configureSemantic({ purge = [] } = {}) {
   if (!knowledge.available) return Promise.resolve(false)
   const projects = semanticTargets()
-  return knowledge.semanticConfigure({ directory: projects.length ? semanticPack.directory : null, projects, model: semanticPack.id, purge }).catch((error) => { console.error('Ricerca per significato non configurata:', error.message); return false })
+  const device = projects.length ? activeDevice() : null
+  return knowledge.semanticConfigure({ device, model: device ? semanticPacks[device].id : '', directory: device === 'cpu' ? semanticPacks.cpu.directory : null, projects, purge })
+    .catch((error) => { console.error('Ricerca per significato non configurata:', error.message); return false })
 }
 function startKnowledge() {
   if (!projectPath) return
   try { knowledgeOn = projectFile.searchIndexEnabled() } catch { knowledgeOn = true }
-  try { semanticOn = projectFile.semanticSearchEnabled() } catch { semanticOn = false }
   if (!knowledgeOn) { configureSemantic(); return }
   knowledge.sync(projectPath).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
   // Le cartelle di riferimento del progetto (collegate dall'utente, quindi con il suo consenso) si indicizzano a parte: una sola volta anche se più progetti le usano.
@@ -634,11 +670,9 @@ const convertibleExtensions = ['.docx', '.pdf']
 async function listDirectory(directory) {
   const resolved = resolveInProject(directory)
   const entries = await fs.readdir(resolved, { withFileTypes: true })
-  const visible = entries
-    .filter((entry) => !entry.name.startsWith('.'))
-    .filter((entry) => entry.isDirectory()
-      ? !hiddenDirectories.has(entry.name)
-      : listedExtensions.includes(path.extname(entry.name).toLowerCase()))
+  // L'albero mostra tutti i file (non nascosti), non solo quelli che si aprono: `openable` dice se OpenWriter può aprirli (documenti e immagini); gli altri
+  // compaiono con un punto esclamativo, così una cartella con soli file di codice non sembra vuota.
+  const visible = entries.filter((entry) => !entry.name.startsWith('.') && (!entry.isDirectory() || !hiddenDirectories.has(entry.name)))
   // Un DOCX/PDF che ha già il suo Markdown (stesso nome) non sta più in lista: compare sotto il Markdown, come originale in sola lettura.
   const stem = (entry) => path.basename(entry.name, path.extname(entry.name)).toLowerCase()
   const isMarkdown = (entry) => !entry.isDirectory() && path.extname(entry.name).toLowerCase() === '.md'
@@ -646,14 +680,27 @@ async function listDirectory(directory) {
   const originalOf = (entry) => !entry.isDirectory() && convertibleExtensions.includes(path.extname(entry.name).toLowerCase()) && markdownNames.has(stem(entry))
   const originals = new Map()
   for (const entry of visible.filter(originalOf)) originals.set(stem(entry), [...(originals.get(stem(entry)) || []), { name: entry.name, path: path.join(directory, entry.name) }])
-  return visible
-    .filter((entry) => !originalOf(entry))
+  // Cosa c'è in una cartella: 'empty' (davvero niente: non si apre), 'hidden' (ci sono solo elementi nascosti: «Solo file nascosti», così non sembra vuota e non la si
+  // cancella per errore) oppure null (ha qualcosa da mostrare).
+  const emptiness = async (name) => {
+    try {
+      const inner = await fs.readdir(path.join(resolved, name), { withFileTypes: true })
+      if (!inner.length) return 'empty'
+      const shows = inner.some((item) => !item.name.startsWith('.') && (!item.isDirectory() || !hiddenDirectories.has(item.name)))
+      return shows ? null : 'hidden'
+    } catch { return null }
+  }
+  const shown = visible.filter((entry) => !originalOf(entry))
+  const states = new Map(await Promise.all(shown.filter((entry) => entry.isDirectory()).map(async (entry) => [entry.name, await emptiness(entry.name)])))
+  return shown
     // Una cartella con una `.ow` propria è un sotto-progetto: l'explorer la distingue dalle altre.
     .map((entry) => ({
       name: entry.name,
       path: path.join(directory, entry.name),
       isDirectory: entry.isDirectory(),
       isProject: entry.isDirectory() && fsSync.existsSync(path.join(resolved, entry.name, projectFile.directoryName)),
+      ...(entry.isDirectory() && states.get(entry.name) ? { emptiness: states.get(entry.name) } : {}),
+      ...(!entry.isDirectory() ? { openable: listedExtensions.includes(path.extname(entry.name).toLowerCase()) } : {}),
       ...(isMarkdown(entry) && originals.has(stem(entry)) ? { originals: originals.get(stem(entry)) } : {}),
     }))
     .sort((left, right) => Number(right.isDirectory) - Number(left.isDirectory) || left.name.localeCompare(right.name, 'it', { sensitivity: 'base' }))
@@ -880,7 +927,7 @@ ipcMain.handle('projects:save-settings', (_event, { directory, settings } = {}) 
   const { target, file } = projectFileFor(directory)
   file.initialize()
   const saved = file.saveSettings(settings)
-  if (projectPath && samePath(projectPath, target)) { applySpellcheck(); applyKnowledgeChoice(target, saved.options.searchIndex, saved.options.semanticSearch) } else if (!saved.options.searchIndex) knowledge.clear(target).catch(() => {})
+  if (projectPath && samePath(projectPath, target)) { applySpellcheck(); applyKnowledgeChoice(target, saved.options.searchIndex) } else if (!saved.options.searchIndex) knowledge.clear(target).catch(() => {})
   // Chi condivide o smette di condividere cambia ciò che gli altri progetti vedono (e quali vettori calcolare).
   if (projectPath && !samePath(projectPath, target)) configureSemantic()
   return saved
@@ -1018,7 +1065,7 @@ ipcMain.handle('project:context-chain', (_event, filePath) => projectFile.getCon
 ipcMain.handle('project:save-settings', (_event, settings) => {
   const saved = projectFile.saveSettings(settings)
   applySpellcheck()
-  applyKnowledgeChoice(projectPath, saved.options.searchIndex, saved.options.semanticSearch)
+  applyKnowledgeChoice(projectPath, saved.options.searchIndex)
   return saved
 })
 // Chat in streaming: gli eventi (testo, ragionamento, stato) arrivano al renderer man mano, e la richiesta si può interrompere.
@@ -1051,19 +1098,31 @@ ipcMain.handle('tools:search-files', async (_event, args = {}) => {
   return formatSearch(result)
 })
 // Acceso o spento dalle impostazioni del progetto: spento, l'indice del progetto si svuota (si ricostruisce riaccendendolo).
-function applyKnowledgeChoice(directory, enabled, semantic) {
+function applyKnowledgeChoice(directory, enabled) {
   if (!directory) return
   const isOpen = projectPath && samePath(projectPath, directory)
-  if (isOpen) { knowledgeOn = enabled !== false; semanticOn = semantic === true }
+  if (isOpen) knowledgeOn = enabled !== false
   if (enabled === false) { knowledge.clear(directory).catch(() => {}); if (isOpen) { stopReferenceWatch(); configureSemantic() } }
   else if (isOpen) startKnowledge()
 }
-// Ricerca per significato: stato del pacchetto (scaricato o no) e avanzamento dei vettori per il progetto aperto.
+// Ricerca per significato: stato dei pacchetti (scaricati o no), dispositivo scelto e in uso, scheda video e avanzamento dei vettori per il progetto aperto.
+// `pack` è il pacchetto del dispositivo in uso (o di quello scelto, se nessuno è installato): è ciò che mostrano le impostazioni del progetto.
 async function semanticStatus(directory) {
   const target = directory ? path.resolve(String(directory)) : projectPath
   const isOpen = Boolean(projectPath && target && samePath(projectPath, target))
-  const enabled = isOpen ? semanticOn && knowledgeOn : Boolean(target && createProjectFile({ getProjectPath: () => target }).semanticSearchEnabled())
-  const result = { pack: semanticPack.status(), enabled, allowed: semanticAllowed(), progress: null }
+  const enabled = isOpen ? knowledgeOn : Boolean(target && createProjectFile({ getProjectPath: () => target }).searchIndexEnabled())
+  const wanted = wantedDevice()
+  const using = activeDevice()
+  const result = {
+    pack: semanticPacks[using || wanted].status(),
+    packs: { cpu: semanticPacks.cpu.status(), gpu: semanticPacks.gpu.status() },
+    device: wanted,
+    activeDevice: using,
+    gpu: { info: gpuInfo, failure: gpuFailure },
+    enabled,
+    allowed: semanticAllowed(),
+    progress: null,
+  }
   const targets = isOpen ? semanticTargets() : []
   if (targets.length && knowledge.available) {
     try { result.progress = await knowledge.semanticStatus(targets) } catch (error) { result.progress = { error: error.message } }
@@ -1075,6 +1134,18 @@ ipcMain.handle('semantic:status', (_event, directory) => semanticStatus(director
 ipcMain.handle('semantic:set-enabled', async (_event, enabled) => {
   setPreferenceValue(EMBEDDINGS_PREFERENCE, enabled ? 'on' : 'off')
   await configureSemantic()
+  return semanticStatus()
+})
+// Dispositivo del calcolo: 'cpu' o 'gpu' (se la scheda video non è supportata o manca il pacchetto, si usa la CPU finché non lo è). Scegliere di nuovo la GPU cancella l'ultimo guasto.
+ipcMain.handle('semantic:set-device', async (_event, device) => {
+  setPreferenceValue(DEVICE_PREFERENCE, device === 'gpu' ? 'gpu' : 'cpu')
+  gpuFailure = null
+  await configureSemantic()
+  return semanticStatus()
+})
+// Chiede a WebGPU quale scheda userebbe (senza caricare il modello): l'interfaccia lo usa per dire se la GPU è supportata.
+ipcMain.handle('semantic:probe-gpu', async () => {
+  try { gpuInfo = await gpuContext.probe() } catch (error) { gpuInfo = { webgpu: false, reason: error.message } }
   return semanticStatus()
 })
 // Avanzamento dell'indice per la barra in fondo alla finestra: scansione dei file e vettori ancora da calcolare per il progetto aperto.
@@ -1089,15 +1160,21 @@ ipcMain.handle('knowledge:activity', async () => {
   }
   return result
 })
-// Scarica il pacchetto (qualche minuto): l'interfaccia ne segue l'avanzamento chiedendo lo stato. Niente parte da solo: è l'utente a chiederlo.
-ipcMain.handle('semantic:install', async (_event, directory) => {
-  await semanticPack.install()
+const packKind = (device) => (device === 'gpu' ? 'gpu' : device === 'cpu' ? 'cpu' : wantedDevice())
+// Scarica un pacchetto (qualche minuto): l'interfaccia ne segue l'avanzamento chiedendo lo stato. Niente parte da solo: è l'utente a chiederlo.
+ipcMain.handle('semantic:install', async (_event, directory, device) => {
+  const kind = packKind(device)
+  await semanticPacks[kind].install()
+  if (kind === 'gpu') gpuFailure = null
   await configureSemantic()
   return semanticStatus(directory)
 })
-ipcMain.handle('semantic:remove', async (_event, directory) => {
-  semanticPack.remove()
-  await configureSemantic({ purge: true })
+// Toglie un pacchetto e i vettori di quel modello (quelli dell'altro dispositivo restano).
+ipcMain.handle('semantic:remove', async (_event, directory, device) => {
+  const kind = packKind(device)
+  semanticPacks[kind].remove()
+  if (kind === 'gpu') gpuContext.release()
+  await configureSemantic({ purge: [semanticPacks[kind].id] })
   return semanticStatus(directory)
 })
 // Stato dell'indice di un progetto (aperto o no) e ricostruzione dai file.
@@ -1117,36 +1194,59 @@ ipcMain.handle('project:knowledge-rebuild', async (_event, directory) => {
   return knowledgeStatus(target)
 })
 // Ricerca per rilevanza sull'indice (knowledge-index.cjs): passaggi con file e righe. Non vale per le cartelle di riferimento.
-async function searchKnowledgeTool(args = {}, readTool = 'read_file') {
-  if (!projectPath) throw new Error(t('No project open'))
+// Cosa sta fuori da un progetto e si cerca insieme ad esso: le cartelle di riferimento collegate e gli altri progetti che condividono. Per il progetto aperto sono quelle in uso;
+// per un altro progetto (un agente esterno che lavora altrove) si leggono i suoi riferimenti. Senza progetto: tutti i progetti che condividono.
+function outsideFor(base) {
+  if (base && projectPath && samePath(base, projectPath)) return outsideFolders()
+  let references = []
+  try { references = base ? createReferencesStore({ getProjectPath: () => base }).list() : [] } catch { references = [] }
+  try {
+    return outsideFoldersOf({ current: base, references, projects: projectsStore.list(), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled() })
+  } catch { return [] }
+}
+// Ricerca per rilevanza (e per significato, se c'è il modello) nel progetto, nei suoi riferimenti e negli altri progetti. Non dipende dal progetto aperto: `project` (un agente
+// esterno) indica da quale progetto si cerca; senza, si usa quello aperto, e senza nessuno si cerca in tutti i progetti che condividono la loro conoscenza.
+async function searchKnowledgeTool(args = {}, readTool = 'read_file', { project: asked = null } = {}) {
+  const known = (directory) => Boolean((projectPath && samePath(directory, projectPath)) || projectsStore.list().some((item) => samePath(item.path, directory)))
+  const base = asked && known(path.resolve(String(asked))) ? path.resolve(String(asked)) : (asked ? null : projectPath)
   const query = String(args.query || '').trim()
   if (!query) throw new Error('Missing parameter "query"')
-  if (!knowledgeOn) throw new Error('The search index is turned off for this project: use search_files')
   if (!knowledge.available) throw new Error('The search index is not available: use search_files')
+  if (base) {
+    const on = projectPath && samePath(base, projectPath) ? knowledgeOn : createProjectFile({ getProjectPath: () => base }).searchIndexEnabled()
+    if (!on) throw new Error('The search index is turned off for this project: use search_files')
+  } else if (!asked && !projectPath) throw new Error(t('No project open'))
   const given = String(args.path || '').trim().replace(/\\/g, '/')
   // `others` (o il vecchio `references`): tutto ciò che sta fuori dal progetto, cioè gli altri progetti e le cartelle di riferimento.
-  const asked = String(args.scope || '').toLowerCase()
-  const scope = asked === 'project' ? 'project' : (asked === 'others' || asked === 'references') ? 'others' : 'all'
-  // Fonti: il progetto, le sue cartelle di riferimento (collegate dall'utente: è il suo consenso) e gli altri progetti che condividono la loro conoscenza.
-  const projectSource = { key: knowledge.key(projectPath), prefix: '' }
-  const referenceSources = () => outsideFolders().map((item) => ({ key: knowledge.key(item.path), prefix: `@${item.name}` }))
+  const wanted = String(args.scope || '').toLowerCase()
+  const scope = wanted === 'project' ? 'project' : (wanted === 'others' || wanted === 'references') ? 'others' : 'all'
+  const outside = outsideFor(base)
+  const sourceOf = (item) => ({ key: knowledge.key(item.path), prefix: `@${item.name}` })
   let sources
   let folder = ''
   if (given.startsWith('@')) {
-    const reference = outsideRoot(given)
-    sources = [{ key: knowledge.key(reference.root), prefix: `@${reference.name}` }]
-    folder = reference.relative
+    const [name, ...rest] = given.slice(1).split('/')
+    const found = outside.find((item) => item.name.toLowerCase() === name.toLowerCase())
+    if (!found) throw new Error(`Reference folder or project "@${name}" not found: the root listing shows the available ones`)
+    sources = [sourceOf(found)]
+    folder = rest.filter(Boolean).join('/')
   } else {
     if (given && given !== '.' && given !== '/') {
-      const resolved = resolveInProject(path.join(projectPath, given))
-      folder = path.relative(projectPath, resolved).split(path.sep).join('/')
+      if (!base) throw new Error('A path of the project needs a project: use "@name/…" or leave the path out')
+      if (projectPath && samePath(base, projectPath)) folder = path.relative(projectPath, resolveInProject(path.join(projectPath, given))).split(path.sep).join('/')
+      else {
+        const clean = path.posix.normalize(given).replace(/^\/+/, '')
+        if (clean.startsWith('..')) throw new Error('The path is outside the project')
+        folder = clean === '.' ? '' : clean
+      }
     }
+    const projectSource = base ? { key: knowledge.key(base), prefix: '' } : null
     // Un percorso del progetto restringe la ricerca al progetto.
-    sources = folder ? [projectSource] : [...(scope === 'others' ? [] : [projectSource]), ...(scope === 'project' ? [] : referenceSources())]
+    sources = folder ? [projectSource] : [...(scope === 'others' || !projectSource ? [] : [projectSource]), ...(scope === 'project' ? [] : outside.map(sourceOf))]
   }
   if (!sources.length) throw new Error('There are no other projects or reference folders to search: use scope "project" or leave it out')
   const [found, ...stats] = await Promise.all([
-    knowledge.search(sources.map((source) => source.key), query, { folder, limit: Number(args.maxResults) || 10, semantic: semanticTargets().length > 0 }),
+    knowledge.search(sources.map((source) => source.key), query, { folder, limit: Number(args.maxResults) || 10, semantic: semanticAvailable() }),
     ...sources.map((source) => knowledge.stats(source.key)),
   ])
   const prefixes = new Map(sources.map((source) => [source.key, source.prefix]))
@@ -1961,7 +2061,7 @@ ipcMain.handle('workspace:watch', () => {
   }
 })
 app.on('will-quit', stopWorkspaceWatch)
-app.on('will-quit', () => { knowledge.close().catch(() => {}) })
+app.on('will-quit', () => { knowledge.close().catch(() => {}); gpuContext.close().catch(() => {}) })
 
 // Ponte per il server MCP (vedi mcp-bridge.cjs): gli agenti esterni modificano i documenti aperti nell'editor, con le modifiche "da rivedere".
 // L'utente lo spegne dalle impostazioni (Agenti (MCP)): preferenza openwriter.mcpEdit = "off".
@@ -1971,7 +2071,7 @@ const mcpBridge = createMcpBridge({
   getProjectPath: () => projectPath,
   isEnabled: () => loadPreferences()['openwriter.mcpEdit'] !== 'off',
   // Con l'app aperta la ricerca per conoscenza di un agente esterno passa da qui: stessa ricerca dell'assistente, quindi anche per significato (se acceso).
-  localTools: { search_knowledge: (args) => searchKnowledgeTool(args, 'read_document') },
+  localTools: { search_knowledge: (args, context) => searchKnowledgeTool(args, 'read_document', { project: context?.project }) },
 })
 ipcMain.on('mcp:response', (_event, id, payload) => mcpBridge.answer(id, payload))
 

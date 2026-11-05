@@ -29,7 +29,7 @@ test('ricerca per significato con il modello vero: domande senza parole in comun
   const service = createKnowledgeService({ file: path.join(directory, 'k.db'), hiddenDirectories: [], createWorker: (workerData) => new Worker(path.join(__dirname, '../electron/knowledge-worker.cjs'), { workerData }) })
   try {
     await service.sync(project)
-    await service.semanticConfigure({ directory: pack, projects: [project], model: 'test' })
+    await service.semanticConfigure({ device: 'cpu', directory: pack, projects: [project], model: 'test' })
     for (let attempt = 0; attempt < 200; attempt += 1) {
       const status = await service.semanticStatus([project])
       assert.equal(status.error, null)
@@ -51,7 +51,7 @@ test('ricerca per significato con il modello vero: domande senza parole in comun
     // Senza `semantic` la stessa domanda resta per parole.
     assert.notEqual((await service.search(project, cases[0][0], { limit: 3 })).mode, 'hybrid')
     // Tolto il pacchetto, la ricerca per parole continua e i vettori spariscono.
-    await service.semanticConfigure({ directory: null, purge: true })
+    await service.semanticConfigure({ device: null, purge: ['test'] })
     assert.equal((await service.semanticStatus([project])).embedded, 0)
     assert.equal((await service.search(project, 'cacciavite', { semantic: true })).results[0].path, 'mobile.md')
   } finally {
@@ -73,7 +73,7 @@ test('mentre i vettori si calcolano, stato e ricerca per parole rispondono subit
   const service = createKnowledgeService({ file: path.join(directory, 'k.db'), hiddenDirectories: [], createWorker: (workerData) => new Worker(path.join(__dirname, '../electron/knowledge-worker.cjs'), { workerData }) })
   try {
     await service.sync(project)
-    await service.semanticConfigure({ directory: pack, projects: [project], model: 'test' })
+    await service.semanticConfigure({ device: 'cpu', directory: pack, projects: [project], model: 'test' })
     let slowest = 0
     let sawRunning = false
     for (let attempt = 0; attempt < 400; attempt += 1) {

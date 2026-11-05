@@ -7,7 +7,9 @@ const path = require('node:path')
 // Su Windows i percorsi non distinguono maiuscole e minuscole: la stessa cartella deve dare sempre la stessa chiave.
 const projectKey = (project) => (process.platform === 'win32' ? path.resolve(project).toLowerCase() : path.resolve(project))
 
-function createKnowledgeService({ file, hiddenDirectories = [], createWorker, debounceMs = 800 }) {
+// `gpuEmbed(texts, kind)` / `gpuRelease()`: il dispositivo GPU sta nel processo principale (WebGPU esiste solo in Chromium, vedi gpu-context.cjs) e il worker lo
+// raggiunge per messaggi. `onSemanticError({ device, model, error })`: il worker riferisce un guasto del calcolo dei vettori (chi gestisce può cambiare dispositivo).
+function createKnowledgeService({ file, hiddenDirectories = [], createWorker, debounceMs = 800, gpuEmbed = null, gpuRelease = null, onSemanticError = null }) {
   let worker = null
   let failure = null
   let nextId = 1
@@ -27,7 +29,10 @@ function createKnowledgeService({ file, hiddenDirectories = [], createWorker, de
     if (worker || failure) return worker
     try {
       worker = createWorker({ file, hiddenDirectories: [...hiddenDirectories] })
-      worker.on('message', ({ id, result, error }) => {
+      worker.on('message', (message) => {
+        if (message.event === 'semantic-error') { try { onSemanticError?.(message) } catch { /* chi ascolta non deve fermare l'indice */ } return }
+        if (message.call !== undefined) { answerGpu(message); return }
+        const { id, result, error } = message
         const entry = pending.get(id)
         if (!entry) return
         pending.delete(id)
@@ -38,6 +43,18 @@ function createKnowledgeService({ file, hiddenDirectories = [], createWorker, de
       worker.unref?.()
     } catch (error) { fail(error) }
     return worker
+  }
+
+  // Una richiesta del worker per la GPU: si esegue qui e si risponde con { call, result | error }.
+  async function answerGpu({ call, op, texts, kind }) {
+    if (op === 'gpu-release') { try { await gpuRelease?.() } catch { /* già libera */ } return }
+    try {
+      if (!gpuEmbed) throw new Error('The GPU is not available')
+      const vectors = await gpuEmbed(texts, kind)
+      worker?.postMessage({ call, result: vectors }, vectors.map((vector) => vector.buffer))
+    } catch (error) {
+      worker?.postMessage({ call, error: String(error?.message || error) })
+    }
   }
 
   function request(op, data = {}) {
@@ -86,8 +103,9 @@ function createKnowledgeService({ file, hiddenDirectories = [], createWorker, de
     // `project`: un progetto o un elenco (il progetto e le cartelle di riferimento): ogni risultato porta `project`, la chiave di quello da cui viene.
     search: (project, query, options) => request('search', { project: Array.isArray(project) ? project.map(projectKey) : projectKey(project), query, options }),
     stats: (project) => request('stats', { project: projectKey(project) }),
-    // Ricerca per significato: `directory` è il pacchetto pronto (null = non disponibile), `projects` i progetti (e riferimenti) da vettorizzare, `model` l'id del modello.
-    semanticConfigure: ({ directory = null, projects = [], model = '', purge = false }) => request('semantic', { directory, projects: projects.map(projectKey), model, purge }),
+    // Ricerca per significato: `device` ('cpu', 'gpu' o null = spenta), `model` l'id dei vettori, `directory` il pacchetto CPU, `projects` i progetti (e riferimenti)
+    // da vettorizzare, `purge` i modelli di cui buttare i vettori.
+    semanticConfigure: ({ device = null, model = '', directory = null, projects = [], purge = [] }) => request('semantic', { device, model, directory, projects: projects.map(projectKey), purge }),
     semanticStatus: (projects) => request('semanticStatus', { projects: projects.map(projectKey) }),
     rebuild: (project) => request('rebuild', { project: projectKey(project) }),
     clear: (project) => request('clear', { project: projectKey(project) }),
