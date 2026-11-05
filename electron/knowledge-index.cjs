@@ -9,7 +9,7 @@ const fs = require('node:fs')
  * percorso delle intestazioni e le righe del file, così chi cerca può citarlo e leggerlo con `read_file`. I percorsi dei file sono relativi alla
  * radice del progetto, con `/`.
  */
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 const MAX_CHUNK_WORDS = 250
 const MAX_QUERY_TERMS = 12
 const DEFAULT_LIMIT = 10
@@ -21,6 +21,11 @@ const RRF_K = 60 // costante della fusione per rango (Reciprocal Rank Fusion): q
 const VECTOR_CANDIDATES = 4 // quanti candidati per risultato chiede la ricerca per significato (poi si fonde e si scarta il resto)
 
 const wordCount = (text) => (text.match(/\S+/g) || []).length
+
+// Immagini incorporate (`data:image/png;base64,…`, spesso centinaia di migliaia di caratteri su una riga, tipiche delle definizioni `[image1]: <data:…>` dei
+// documenti esportati): non sono testo, non si cercano e fanno solo massa. Si sostituiscono con `…`, le righe restano le stesse.
+const DATA_URI = /(data:[A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+;base64,)[A-Za-z0-9+\/=]{64,}/g
+const stripEmbeddedData = (line) => (line.length > 200 ? line.replace(DATA_URI, '$1…') : line)
 
 // Il testo che si trasforma in vettore per un frammento (il percorso delle intestazioni aiuta a capirne l'argomento). La sua impronta è la chiave
 // del vettore: un frammento che non cambia tra due indicizzazioni non si ricalcola.
@@ -79,7 +84,8 @@ function chunkMarkdown(source, { maxWords = MAX_CHUNK_WORDS } = {}) {
     block = []
   }
 
-  lines.forEach((raw, index) => {
+  lines.forEach((original, index) => {
+    const raw = stripEmbeddedData(original)
     const line = index + 1
     const fenceMark = /^\s{0,3}(`{3,}|~{3,})/.exec(raw)
     if (fenceMark) {
@@ -155,8 +161,9 @@ function createSchema(db) {
     );
     create index if not exists chunks_file on chunks (file_id);
     create index if not exists chunks_hash on chunks (hash);
-    -- Vettori (ricerca per significato): derivati come tutto il resto. Una riga per testo distinto; vuota finché non si attiva la ricerca semantica.
-    create table if not exists embeddings (hash text primary key, vector blob not null);
+    -- Vettori (ricerca per significato): derivati come tutto il resto. Una riga per modello e per testo distinto: due modelli (CPU e GPU) convivono, e passare
+    -- dall'uno all'altro calcola solo ciò che manca. Vuota finché non si attiva la ricerca semantica.
+    create table if not exists embeddings (model text not null, hash text not null, vector blob not null, primary key (model, hash));
     create virtual table if not exists chunks_fts using fts5(
       text, heading,
       content='chunks', content_rowid='id',
@@ -171,10 +178,21 @@ function createSchema(db) {
   `)
 }
 
+// Versione 2: `embeddings (hash, vector)` e il modello in `meta`. Si rinomina la tabella vecchia; createSchema crea la nuova; finishMigrationFrom2 copia.
+function migrateFrom2(db) {
+  try { db.exec('alter table embeddings rename to embeddings_v2'); return true } catch { return false }
+}
+
+function finishMigrationFrom2(db) {
+  const model = db.prepare("select value from meta where key = 'embedding_model'").get()?.value || 'multilingual-e5-small-q8'
+  db.prepare('insert or ignore into embeddings(model, hash, vector) select ?, hash, vector from embeddings_v2').run(model)
+  db.exec("drop table embeddings_v2; delete from meta where key = 'embedding_model'")
+}
+
 function dropAll(db) {
   db.exec(`
     drop trigger if exists chunks_ai; drop trigger if exists chunks_ad;
-    drop table if exists chunks_fts; drop table if exists chunks; drop table if exists embeddings; drop table if exists files; drop table if exists meta;
+    drop table if exists chunks_fts; drop table if exists chunks; drop table if exists embeddings; drop table if exists embeddings_v2; drop table if exists files; drop table if exists meta;
   `)
 }
 
@@ -203,8 +221,11 @@ function openIndex(file, readOnly = false) {
       configure(db, file)
       let version = null
       try { version = db.prepare("select value from meta where key = 'schema'").get()?.value } catch { /* tabella assente: database nuovo */ }
-      if (version !== null && version !== String(SCHEMA_VERSION)) dropAll(db)
+      // Dalla versione 2 non si butta nulla: i vettori (costano minuti) passano sotto l'identificativo del modello con cui erano stati calcolati.
+      const migrated = version === '2' ? migrateFrom2(db) : false
+      if (version !== null && version !== String(SCHEMA_VERSION) && !migrated) dropAll(db)
       createSchema(db)
+      if (migrated) finishMigrationFrom2(db)
       db.prepare("insert or replace into meta(key, value) values ('schema', ?)").run(String(SCHEMA_VERSION))
       db.exec('pragma quick_check')
       return db
@@ -257,13 +278,13 @@ function createKnowledgeIndex({ file, readOnly = false }) {
 
   // I frammenti più vicini al vettore della domanda (prodotto scalare: i vettori sono normalizzati), dal più vicino. Il confronto è esaustivo, come
   // in qualsiasi indice vettoriale a questa scala: per migliaia di frammenti costa pochi millisecondi.
-  function vectorCandidates(projects, queryVector, scope, count) {
+  function vectorCandidates(projects, queryVector, scope, count, model) {
     const filter = scope && projects.length === 1 ? "and (f.path = ? or f.path like ? escape '\\')" : ''
-    const params = [...projects, ...(filter ? [scope, `${escapeLike(scope)}/%`] : [])]
+    const params = [model, ...projects, ...(filter ? [scope, `${escapeLike(scope)}/%`] : [])]
     const rows = db.prepare(`
       select c.id as id, e.vector as vector
       from embeddings e join chunks c on c.hash = e.hash join files f on f.id = c.file_id
-      where f.project in (${projects.map(() => '?').join(',')}) ${filter}
+      where e.model = ? and f.project in (${projects.map(() => '?').join(',')}) ${filter}
     `).iterate(...params)
     const dimensions = queryVector.length
     const scratch = new Float32Array(dimensions)
@@ -367,7 +388,7 @@ function createKnowledgeIndex({ file, readOnly = false }) {
      * semantic-embedder.cjs) la ricerca per parole si fonde con quella per significato: stessa lista, ordinata per rango in entrambe.
      * → { mode: 'and' | 'or' | 'hybrid', results: [{ id, project, path, heading, startLine, endLine, snippet, score }] }
      */
-    search(projectOrProjects, query, { limit = DEFAULT_LIMIT, folder = '', maxPerFile = DEFAULT_PER_FILE, queryVector = null } = {}) {
+    search(projectOrProjects, query, { limit = DEFAULT_LIMIT, folder = '', maxPerFile = DEFAULT_PER_FILE, queryVector = null, model = '' } = {}) {
       const size = Math.min(MAX_LIMIT, Math.max(1, Math.round(Number(limit)) || DEFAULT_LIMIT))
       const perFile = Math.max(1, Math.round(Number(maxPerFile)) || DEFAULT_PER_FILE)
       const scope = String(folder || '').replace(/^\/+|\/+$/g, '')
@@ -409,8 +430,8 @@ function createKnowledgeIndex({ file, readOnly = false }) {
       let mode = 'and'
       let rows = lexical('and')
       if (!rows.length) { mode = 'or'; rows = lexical('or') }
-      if (!queryVector) return { mode, results: finalize(rows) }
-      const nearest = vectorCandidates(projects, queryVector, scope, size * perFile * VECTOR_CANDIDATES)
+      if (!queryVector || !model) return { mode, results: finalize(rows) }
+      const nearest = vectorCandidates(projects, queryVector, scope, size * perFile * VECTOR_CANDIDATES, model)
       if (!nearest.length) return { mode, results: finalize(rows) }
       // Con il significato a disposizione, "almeno una parola" non serve più: farebbe salire per una parola comune (di, per, il) frammenti che non c'entrano.
       return { mode: 'hybrid', results: finalize(fuseRanked([mode === 'and' ? rows : [], nearest])) }
@@ -418,55 +439,47 @@ function createKnowledgeIndex({ file, readOnly = false }) {
 
     // ----- Ricerca per significato: i vettori sono una cache dei frammenti, mai l'unica copia di qualcosa. -----
 
-    // Cambiato il modello, i vettori vecchi non sono confrontabili con i nuovi: si buttano.
-    useEmbeddingModel(model) {
-      const current = db.prepare("select value from meta where key = 'embedding_model'").get()?.value
-      if (current === model) return false
-      transaction(() => {
-        db.exec('delete from embeddings')
-        db.prepare("insert or replace into meta(key, value) values ('embedding_model', ?)").run(model)
-      })
-      return true
-    },
-
-    // Testi (distinti) dei frammenti dei progetti che non hanno ancora un vettore.
-    pendingEmbeddings(projects, limit = 16) {
+    // Testi (distinti) dei frammenti dei progetti che non hanno ancora il vettore di questo modello.
+    pendingEmbeddings(projects, model, limit = 16) {
       const list = [...new Set(projects)]
-      if (!list.length) return []
+      if (!list.length || !model) return []
       const rows = db.prepare(`
         select c.hash as hash, min(c.heading) as heading, min(c.text) as text
         from chunks c join files f on f.id = c.file_id
-        left join embeddings e on e.hash = c.hash
+        left join embeddings e on e.hash = c.hash and e.model = ?
         where e.hash is null and f.project in (${list.map(() => '?').join(',')})
         group by c.hash limit ?
-      `).all(...list, Math.max(1, Math.round(limit)))
+      `).all(model, ...list, Math.max(1, Math.round(limit)))
       return rows.map((row) => ({ hash: row.hash, text: embeddingText(row.heading, row.text) }))
     },
 
     // items: [{ hash, vector: Float32Array }]
-    storeEmbeddings(items) {
-      if (!items.length) return 0
+    storeEmbeddings(model, items) {
+      if (!items.length || !model) return 0
       return transaction(() => {
-        const insert = db.prepare('insert or replace into embeddings(hash, vector) values (?, ?)')
-        for (const item of items) insert.run(item.hash, new Uint8Array(item.vector.buffer, item.vector.byteOffset, item.vector.byteLength))
+        const insert = db.prepare('insert or replace into embeddings(model, hash, vector) values (?, ?, ?)')
+        for (const item of items) insert.run(model, item.hash, new Uint8Array(item.vector.buffer, item.vector.byteOffset, item.vector.byteLength))
         return items.length
       })
     },
 
-    // Toglie i vettori di frammenti che non esistono più (modificati o cancellati).
+    // Toglie i vettori di frammenti che non esistono più (modificati o cancellati), di qualsiasi modello.
     pruneEmbeddings() {
       return db.prepare('delete from embeddings where hash not in (select hash from chunks)').run().changes
     },
 
-    clearEmbeddings() { return db.prepare('delete from embeddings').run().changes },
+    // Senza modello butta tutti i vettori; con un modello solo i suoi (si toglie il modello, non gli altri).
+    clearEmbeddings(model = null) {
+      return model ? db.prepare('delete from embeddings where model = ?').run(model).changes : db.prepare('delete from embeddings').run().changes
+    },
 
-    // Quanti testi distinti hanno i progetti e per quanti c'è già il vettore.
-    embeddingStats(projects) {
+    // Quanti testi distinti hanno i progetti e per quanti c'è già il vettore di questo modello.
+    embeddingStats(projects, model) {
       const list = [...new Set(projects)]
-      if (!list.length) return { total: 0, embedded: 0 }
+      if (!list.length || !model) return { total: 0, embedded: 0 }
       const marks = list.map(() => '?').join(',')
       const total = db.prepare(`select count(distinct c.hash) as n from chunks c join files f on f.id = c.file_id where f.project in (${marks})`).get(...list)
-      const embedded = db.prepare(`select count(distinct c.hash) as n from chunks c join files f on f.id = c.file_id join embeddings e on e.hash = c.hash where f.project in (${marks})`).get(...list)
+      const embedded = db.prepare(`select count(distinct c.hash) as n from chunks c join files f on f.id = c.file_id join embeddings e on e.hash = c.hash and e.model = ? where f.project in (${marks})`).get(model, ...list)
       return { total: Number(total.n), embedded: Number(embedded.n) }
     },
 

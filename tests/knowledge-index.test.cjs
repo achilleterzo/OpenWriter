@@ -240,11 +240,12 @@ test('search su più progetti: ogni risultato dice da dove viene; stesso percors
 
 // ----- Ricerca per significato: vettori finti a 3 dimensioni (gli embedding veri si provano in tests/semantic-search.test.cjs) -----
 const { fuseRanked, embeddingText } = require('../electron/knowledge-index.cjs')
+const M = 'cpu-q8'
 const unit = (...values) => { const norm = Math.hypot(...values); return new Float32Array(values.map((value) => value / norm)) }
-// Dà a ogni frammento in sospeso il vettore scelto da `pick(testo)`.
-function embedAll(index, projects, pick) {
-  const pending = index.pendingEmbeddings(projects, 100)
-  index.storeEmbeddings(pending.map((item) => ({ hash: item.hash, vector: pick(item.text) })))
+// Dà a ogni frammento in sospeso (per il modello) il vettore scelto da `pick(testo)`.
+function embedAll(index, projects, pick, model = M) {
+  const pending = index.pendingEmbeddings(projects, model, 100)
+  index.storeEmbeddings(model, pending.map((item) => ({ hash: item.hash, vector: pick(item.text) })))
   return pending.length
 }
 
@@ -262,23 +263,23 @@ test('vettori: si calcolano solo per i frammenti nuovi o cambiati e si buttano q
   const index = memory()
   index.indexFile(P, 'a.md', '# A\n\nIl faro segnala la costa.\n')
   index.indexFile(P, 'b.md', '# B\n\nLa ricetta del pane.\n')
-  assert.deepEqual(index.embeddingStats([P]), { total: 2, embedded: 0 })
+  assert.deepEqual(index.embeddingStats([P], M), { total: 2, embedded: 0 })
   assert.equal(embedAll(index, [P], () => unit(1, 0, 0)), 2)
-  assert.deepEqual(index.embeddingStats([P]), { total: 2, embedded: 2 })
-  assert.equal(index.pendingEmbeddings([P], 10).length, 0)
+  assert.deepEqual(index.embeddingStats([P], M), { total: 2, embedded: 2 })
+  assert.equal(index.pendingEmbeddings([P], M, 10).length, 0)
   // Un file riscritto uguale non ricalcola nulla; uno cambiato ricalcola solo il suo frammento.
   index.indexFile(P, 'a.md', '# A\n\nIl faro segnala la costa.\n', { mtimeMs: 5 })
-  assert.equal(index.pendingEmbeddings([P], 10).length, 0)
+  assert.equal(index.pendingEmbeddings([P], M, 10).length, 0)
   index.indexFile(P, 'a.md', '# A\n\nIl faro segnala gli scogli.\n')
-  assert.equal(index.pendingEmbeddings([P], 10).length, 1)
+  assert.equal(index.pendingEmbeddings([P], M, 10).length, 1)
   embedAll(index, [P], () => unit(0, 1, 0))
   assert.equal(index.pruneEmbeddings(), 1) // il vettore del vecchio testo di a.md
-  assert.deepEqual(index.embeddingStats([P]), { total: 2, embedded: 2 })
+  assert.deepEqual(index.embeddingStats([P], M), { total: 2, embedded: 2 })
   // Solo i progetti chiesti: gli altri non si calcolano.
   index.indexFile('altro', 'x.md', 'Un testo di un altro progetto.')
-  assert.equal(index.pendingEmbeddings([P], 10).length, 0)
-  assert.equal(index.pendingEmbeddings(['altro'], 10).length, 1)
-  assert.equal(index.pendingEmbeddings([], 10).length, 0)
+  assert.equal(index.pendingEmbeddings([P], M, 10).length, 0)
+  assert.equal(index.pendingEmbeddings(['altro'], M, 10).length, 1)
+  assert.equal(index.pendingEmbeddings([], M, 10).length, 0)
   assert.equal(embeddingText('A › B', 'testo'), 'A › B\ntesto')
 })
 
@@ -289,38 +290,99 @@ test('ricerca ibrida: il significato trova ciò che le parole non trovano; senza
   embedAll(index, [P], (text) => (/cacciavite/.test(text) ? unit(1, 0.2, 0) : unit(0, 0.2, 1)))
   const domanda = unit(1, 0.1, 0) // "attrezzi per assemblare": nessuna parola in comune
   assert.equal(index.search(P, 'attrezzi per assemblare').results.length, 0)
-  const ibrida = index.search(P, 'attrezzi per assemblare', { queryVector: domanda })
+  const ibrida = index.search(P, 'attrezzi per assemblare', { queryVector: domanda, model: M })
   assert.equal(ibrida.mode, 'hybrid')
   assert.equal(ibrida.results[0].path, 'mobile.md')
   assert.match(ibrida.results[0].snippet, /cacciavite/)
   assert.equal(ibrida.results[0].via, 'meaning')
   // Una parola presente e il significato concordi: il frammento è 'both' e conserva l'evidenziazione.
-  const entrambi = index.search(P, 'cacciavite', { queryVector: domanda })
+  const entrambi = index.search(P, 'cacciavite', { queryVector: domanda, model: M })
   assert.equal(entrambi.results[0].path, 'mobile.md')
   assert.equal(entrambi.results[0].via, 'both')
   assert.match(entrambi.results[0].snippet, /«cacciavite»/)
   // In ibrida "almeno una parola" non entra: una parola comune non deve far salire frammenti a caso.
   index.indexFile(P, 'rumore.md', 'Il treno di sera.\n')
   embedAll(index, [P], () => unit(0, 0, 1))
-  assert.ok(!index.search(P, 'attrezzi per assemblare', { queryVector: domanda }).results.slice(0, 1).some((row) => row.path === 'rumore.md'))
+  assert.ok(!index.search(P, 'attrezzi per assemblare', { queryVector: domanda, model: M }).results.slice(0, 1).some((row) => row.path === 'rumore.md'))
   // Cartella, limite e progetti si rispettano anche con i vettori.
-  assert.deepEqual(index.search(P, 'attrezzi', { queryVector: domanda, folder: 'pane.md' }).results.map((row) => row.path), ['pane.md'])
-  assert.equal(index.search(P, 'attrezzi', { queryVector: domanda, limit: 1 }).results.length, 1)
-  assert.deepEqual(index.search('altro', 'attrezzi', { queryVector: domanda }).results, [])
+  assert.deepEqual(index.search(P, 'attrezzi', { queryVector: domanda, model: M, folder: 'pane.md' }).results.map((row) => row.path), ['pane.md'])
+  assert.equal(index.search(P, 'attrezzi', { queryVector: domanda, model: M, limit: 1 }).results.length, 1)
+  assert.deepEqual(index.search('altro', 'attrezzi', { queryVector: domanda, model: M }).results, [])
   // Vettori di un'altra dimensione (modello diverso) vengono ignorati, non fanno cadere la ricerca.
-  assert.equal(index.search(P, 'attrezzi', { queryVector: unit(1, 0) }).mode, 'or')
+  assert.equal(index.search(P, 'attrezzi', { queryVector: unit(1, 0), model: M }).mode, 'or')
 })
 
-test('cambiare modello butta i vettori; senza vettori la ricerca ibrida ricade sulle parole', () => {
+test('due modelli convivono: ognuno ha i suoi vettori, passare dall\'uno all\'altro calcola solo ciò che manca', () => {
   const index = memory()
-  index.indexFile(P, 'a.md', 'Il faro.\n')
-  assert.equal(index.useEmbeddingModel('m1'), true)
-  assert.equal(index.useEmbeddingModel('m1'), false)
-  embedAll(index, [P], () => unit(1, 0, 0))
-  assert.equal(index.embeddingStats([P]).embedded, 1)
-  assert.equal(index.useEmbeddingModel('m2'), true)
-  assert.equal(index.embeddingStats([P]).embedded, 0)
-  assert.equal(index.search(P, 'faro', { queryVector: unit(1, 0, 0) }).mode, 'and')
-  embedAll(index, [P], () => unit(1, 0, 0))
-  assert.equal(index.clearEmbeddings(), 1)
+  index.indexFile(P, 'a.md', '# A\n\nIl faro.\n')
+  index.indexFile(P, 'b.md', '# B\n\nIl mare.\n')
+  embedAll(index, [P], () => unit(1, 0, 0), 'cpu-q8')
+  assert.deepEqual(index.embeddingStats([P], 'cpu-q8'), { total: 2, embedded: 2 })
+  // La GPU non ha ancora nulla: tutto da calcolare, ma i vettori della CPU restano.
+  assert.deepEqual(index.embeddingStats([P], 'gpu-fp16'), { total: 2, embedded: 0 })
+  assert.equal(index.pendingEmbeddings([P], 'gpu-fp16', 10).length, 2)
+  embedAll(index, [P], () => unit(0, 1, 0), 'gpu-fp16')
+  assert.deepEqual(index.embeddingStats([P], 'gpu-fp16'), { total: 2, embedded: 2 })
+  // Un frammento nuovo manca a entrambi; chi lo calcola non tocca l'altro.
+  index.indexFile(P, 'c.md', '# C\n\nLa nebbia.\n')
+  assert.equal(index.pendingEmbeddings([P], 'cpu-q8', 10).length, 1)
+  assert.equal(index.pendingEmbeddings([P], 'gpu-fp16', 10).length, 1)
+  embedAll(index, [P], () => unit(1, 0, 0), 'cpu-q8')
+  assert.equal(index.pendingEmbeddings([P], 'cpu-q8', 10).length, 0)
+  assert.equal(index.pendingEmbeddings([P], 'gpu-fp16', 10).length, 1)
+  // La ricerca usa solo i vettori del modello chiesto.
+  const found = index.search(P, 'zzz', { queryVector: unit(0, 1, 0), model: 'gpu-fp16' })
+  assert.equal(found.mode, 'hybrid')
+  assert.deepEqual(found.results.map((row) => row.path).sort(), ['a.md', 'b.md'])
+  assert.equal(index.search(P, 'zzz', { queryVector: unit(0, 1, 0), model: 'altro-modello' }).mode, 'or')
+  // Togliere un modello butta solo i suoi vettori.
+  assert.equal(index.clearEmbeddings('gpu-fp16'), 2)
+  assert.deepEqual(index.embeddingStats([P], 'cpu-q8'), { total: 3, embedded: 3 })
+  assert.equal(index.clearEmbeddings(), 3)
+})
+
+test('migrazione dalla versione 2: i vettori già calcolati restano, sotto il modello con cui erano stati fatti', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ow-migrate-'))
+  const file = path.join(directory, 'k.db')
+  try {
+    // Un database come lo scriveva la versione 2: `embeddings (hash, vector)` e il modello in `meta`.
+    const first = createKnowledgeIndex({ file })
+    first.indexFile(P, 'a.md', '# A\n\nIl faro segnala la costa.\n')
+    const [pending] = first.pendingEmbeddings([P], 'x', 5)
+    first.close()
+    const { DatabaseSync } = require('node:sqlite')
+    const old = new DatabaseSync(file)
+    old.exec('drop table embeddings; create table embeddings (hash text primary key, vector blob not null)')
+    old.prepare('insert into embeddings(hash, vector) values (?, ?)').run(pending.hash, new Uint8Array(unit(1, 0, 0).buffer))
+    old.prepare("insert or replace into meta(key, value) values ('embedding_model', 'vecchio-modello')").run()
+    old.prepare("update meta set value = '2' where key = 'schema'").run()
+    old.close()
+    const index = createKnowledgeIndex({ file })
+    assert.deepEqual(index.embeddingStats([P], 'vecchio-modello'), { total: 1, embedded: 1 })
+    assert.equal(index.stats(P).files, 1, 'il testo indicizzato non si è perso')
+    assert.equal(index.search(P, 'zzz', { queryVector: unit(1, 0, 0), model: 'vecchio-modello' }).mode, 'hybrid')
+    index.close()
+    // Riaperto, nessuna nuova migrazione né perdite.
+    const again = createKnowledgeIndex({ file })
+    assert.deepEqual(again.embeddingStats([P], 'vecchio-modello'), { total: 1, embedded: 1 })
+    again.close()
+  } finally { fs.rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('chunkMarkdown: le immagini incorporate (data:…;base64) non entrano nei frammenti, le righe restano quelle', () => {
+  const blob = 'iVBORw0KGgoAAAANSUhEUgAA'.repeat(5000)
+  const source = `# Immagini\n\nUn testo breve prima.\n\n[image1]: <data:image/png;base64,${blob}>\n[image2]: <data:image/jpeg;base64,${blob}>\n\nE un testo dopo.\n`
+  const chunks = chunkMarkdown(source)
+  const total = chunks.reduce((sum, chunk) => sum + chunk.text.length, 0)
+  assert.ok(total < 500, `i frammenti pesano ${total} caratteri`)
+  assert.ok(chunks.some((chunk) => /data:image\/png;base64,…/.test(chunk.text)))
+  // Le righe sono quelle del file originale (il testo dopo sta alla riga 8).
+  assert.equal(chunks[chunks.length - 1].endLine, 8)
+  // Un indirizzo data: corto (o un testo che gli somiglia) non si tocca.
+  assert.match(chunkMarkdown('Vedi data:text/plain;base64,QUJD per un esempio.')[0].text, /QUJD/)
+  // Con l'indice, la ricerca non trova più il contenuto binario.
+  const index = memory()
+  index.indexFile(P, 'img.md', source)
+  assert.equal(index.search(P, 'iVBORw0KGgoAAAANSUhEUgAA').results.length, 0)
+  assert.equal(index.search(P, 'testo dopo').results.length, 1)
 })
