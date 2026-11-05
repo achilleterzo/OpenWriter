@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Bot, FolderCog, Info, Palette, Plug, Settings2, SlidersHorizontal, Wand2, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Cpu, FolderCog, Info, Palette, Plug, Settings2, SlidersHorizontal, Wand2, Zap } from 'lucide-react'
 import AboutSettings from './AboutSettings.jsx'
 import AiProviderSettings from './AiProviderSettings.jsx'
 import AppearanceSettings from './AppearanceSettings.jsx'
 import GeneralSettings from './GeneralSettings.jsx'
+import LocalModelsSettings from './LocalModelsSettings.jsx'
 import McpSettings from './McpSettings.jsx'
 import QuickActionsSettings from './QuickActionsSettings.jsx'
 import ProjectSettings from './ProjectSettings.jsx'
@@ -16,13 +17,14 @@ const sections = [
   { id: 'project', label: t('Project'), icon: FolderCog },
   { id: 'appearance', label: t('Appearance'), icon: Palette },
   { id: 'ai', label: 'AI', icon: Bot },
+  { id: 'models', label: t('Local models'), icon: Cpu },
   { id: 'actions', label: t('Quick actions'), icon: Zap },
   { id: 'skills', label: t('Skills'), icon: Wand2 },
   { id: 'agents', label: t('Agents (MCP)'), icon: Plug },
   { id: 'about', label: t('About'), icon: Info },
 ]
 
-export default function SettingsScreen({ initialSection = 'general', project, onMoveProject, onChooseProject, onBack, onOpenFile, version, release, onCheckUpdate }) {
+export default function SettingsScreen({ initialSection = 'general', project, onMoveProject, onBack, onOpenFile, version, release, onCheckUpdate }) {
   const [section, setSection] = useState(initialSection)
   const current = sections.find((item) => item.id === section)
   const pressedOnBackdrop = useRef(false)
@@ -75,10 +77,11 @@ export default function SettingsScreen({ initialSection = 'general', project, on
           </nav>
 
           <div role="tabpanel" className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-6 sm:p-8">
-            {section === 'general' && <GeneralSettings project={project} onChooseProject={onChooseProject} />}
+            {section === 'general' && <GeneralSettings />}
             {section === 'project' && <ProjectSettings project={project} onEditContext={onOpenFile} onMove={onMoveProject} />}
             {section === 'appearance' && <AppearanceSettings />}
             {section === 'ai' && <AiProviderSettings />}
+            {section === 'models' && <LocalModelsSettings />}
             {section === 'actions' && <QuickActionsSettings project={project} />}
             {section === 'skills' && (
               <section className="grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
