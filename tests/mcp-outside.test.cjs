@@ -128,7 +128,7 @@ const { createMcpBridge } = require('../electron/mcp-bridge.cjs')
 async function withBridge(env, { open, search }, work) {
   const calls = []
   // Nessuna finestra e modifiche degli agenti spente: la ricerca è locale e di sola lettura, deve funzionare lo stesso.
-  const bridge = createMcpBridge({ directory: env.data, getWindow: () => null, getProjectPath: () => open, isEnabled: () => false, localTools: { search_knowledge: async (args) => { calls.push(args); return search(args) } } })
+  const bridge = createMcpBridge({ directory: env.data, getWindow: () => null, getProjectPath: () => open, isEnabled: () => false, localTools: { search_knowledge: async (args, context) => { calls.push({ ...args, project: context?.project }); return search(args, context) } } })
   await bridge.start()
   try { return await work(calls) } finally { bridge.stop() }
 }
@@ -146,17 +146,22 @@ test('MCP con l\'app aperta: la ricerca la fa l\'app (anche per significato), no
   } finally { server.stop(); fs.rmSync(env.root, { recursive: true, force: true }) }
 })
 
-test('MCP: se l\'app ha aperto un altro progetto, non c\'è o non conosce lo strumento si ripiega sull\'indice; un errore vero dell\'app si vede', async () => {
+test('MCP: la ricerca dell\'app non dipende dal progetto aperto; senza app si ripiega sull\'indice; un errore vero dell\'app si vede', async () => {
   const env = setup()
   const server = startServer(env)
   try {
     await server.ready
     // App senza ponte: indice letto direttamente.
     assert.match((await server.call('search_knowledge', { query: 'penale ritardo' })).text, /@B\/contratto\.md/)
-    // App aperta su un altro progetto: 409, si ripiega.
-    await withBridge(env, { open: env.b, search: () => 'NON DOVREBBE ARRIVARE' }, async (calls) => {
-      assert.match((await server.call('search_knowledge', { query: 'penale ritardo' })).text, /@B\/contratto\.md/)
-      assert.equal(calls.length, 0)
+    // App aperta su un altro progetto: risponde lo stesso, e sa da quale progetto cerca l'agente (A).
+    await withBridge(env, { open: env.b, search: () => 'DALL\'APP' }, async (calls) => {
+      assert.equal((await server.call('search_knowledge', { query: 'penale ritardo' })).text, 'DALL\'APP')
+      assert.equal(calls.length, 1)
+      assert.equal(path.resolve(calls[0].project), path.resolve(env.a))
+    })
+    // App senza nessun progetto aperto: risponde lo stesso.
+    await withBridge(env, { open: null, search: () => 'DALL\'APP SENZA PROGETTO' }, async () => {
+      assert.equal((await server.call('search_knowledge', { query: 'penale ritardo' })).text, 'DALL\'APP SENZA PROGETTO')
     })
     // Un errore dell'app (per esempio indice spento) non si maschera con un ripiego silenzioso.
     await withBridge(env, { open: env.a, search: () => { throw new Error('The search index is turned off for this project: use search_files') } }, async () => {

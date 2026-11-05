@@ -126,11 +126,13 @@ const linksStore = createLinksStore({ getProjectPath: projectPath })
 // vedi shared-knowledge.cjs). Si indicano come `@sigla/…` e si leggono soltanto: la ricerca e read_document li raggiungono, nient'altro.
 const referencesStore = createReferencesStore({ getProjectPath: projectPath })
 const projectsStore = createProjectsStore({ filePath: () => path.join(dataDirectory, 'projects.json') })
+const currentProject = () => { try { return projectPath() } catch { return null } }
 function outsideSources() {
   try {
+    const current = currentProject()
     return outsideFolders({
-      current: projectPath(),
-      references: referencesStore.list(),
+      current,
+      references: current ? referencesStore.list() : [],
       projects: projectsStore.list(),
       isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(),
     })
@@ -519,11 +521,12 @@ const TOOLS = [
       }
       const query = String(args.query ?? '').trim()
       if (!query) throw new Error('Missing parameter "query"')
-      const project = projectPath()
+      // Senza un progetto (l'agente non lavora dentro uno e l'app non ne ha aperto uno) la ricerca vale lo stesso, su tutti i progetti che condividono la loro conoscenza.
+      const project = currentProject()
       const given = String(args.path || '').trim()
       const asked = String(args.scope || '').toLowerCase()
       const scope = asked === 'project' ? 'project' : (asked === 'others' || asked === 'references') ? 'others' : 'all'
-      const projectSource = { key: projectKey(project), prefix: '' }
+      const projectSource = project ? { key: projectKey(project), prefix: '' } : null
       const otherSources = () => outsideSources().map((item) => ({ key: projectKey(item.path), name: item.name }))
       let sources
       let folder = ''
@@ -532,8 +535,8 @@ const TOOLS = [
         sources = [{ key: projectKey(outside.root), name: outside.name }]
         folder = outside.relative
       } else {
-        if (given && given !== '.') folder = path.relative(project, projectPathInside(given)).split(path.sep).join('/')
-        sources = folder ? [projectSource] : [...(scope === 'others' ? [] : [projectSource]), ...(scope === 'project' ? [] : otherSources())]
+        if (given && given !== '.') { if (!project) throw new Error('A path of the project needs a project: use "@name/…" or leave the path out'); folder = path.relative(project, projectPathInside(given)).split(path.sep).join('/') }
+        sources = folder ? [projectSource] : [...(scope === 'others' || !projectSource ? [] : [projectSource]), ...(scope === 'project' ? [] : otherSources())]
       }
       if (!sources.length) throw new Error('There are no reference folders or shared projects: use scope "project" or leave it out')
       const file = path.join(dataDirectory, 'knowledge.db')

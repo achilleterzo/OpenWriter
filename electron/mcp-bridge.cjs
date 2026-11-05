@@ -89,12 +89,14 @@ function createMcpBridge({ directory, getWindow, getProjectPath, isEnabled = () 
     if (!ALLOWED.has(message.tool)) { reply(response, 400, { ok: false, error: `Unknown tool: ${message.tool}` }); return }
     if (!LOCAL.has(message.tool) && !isEnabled()) { reply(response, 403, { ok: false, error: 'Editing by agents is turned off in OpenWriter (Settings > Agents (MCP))' }); return }
     const open = getProjectPath()
-    if (!open && !ANY_PROJECT.has(message.tool)) { reply(response, 409, { ok: false, error: 'No project is open in OpenWriter' }); return }
-    if (!ANY_PROJECT.has(message.tool) && !sameProject(message.project, open)) { reply(response, 409, { ok: false, error: `The project open in OpenWriter is "${open}", not the one this agent is working on: open the right project in OpenWriter first` }); return }
+    // Gli strumenti locali di sola lettura (la ricerca) non dipendono dal progetto aperto: ricevono quello da cui cerca l'agente e decidono da sé.
+    const wide = LOCAL.has(message.tool)
+    if (!wide && !open && !ANY_PROJECT.has(message.tool)) { reply(response, 409, { ok: false, error: 'No project is open in OpenWriter' }); return }
+    if (!wide && !ANY_PROJECT.has(message.tool) && !sameProject(message.project, open)) { reply(response, 409, { ok: false, error: `The project open in OpenWriter is "${open}", not the one this agent is working on: open the right project in OpenWriter first` }); return }
     try {
       const given = message.arguments && typeof message.arguments === 'object' ? message.arguments : {}
       if (LOCAL.has(message.tool) && !localTools[message.tool]) throw new Error(`Unknown tool: ${message.tool}`)
-      const text = LOCAL.has(message.tool) ? await localTools[message.tool](given) : await dispatch(message.tool, given)
+      const text = LOCAL.has(message.tool) ? await localTools[message.tool](given, { project: message.project || null }) : await dispatch(message.tool, given)
       reply(response, 200, { ok: true, text })
     } catch (error) {
       reply(response, 200, { ok: false, error: error.message })
