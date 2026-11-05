@@ -1,7 +1,7 @@
 const { parentPort, workerData } = require('node:worker_threads')
 const { createKnowledgeIndex } = require('./knowledge-index.cjs')
 const { syncTree, syncPaths } = require('./knowledge-sync.cjs')
-const { createEmbedder } = require('./semantic-embedder.cjs')
+const { createThreadedEmbedder } = require('./semantic-embedder.cjs')
 
 /**
  * Il thread che possiede l'indice di ricerca: la lettura dei file e l'indicizzazione non fermano mai l'interfaccia.
@@ -15,16 +15,15 @@ const index = createKnowledgeIndex({ file: workerData.file })
  * vettore si trasformano in vettori in background, un gruppo alla volta, e la ricerca fonde le parole con il significato. Qualsiasi guasto qui
  * (modello assente o rotto, memoria) si ferma a `semantic.error`: la ricerca per parole continua a funzionare.
  */
-const EMBED_BATCH = 16
-const semantic = { directory: null, projects: [], embedder: null, loading: null, running: false, again: false, error: null }
+const EMBED_BATCH = 8
+const semantic = { directory: null, projects: [], embedder: null, running: false, again: false, error: null }
 
 function ensureEmbedder() {
   if (semantic.embedder) return Promise.resolve(semantic.embedder)
   if (!semantic.directory) return Promise.reject(new Error('The semantic search pack is not installed'))
-  semantic.loading = semantic.loading || createEmbedder({ directory: semantic.directory })
-    .then((embedder) => { semantic.embedder = embedder; return embedder })
-    .finally(() => { semantic.loading = null })
-  return semantic.loading
+  // Il calcolo sta in un thread a parte: questo thread (ricerca, stato, aggiornamenti) non si ferma mentre il modello lavora.
+  try { semantic.embedder = createThreadedEmbedder({ directory: semantic.directory }) } catch (error) { return Promise.reject(error) }
+  return Promise.resolve(semantic.embedder)
 }
 
 async function dropEmbedder() {
@@ -88,7 +87,7 @@ const operations = {
     else if (directory) index.useEmbeddingModel(model)
     return true
   },
-  semanticStatus: ({ projects = [] }) => ({ ...index.embeddingStats(projects), running: semantic.running || Boolean(semantic.loading), error: semantic.error, active: Boolean(semantic.directory) }),
+  semanticStatus: ({ projects = [] }) => ({ ...index.embeddingStats(projects), running: semantic.running, error: semantic.error, active: Boolean(semantic.directory) }),
   close: async () => { await dropEmbedder().catch(() => {}); index.close(); return true },
 }
 

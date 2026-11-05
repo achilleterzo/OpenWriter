@@ -60,3 +60,35 @@ test('ricerca per significato con il modello vero: domande senza parole in comun
     fs.rmSync(directory, { recursive: true, force: true })
   }
 })
+
+// Regressione: il calcolo dei vettori non deve fermare l'indice. Il runtime WebAssembly lavora nel thread che lo chiama: se fosse quello
+// dell'indice, stato, ricerca e ricostruzione resterebbero senza risposta per tutta la durata (minuti, su un progetto vero).
+test('mentre i vettori si calcolano, stato e ricerca per parole rispondono subito', { skip, timeout: 180000 }, async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ow-semantic-busy-'))
+  const project = path.join(directory, 'progetto')
+  fs.mkdirSync(project)
+  const paragraph = (n) => Array.from({ length: 70 }, (_, i) => `parola${(n * 7 + i) % 97}`).join(' ')
+  for (let file = 0; file < 8; file += 1) fs.writeFileSync(path.join(project, `f${file}.md`), Array.from({ length: 12 }, (_, n) => `## Parte ${n}\n\n${paragraph(file * 12 + n)}\nfaro${file}\n`).join('\n'))
+  const keepAlive = setInterval(() => {}, 1000)
+  const service = createKnowledgeService({ file: path.join(directory, 'k.db'), hiddenDirectories: [], createWorker: (workerData) => new Worker(path.join(__dirname, '../electron/knowledge-worker.cjs'), { workerData }) })
+  try {
+    await service.sync(project)
+    await service.semanticConfigure({ directory: pack, projects: [project], model: 'test' })
+    let slowest = 0
+    let sawRunning = false
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      const started = performance.now()
+      const [status] = await Promise.all([service.semanticStatus([project]), service.stats(project), service.search(project, 'faro3')])
+      slowest = Math.max(slowest, performance.now() - started)
+      if (status.running) sawRunning = true
+      if (!status.running && status.embedded === status.total) break
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    assert.ok(sawRunning, 'il calcolo era in corso durante le richieste')
+    assert.ok(slowest < 1500, `una richiesta ha aspettato ${Math.round(slowest)} ms`)
+  } finally {
+    clearInterval(keepAlive)
+    await service.close()
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})

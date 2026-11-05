@@ -74,4 +74,44 @@ async function createEmbedder({ directory, threads = Math.max(1, Math.min(4, Mat
   }
 }
 
-module.exports = { createEmbedder, DIMENSIONS }
+/**
+ * Lo stesso embedder, ma in un thread suo (semantic-embedder-worker.cjs): chi lo usa (il thread dell'indice) non si blocca mai mentre il modello
+ * calcola. Stessa interfaccia di createEmbedder; se il thread cade, le richieste in corso falliscono e `embed` rifiuta da lì in poi.
+ */
+function createThreadedEmbedder({ directory }) {
+  const { Worker } = require('node:worker_threads')
+  const worker = new Worker(path.join(__dirname, 'semantic-embedder-worker.cjs'), { workerData: { directory } })
+  const pending = new Map()
+  let nextId = 1
+  let failure = null
+  const fail = (error) => {
+    failure = failure || new Error(String(error?.message || error))
+    for (const entry of pending.values()) entry.reject(failure)
+    pending.clear()
+  }
+  worker.on('message', ({ id, vectors, error, closed }) => {
+    if (!id) { if (error) fail(error); return }
+    const entry = pending.get(id)
+    if (!entry) return
+    pending.delete(id)
+    if (error) entry.reject(new Error(error)); else entry.resolve(closed ? true : vectors.map((buffer) => new Float32Array(buffer.buffer ? buffer.buffer : buffer)))
+  })
+  worker.on('error', fail)
+  worker.on('exit', (code) => fail(new Error(`The embedding thread stopped (code ${code})`)))
+  worker.unref?.()
+  const request = (message) => (failure ? Promise.reject(failure) : new Promise((resolve, reject) => {
+    const id = nextId++
+    pending.set(id, { resolve, reject })
+    worker.postMessage({ id, ...message })
+  }))
+  return {
+    dimensions: DIMENSIONS,
+    embed: (texts, kind = 'passage') => (texts.length ? request({ op: 'embed', texts, kind }) : Promise.resolve([])),
+    async close() {
+      try { if (!failure) await request({ op: 'close' }) } catch { /* già caduto */ }
+      await worker.terminate().catch(() => {})
+    },
+  }
+}
+
+module.exports = { createEmbedder, createThreadedEmbedder, DIMENSIONS }
