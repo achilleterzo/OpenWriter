@@ -1,5 +1,6 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, File, FilePlus, FileText, Folder, FolderInput, FolderOpen, FolderPlus, FolderRoot, Image as ImageIcon, Library, Link2, Lock, RefreshCw, Settings, X } from 'lucide-react'
+import { AlertCircle, ChevronDown, ChevronRight, FilePlus, FileText, Folder, FolderInput, FolderOpen, FolderPlus, FolderRoot, Library, Link2, Lock, RefreshCw, Settings, X } from 'lucide-react'
+import FileIcon from './FileIcon.jsx'
 
 import { ContextMenuContext } from './ContextMenu.jsx'
 import ProjectIcon, { ProjectAvatar } from './ProjectIcon.jsx'
@@ -144,15 +145,15 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
           data-tree-path={entry.path}
           data-depth={depth}
           style={indent}
-          title={entry.path}
+          title={entry.openable === false ? `${entry.path} · ${t('Cannot be viewed here')}` : entry.path}
           draggable={menu.renaming !== entry.path}
           onDragStart={(event) => drop.start(event, entry)}
           onDragEnd={drop.end}
           onDragOver={(event) => drop.over(event, parentOf(entry.path))}
           onDrop={(event) => drop.drop(event, parentOf(entry.path))}
           className={`${rowClass} ${menu.isSelected(entry.path) ? 'bg-accent-500/25 text-slate-50' : active ? 'bg-slate-800 text-slate-50' : 'text-slate-400'}`}
-          onClick={(event) => { if (menu.pick(event, entry)) return; menu.select(parentOf(entry.path)); onOpenFile(entry.path, { preview: true }) }}
-          onDoubleClick={() => onOpenFile(entry.path, { permanent: true })}
+          onClick={(event) => { if (menu.pick(event, entry)) return; menu.select(parentOf(entry.path)); if (entry.openable !== false) onOpenFile(entry.path, { preview: true }) }}
+          onDoubleClick={() => { if (entry.openable !== false) onOpenFile(entry.path, { permanent: true }) }}
           onContextMenu={(event) => menu.open(event, entry)}
           onKeyDown={(event) => menu.key(event, entry)}
         >
@@ -171,10 +172,11 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
               </span>
             )
             : <span className="w-3.5 shrink-0" />}
-          {/\.(md|markdown|mdown)$/i.test(entry.name)
-            ? <FileText size={14} className="shrink-0 text-accent-400" />
-            : isImageFile(entry.name) ? <ImageIcon size={14} className="shrink-0 text-slate-500" /> : <File size={14} className="shrink-0 text-slate-500" />}
+          <FileIcon path={entry.name} />
           {menu.renaming === entry.path ? <RenameInput entry={entry} onCommit={menu.commitRename} onCancel={menu.cancelRename} /> : <span className="truncate">{entry.name}</span>}
+          {/* A destra: il lucchetto per i documenti che si aprono solo in lettura (DOCX e PDF), il punto esclamativo per i file che OpenWriter non può aprire. */}
+          {entry.openable === false && <AlertCircle size={12} className="ml-auto shrink-0 text-amber-500/80" aria-label={t('Cannot be viewed here')} />}
+          {entry.openable !== false && /\.(docx|pdf)$/i.test(entry.name) && <Lock size={11} className="ml-auto shrink-0 text-slate-600" aria-label={t('Original, read-only')} />}
         </button>
         {hasOriginals && expanded && entry.originals.map((original) => (
           <button
@@ -192,7 +194,7 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
             onKeyDown={(event) => menu.key(event, { ...original, isDirectory: false })}
           >
             <span className="w-3.5 shrink-0" />
-            <File size={14} className="shrink-0 text-slate-500" />
+            <FileIcon path={original.name} />
             <span className="truncate">{original.name}</span>
             <Lock size={11} className="ml-auto shrink-0 text-slate-600" aria-label={t('Original, read-only')} />
           </button>
@@ -210,18 +212,19 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
         data-depth={depth}
         style={indent}
         aria-expanded={expanded}
-        title={entry.isProject ? t('Sub-project') : undefined}
+        title={entry.isProject ? t('Sub-project') : entry.emptiness === 'empty' ? t('Empty folder') : undefined}
         draggable={menu.renaming !== entry.path}
         onDragStart={(event) => drop.start(event, entry)}
         onDragEnd={drop.end}
         className={`${rowClass} text-slate-300 ${drop.target === entry.path ? 'bg-accent-500/20 ring-1 ring-inset ring-accent-400' : menu.isSelected(entry.path) ? 'bg-accent-500/25' : menu.selected === entry.path ? 'bg-slate-800/60' : ''}`}
-        onClick={(event) => { if (menu.pick(event, entry)) return; menu.select(entry.path); onToggle(entry.path) }}
+        // Una cartella davvero vuota non si apre (si può comunque selezionare, creare dentro, rinominare o eliminare dal menu).
+        onClick={(event) => { if (menu.pick(event, entry)) return; menu.select(entry.path); if (entry.emptiness !== 'empty' || expanded) onToggle(entry.path) }}
         onContextMenu={(event) => menu.open(event, entry)}
         onKeyDown={(event) => menu.key(event, entry)}
         onDragOver={(event) => drop.over(event, entry.path)}
         onDrop={(event) => drop.drop(event, entry.path)}
       >
-        {expanded ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
+        {entry.emptiness === 'empty' && !expanded ? <span className="w-3.5 shrink-0" /> : expanded ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
         {entry.isProject
           ? <ProjectIcon directory={entry.path} size={14} fallback={<FolderRoot size={14} className="shrink-0 text-amber-400" aria-label={t('Sub-project')} />} />
           : expanded ? <FolderOpen size={14} className="shrink-0 text-accent-400" /> : <Folder size={14} className="shrink-0 text-accent-400" />}
@@ -229,7 +232,7 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
       </button>
       {expanded && error && <p style={indent} className="py-1 text-xs text-rose-400">{error}</p>}
       {expanded && menu.creating?.parent === entry.path && <CreateRow depth={depth + 1} menu={menu} />}
-      {expanded && children?.length === 0 && menu.creating?.parent !== entry.path && <p style={{ paddingLeft: 8 + (depth + 1) * 14 + 20 }} className="py-1 text-xs text-slate-500">{t('Empty')}</p>}
+      {expanded && children?.length === 0 && menu.creating?.parent !== entry.path && <p style={{ paddingLeft: 8 + (depth + 1) * 14 + 20 }} className="py-1 text-xs text-slate-500">{entry.emptiness === 'hidden' ? t('Only hidden files') : t('Empty')}</p>}
       {expanded && children?.map((child) => (
         <TreeNode key={child.path} entry={child} depth={depth + 1} activePath={activePath} refreshToken={refreshToken} expandedPaths={expandedPaths} onToggle={onToggle} onOpenFile={onOpenFile} drop={drop} menu={menu} />
       ))}
@@ -399,7 +402,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
         x: event.clientX,
         y: event.clientY,
         items: [
-          !entry.isDirectory && { label: t('Open'), onClick: () => onOpenFile(entry.path) },
+          !entry.isDirectory && entry.openable !== false && { label: t('Open'), onClick: () => onOpenFile(entry.path) },
           entry.isDirectory && { label: t('New folder…'), onClick: () => startCreate(entry.path, 'directory') },
           entry.isDirectory && { label: t('New document…'), onClick: () => startCreate(entry.path, 'file') },
           entry.isDirectory && { separator: true },
