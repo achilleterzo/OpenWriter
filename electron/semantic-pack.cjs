@@ -30,6 +30,24 @@ const FILES = [
 const TOTAL_BYTES = FILES.reduce((total, file) => total + file.size, 0)
 const COMMON_PACKAGE = 'onnxruntime-common'
 
+// Il pacchetto per la scheda video (WebGPU): lo stesso modello in fp16 (la GPU lavora meglio in virgola mobile che a 8 bit) e il runtime onnxruntime-web
+// con il backend WebGPU, che gira in una finestra nascosta di Chromium (gpu-context.cjs). È un pacchetto a parte: chi non lo scarica non lo ha, e i suoi
+// vettori sono di un altro modello (cambia la precisione) e stanno a parte nell'indice.
+const GPU_PACK_ID = 'multilingual-e5-small-fp16-webgpu'
+const GPU_FILES = [
+  { name: 'tokenizer_config.json', url: hub('tokenizer_config.json'), size: 443, sha256: 'a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b' },
+  { name: 'ort.webgpu.bundle.min.mjs', url: cdn('ort.webgpu.bundle.min.mjs'), size: 122491, sha256: 'c90275ffcd0e74e8929f527840ce9339399bfd45f11a74887e4b81a893907b70' },
+  { name: 'ort-wasm-simd-threaded.asyncify.mjs', url: cdn('ort-wasm-simd-threaded.asyncify.mjs'), size: 53457, sha256: '59cf781530e1a16df2a291d78798e3ec1152467edaec402d6f9599d85047c302' },
+  { name: 'ort-wasm-simd-threaded.asyncify.wasm', url: cdn('ort-wasm-simd-threaded.asyncify.wasm'), size: 28747738, sha256: 'ca319e9539cd0f1e291cf56074760121eaf39650f5dbf84b6e52c07f4b2944ec' },
+  { name: 'tokenizer.json', url: hub('tokenizer.json'), size: 17082730, sha256: '0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39' },
+  { name: 'model.onnx', url: hub('onnx/model_fp16.onnx'), size: 235336732, sha256: '0e0fe349c99ea21c6f3aa273af21f7fb753c1e1174ef1647032029c2be3251c3' },
+]
+// `common`: il runtime ha bisogno del pacchetto npm onnxruntime-common accanto ai file (solo la versione CPU, in Node).
+const PACKS = {
+  cpu: { id: PACK_ID, files: FILES, common: true },
+  gpu: { id: GPU_PACK_ID, files: GPU_FILES, common: false },
+}
+
 const sha256File = (file) => new Promise((resolve, reject) => {
   const hash = crypto.createHash('sha256')
   fs.createReadStream(file).on('data', (chunk) => hash.update(chunk)).on('error', reject).on('end', () => resolve(hash.digest('hex')))
@@ -39,8 +57,11 @@ const sha256File = (file) => new Promise((resolve, reject) => {
  * `directory`: dove vive il pacchetto (nei dati dell'app); `fetchImpl`: `net.fetch` di Electron in produzione (segue proxy e certificati del
  * sistema), un finto nei test; `commonSource`: la cartella del pacchetto npm onnxruntime-common che l'app porta con sé (il runtime lo importa).
  */
-function createSemanticPack({ directory, fetchImpl = globalThis.fetch, commonSource = null, files = FILES }) {
-  const root = path.join(directory, PACK_ID)
+function createSemanticPack({ directory, kind = 'cpu', fetchImpl = globalThis.fetch, commonSource = null, files = null }) {
+  const spec = PACKS[kind]
+  if (!spec) throw new Error(`Unknown pack kind: ${kind}`)
+  files = files || spec.files
+  const root = path.join(directory, spec.id)
   const total = files.reduce((sum, file) => sum + file.size, 0)
   let installing = null
   let progress = { received: 0, total, file: '' }
@@ -51,8 +72,8 @@ function createSemanticPack({ directory, fetchImpl = globalThis.fetch, commonSou
   function isReady() {
     try {
       const marker = JSON.parse(fs.readFileSync(readyFile(), 'utf8'))
-      if (marker.id !== PACK_ID) return false
-      if (!fs.existsSync(path.join(root, 'node_modules', COMMON_PACKAGE, 'package.json'))) return false
+      if (marker.id !== spec.id) return false
+      if (spec.common && !fs.existsSync(path.join(root, 'node_modules', COMMON_PACKAGE, 'package.json'))) return false
       return files.every((file) => fs.statSync(path.join(root, file.name)).size === file.size)
     } catch { return false }
   }
@@ -101,12 +122,16 @@ function createSemanticPack({ directory, fetchImpl = globalThis.fetch, commonSou
         onProgress?.({ ...progress })
       })
     }
-    if (commonSource) fs.cpSync(commonSource, path.join(root, 'node_modules', COMMON_PACKAGE), { recursive: true, dereference: true, force: true })
-    fs.writeFileSync(readyFile(), JSON.stringify({ id: PACK_ID, installedAt: Date.now(), files: files.map(({ name, size }) => ({ name, size })) }))
+    // Ciò che non è nel manifest (file di una versione precedente del pacchetto) si toglie: non deve restare a occupare spazio.
+    const expected = new Set([...files.map((file) => file.name), 'node_modules', 'ready.json'])
+    for (const entry of fs.readdirSync(root)) { if (!expected.has(entry)) fs.rmSync(path.join(root, entry), { recursive: true, force: true }) }
+    if (spec.common && commonSource) fs.cpSync(commonSource, path.join(root, 'node_modules', COMMON_PACKAGE), { recursive: true, dereference: true, force: true })
+    fs.writeFileSync(readyFile(), JSON.stringify({ id: spec.id, installedAt: Date.now(), files: files.map(({ name, size }) => ({ name, size })) }))
   }
 
   return {
-    id: PACK_ID,
+    id: spec.id,
+    kind,
     totalBytes: total,
     // La cartella con i file, da dare al lavoratore (solo se il pacchetto è pronto).
     get directory() { return root },
@@ -132,4 +157,4 @@ function createSemanticPack({ directory, fetchImpl = globalThis.fetch, commonSou
   }
 }
 
-module.exports = { createSemanticPack, PACK_ID, FILES, TOTAL_BYTES, COMMON_PACKAGE }
+module.exports = { createSemanticPack, PACKS, PACK_ID, GPU_PACK_ID, FILES, GPU_FILES, TOTAL_BYTES, COMMON_PACKAGE }

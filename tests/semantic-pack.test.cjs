@@ -121,3 +121,36 @@ test('un file troncato rende il pacchetto non pronto', async () => {
     assert.equal(pack.ready, false)
   } finally { fs.rmSync(directory, { recursive: true, force: true }) }
 })
+
+// ----- Il pacchetto per la scheda video -----
+const { PACKS, GPU_PACK_ID, GPU_FILES } = require('../electron/semantic-pack.cjs')
+
+test('il pacchetto GPU ha un identificativo suo, il modello fp16 e il runtime WebGPU (variante asyncify) con controlli fissati', () => {
+  assert.notEqual(PACKS.gpu.id, PACKS.cpu.id)
+  assert.equal(PACKS.gpu.id, GPU_PACK_ID)
+  assert.equal(PACKS.gpu.common, false)
+  const names = GPU_FILES.map((file) => file.name)
+  for (const name of ['model.onnx', 'tokenizer.json', 'tokenizer_config.json', 'ort.webgpu.bundle.min.mjs', 'ort-wasm-simd-threaded.asyncify.mjs', 'ort-wasm-simd-threaded.asyncify.wasm']) assert.ok(names.includes(name), name)
+  assert.ok(!names.some((name) => name.includes('jsep')), 'la variante jsep non ha il backend WebGPU della 1.31')
+  for (const file of GPU_FILES) { assert.match(file.sha256, /^[0-9a-f]{64}$/, file.name); assert.match(file.url, /^https:\/\//) }
+  assert.ok(GPU_FILES.find((file) => file.name === 'model.onnx').url.includes('model_fp16.onnx'))
+})
+
+test('installare il pacchetto GPU: niente onnxruntime-common, cartella propria, e i file di una versione precedente si tolgono', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ow-gpupack-'))
+  try {
+    const gpu = createSemanticPack({ directory, kind: 'gpu', fetchImpl: fakeFetch(), files })
+    const cpu = createSemanticPack({ directory, kind: 'cpu', fetchImpl: fakeFetch(), files })
+    assert.notEqual(gpu.directory, cpu.directory)
+    // File rimasto da una versione precedente del pacchetto.
+    fs.mkdirSync(gpu.directory, { recursive: true })
+    fs.writeFileSync(path.join(gpu.directory, 'ort-wasm-simd-threaded.jsep.wasm'), 'vecchio')
+    await gpu.install()
+    assert.equal(gpu.ready, true, 'il pacchetto GPU non richiede onnxruntime-common')
+    assert.equal(cpu.ready, false, "quello CPU è un'altra cartella, ancora da scaricare")
+    assert.ok(!fs.existsSync(path.join(gpu.directory, 'ort-wasm-simd-threaded.jsep.wasm')))
+    assert.deepEqual(fs.readdirSync(gpu.directory).sort(), ['a.bin', 'b.txt', 'ready.json'])
+    gpu.remove()
+    assert.equal(gpu.ready, false)
+  } finally { fs.rmSync(directory, { recursive: true, force: true }) }
+})
