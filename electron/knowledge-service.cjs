@@ -14,6 +14,7 @@ function createKnowledgeService({ file, hiddenDirectories = [], createWorker, de
   const pending = new Map()
   const queued = new Map() // chiave progetto → { project, paths: Set | null (null = riscansione completa) }
   let timer = null
+  let busy = 0 // scansioni e aggiornamenti dell'indice in corso (per la barra di avanzamento)
 
   function fail(error) {
     failure = failure || String(error?.message || error)
@@ -41,11 +42,17 @@ function createKnowledgeService({ file, hiddenDirectories = [], createWorker, de
 
   function request(op, data = {}) {
     if (!start()) return Promise.reject(new Error(failure || 'The search index is not available'))
-    return new Promise((resolve, reject) => {
+    const result = new Promise((resolve, reject) => {
       const id = nextId++
       pending.set(id, { resolve, reject })
       worker.postMessage({ id, op, ...data })
     })
+    if (op === 'sync' || op === 'paths' || op === 'rebuild') {
+      busy += 1
+      const done = () => { busy -= 1 }
+      result.then(done, done)
+    }
+    return result
   }
 
   function flush() {
@@ -61,6 +68,8 @@ function createKnowledgeService({ file, hiddenDirectories = [], createWorker, de
   return {
     get available() { return !failure },
     get error() { return failure },
+    // Ci sono scansioni o aggiornamenti dei file in corso (o in attesa del loro turno).
+    get syncing() { return busy > 0 || queued.size > 0 },
     // Scansione completa: all'apertura del progetto e dopo un cambiamento di cui non si conoscono i file.
     sync: (project) => request('sync', { project: projectKey(project) }),
     // File cambiati, creati, rinominati o eliminati (relativi alla radice del progetto): si raccolgono e si aggiornano insieme.

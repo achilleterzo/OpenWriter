@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSemanticStatus: (directory) => ipcRenderer.invoke('semantic:status', directory),
   installSemanticPack: (directory) => ipcRenderer.invoke('semantic:install', directory),
   removeSemanticPack: (directory) => ipcRenderer.invoke('semantic:remove', directory),
+  setSemanticEnabled: (enabled) => ipcRenderer.invoke('semantic:set-enabled', Boolean(enabled)),
+  getIndexActivity: () => ipcRenderer.invoke('knowledge:activity'),
   setProjectQuickActions: (value) => ipcRenderer.invoke('project:set-quick-actions', value),
   getContextChain: (filePath) => ipcRenderer.invoke('project:context-chain', filePath),
   moveIntoDirectory: (request) => ipcRenderer.invoke('workspace:move-path', request),

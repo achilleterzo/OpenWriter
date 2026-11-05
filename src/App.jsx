@@ -20,6 +20,7 @@ import { acceptAll, getPending, serializePending } from './lib/pendingChangesExt
 import OutlinePanel from './components/OutlinePanel.jsx'
 import AnchorsPanel from './components/AnchorsPanel.jsx'
 import ToastHost from './components/ToastHost.jsx'
+import IndexProgress from './components/IndexProgress.jsx'
 import { notify } from './lib/toasts.js'
 import PanelResizer from './components/PanelResizer.jsx'
 import SettingsScreen from './components/SettingsScreen.jsx'
@@ -1373,7 +1374,10 @@ export default function App() {
           )}
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>
-            <span className="shrink-0">{status}</span>
+            <span className="flex shrink-0 items-center gap-4">
+              <IndexProgress project={project} />
+              <span>{status}</span>
+            </span>
           </footer>
         </main>
         {/* Sempre montato: chiudere il pannello non interrompe una richiesta in corso. */}
@@ -1410,7 +1414,7 @@ export default function App() {
         </div>
       )}
       {aboutOpen && <AboutDialog version={appVersion} release={updateRelease} checkOnOpen={aboutCheck} onCheck={() => checkForUpdate(false)} onClose={() => setAboutOpen(false)} />}
-      {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} onMoveProject={moveProject} version={appVersion} release={updateRelease} onCheckUpdate={() => checkForUpdate(false)} onChooseProject={chooseProject} onOpenFile={(file) => { setScreen('editor'); setSettingsVersion((value) => value + 1); openFromExplorer(file) }} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
+      {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} onMoveProject={moveProject} version={appVersion} release={updateRelease} onCheckUpdate={() => checkForUpdate(false)} onOpenFile={(file) => { setScreen('editor'); setSettingsVersion((value) => value + 1); openFromExplorer(file) }} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
     </ContextMenuContext.Provider>
   )
 }
