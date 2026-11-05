@@ -12,6 +12,9 @@ const { pathToFileURL } = require('node:url')
  * la somiglianza tra due testi è il loro prodotto scalare.
  */
 const MAX_TOKENS = 512
+// Il modello legge al più 512 simboli (circa 2.500 caratteri): oltre, il testo si taglia PRIMA di tokenizzarlo. Un passaggio enorme (una riga di centinaia di migliaia
+// di caratteri) fa traboccare lo stack del tokenizzatore («Maximum call stack size exceeded») e costa tempo per nulla.
+const MAX_CHARS = 4000
 const PAD_ID = 1n // <pad> di XLM-R: sotto la maschera di attenzione non conta, ma è quello che il modello si aspetta
 const PREFIX = { query: 'query: ', passage: 'passage: ' }
 const DIMENSIONS = 384
@@ -33,7 +36,7 @@ async function createEmbedder({ directory, threads = Math.max(1, Math.min(4, Mat
     if (!texts.length) return []
     const prefix = PREFIX[kind] || PREFIX.passage
     const encoded = texts.map((text) => {
-      const ids = tokenizer.encode(prefix + text).ids
+      const ids = tokenizer.encode(prefix + String(text).slice(0, MAX_CHARS)).ids
       // Oltre il limite del modello si taglia, tenendo il simbolo di fine.
       return ids.length > MAX_TOKENS ? [...ids.slice(0, MAX_TOKENS - 1), ids[ids.length - 1]] : ids
     })
