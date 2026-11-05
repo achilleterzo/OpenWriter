@@ -36,6 +36,7 @@ const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-link
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
 const { createKnowledgeService, formatKnowledgeResults } = require('./knowledge-service.cjs')
 const { createSemanticPack } = require('./semantic-pack.cjs')
+const { sharedProjects } = require('./shared-knowledge.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
 const MAX_SKILL_FILE_BYTES = MAX_SKILL_CHARS * 4
 const images = require('./images.cjs')
@@ -162,7 +163,10 @@ const semanticPack = createSemanticPack({
 // progetto la accende (options.semanticSearch) e il pacchetto è installato.
 let knowledgeOn = true
 let semanticOn = false
-const semanticTargets = () => (projectPath && knowledgeOn && semanticOn && semanticPack.ready ? [projectPath, ...referenceFolders().map((item) => item.path)] : [])
+// Modelli locali (Impostazioni): l'utente può spegnere un modello per tutti i progetti, anche se installato.
+const EMBEDDINGS_PREFERENCE = 'openwriter.localModels.embeddings'
+const semanticAllowed = () => loadPreferences()[EMBEDDINGS_PREFERENCE] !== 'off'
+const semanticTargets = () => (projectPath && knowledgeOn && semanticOn && semanticAllowed() && semanticPack.ready ? [projectPath, ...outsideFolders().map((item) => item.path)] : [])
 function configureSemantic({ purge = false } = {}) {
   if (!knowledge.available) return Promise.resolve(false)
   const projects = semanticTargets()
@@ -176,9 +180,25 @@ function startKnowledge() {
   knowledge.sync(projectPath).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
   // Le cartelle di riferimento del progetto (collegate dall'utente, quindi con il suo consenso) si indicizzano a parte: una sola volta anche se più progetti le usano.
   for (const reference of referenceFolders()) knowledge.sync(reference.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
+  // Gli altri progetti che condividono la loro conoscenza: si riallineano all'apertura (non più spesso di ogni due minuti), senza sorvegliarli.
+  for (const other of sharedFolders()) {
+    const key = knowledge.key(other.path)
+    if (Date.now() - (sharedSynced.get(key) || 0) < 120000) continue
+    sharedSynced.set(key, Date.now())
+    knowledge.sync(other.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
+  }
   watchReferences()
   configureSemantic()
 }
+const sharedSynced = new Map()
+// Gli altri progetti dell'utente che condividono la loro conoscenza (vedi shared-knowledge.cjs); chi ha spento l'indice o la condivisione non c'è.
+const sharedFolders = () => {
+  try {
+    return projectPath ? sharedProjects({ current: projectPath, projects: projectsStore.list(), references: referenceFolders(), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled() }) : []
+  } catch { return [] }
+}
+// Tutto ciò che sta fuori dal progetto e si cerca insieme ad esso: le cartelle di riferimento e gli altri progetti (`@sigla/…`, sempre in sola lettura).
+const outsideFolders = () => [...referenceFolders(), ...sharedFolders()]
 const referenceFolders = () => { try { return projectPath ? referencesStore.list().filter((item) => !item.missing) : [] } catch { return [] } }
 // Chi cambia una cartella di riferimento (di solito un altro programma) la tiene aggiornata nell'indice, come per il progetto.
 let referenceWatchers = []
@@ -861,6 +881,8 @@ ipcMain.handle('projects:save-settings', (_event, { directory, settings } = {}) 
   file.initialize()
   const saved = file.saveSettings(settings)
   if (projectPath && samePath(projectPath, target)) { applySpellcheck(); applyKnowledgeChoice(target, saved.options.searchIndex, saved.options.semanticSearch) } else if (!saved.options.searchIndex) knowledge.clear(target).catch(() => {})
+  // Chi condivide o smette di condividere cambia ciò che gli altri progetti vedono (e quali vettori calcolare).
+  if (projectPath && !samePath(projectPath, target)) configureSemantic()
   return saved
 })
 // Icona di un progetto (anche non aperto): un'immagine in `.ow`, ridimensionata; qui si legge, si sceglie e si toglie.
@@ -1041,7 +1063,7 @@ async function semanticStatus(directory) {
   const target = directory ? path.resolve(String(directory)) : projectPath
   const isOpen = Boolean(projectPath && target && samePath(projectPath, target))
   const enabled = isOpen ? semanticOn && knowledgeOn : Boolean(target && createProjectFile({ getProjectPath: () => target }).semanticSearchEnabled())
-  const result = { pack: semanticPack.status(), enabled, progress: null }
+  const result = { pack: semanticPack.status(), enabled, allowed: semanticAllowed(), progress: null }
   const targets = isOpen ? semanticTargets() : []
   if (targets.length && knowledge.available) {
     try { result.progress = await knowledge.semanticStatus(targets) } catch (error) { result.progress = { error: error.message } }
@@ -1049,6 +1071,24 @@ async function semanticStatus(directory) {
   return result
 }
 ipcMain.handle('semantic:status', (_event, directory) => semanticStatus(directory))
+// Interruttore globale del modello (Impostazioni → Modelli locali): spento, nessun progetto lo usa e i calcoli si fermano.
+ipcMain.handle('semantic:set-enabled', async (_event, enabled) => {
+  setPreferenceValue(EMBEDDINGS_PREFERENCE, enabled ? 'on' : 'off')
+  await configureSemantic()
+  return semanticStatus()
+})
+// Avanzamento dell'indice per la barra in fondo alla finestra: scansione dei file e vettori ancora da calcolare per il progetto aperto.
+ipcMain.handle('knowledge:activity', async () => {
+  const result = { scanning: knowledge.available && knowledge.syncing, vectors: null }
+  const targets = semanticTargets()
+  if (targets.length && knowledge.available) {
+    try {
+      const status = await knowledge.semanticStatus(targets)
+      if (!status.error && status.total > status.embedded) result.vectors = { embedded: status.embedded, total: status.total }
+    } catch { /* senza stato non c'è barra */ }
+  }
+  return result
+})
 // Scarica il pacchetto (qualche minuto): l'interfaccia ne segue l'avanzamento chiedendo lo stato. Niente parte da solo: è l'utente a chiederlo.
 ipcMain.handle('semantic:install', async (_event, directory) => {
   await semanticPack.install()
@@ -1077,21 +1117,23 @@ ipcMain.handle('project:knowledge-rebuild', async (_event, directory) => {
   return knowledgeStatus(target)
 })
 // Ricerca per rilevanza sull'indice (knowledge-index.cjs): passaggi con file e righe. Non vale per le cartelle di riferimento.
-ipcMain.handle('tools:search-knowledge', async (_event, args = {}) => {
+async function searchKnowledgeTool(args = {}, readTool = 'read_file') {
   if (!projectPath) throw new Error(t('No project open'))
   const query = String(args.query || '').trim()
   if (!query) throw new Error('Missing parameter "query"')
   if (!knowledgeOn) throw new Error('The search index is turned off for this project: use search_files')
   if (!knowledge.available) throw new Error('The search index is not available: use search_files')
   const given = String(args.path || '').trim().replace(/\\/g, '/')
-  const scope = ['project', 'references'].includes(String(args.scope || '').toLowerCase()) ? String(args.scope).toLowerCase() : 'all'
-  // Fonti: il progetto e le sue cartelle di riferimento (`@sigla/…`, collegate dall'utente: è il suo consenso a condividerle con questo progetto).
+  // `others` (o il vecchio `references`): tutto ciò che sta fuori dal progetto, cioè gli altri progetti e le cartelle di riferimento.
+  const asked = String(args.scope || '').toLowerCase()
+  const scope = asked === 'project' ? 'project' : (asked === 'others' || asked === 'references') ? 'others' : 'all'
+  // Fonti: il progetto, le sue cartelle di riferimento (collegate dall'utente: è il suo consenso) e gli altri progetti che condividono la loro conoscenza.
   const projectSource = { key: knowledge.key(projectPath), prefix: '' }
-  const referenceSources = () => referenceFolders().map((item) => ({ key: knowledge.key(item.path), prefix: `@${item.name}` }))
+  const referenceSources = () => outsideFolders().map((item) => ({ key: knowledge.key(item.path), prefix: `@${item.name}` }))
   let sources
   let folder = ''
   if (given.startsWith('@')) {
-    const reference = referencesStore.resolve(given)
+    const reference = outsideRoot(given)
     sources = [{ key: knowledge.key(reference.root), prefix: `@${reference.name}` }]
     folder = reference.relative
   } else {
@@ -1100,20 +1142,30 @@ ipcMain.handle('tools:search-knowledge', async (_event, args = {}) => {
       folder = path.relative(projectPath, resolved).split(path.sep).join('/')
     }
     // Un percorso del progetto restringe la ricerca al progetto.
-    sources = folder ? [projectSource] : [...(scope === 'references' ? [] : [projectSource]), ...(scope === 'project' ? [] : referenceSources())]
+    sources = folder ? [projectSource] : [...(scope === 'others' ? [] : [projectSource]), ...(scope === 'project' ? [] : referenceSources())]
   }
-  if (!sources.length) throw new Error('This project has no reference folders: use scope "project" or leave it out')
+  if (!sources.length) throw new Error('There are no other projects or reference folders to search: use scope "project" or leave it out')
   const [found, ...stats] = await Promise.all([
     knowledge.search(sources.map((source) => source.key), query, { folder, limit: Number(args.maxResults) || 10, semantic: semanticTargets().length > 0 }),
     ...sources.map((source) => knowledge.stats(source.key)),
   ])
   const prefixes = new Map(sources.map((source) => [source.key, source.prefix]))
   found.results = found.results.map((entry) => ({ ...entry, path: withPrefix(prefixes.get(entry.project) ?? '', entry.path) }))
-  return formatKnowledgeResults(query, found, { files: stats.reduce((total, item) => total + item.files, 0) })
-})
+  return formatKnowledgeResults(query, found, { files: stats.reduce((total, item) => total + item.files, 0) }, readTool)
+}
+ipcMain.handle('tools:search-knowledge', (_event, args) => searchKnowledgeTool(args))
 // Gli strumenti di lettura valgono anche per le cartelle di riferimento: un percorso `@sigla/…` si legge dentro quella cartella (e solo lì).
+// `@sigla/…` → la radice: un riferimento, oppure un altro progetto che condivide la sua conoscenza.
+function outsideRoot(given) {
+  try { return referencesStore.resolve(given) } catch (error) {
+    const [name, ...rest] = String(given || '').slice(1).replace(/\\/g, '/').split('/')
+    const shared = sharedFolders().find((item) => item.name.toLowerCase() === name.toLowerCase())
+    if (!shared) throw error
+    return { name: shared.name, root: shared.path, relative: rest.filter(Boolean).join('/') }
+  }
+}
 function toolsFor(given) {
-  const reference = projectPath ? referencesStore.resolve(given) : null
+  const reference = projectPath ? outsideRoot(given) : null
   if (!reference) return { tools: projectTools, relative: given, prefix: '' }
   return { tools: createProjectTools({ getProjectPath: () => reference.root, readDocument: (filePath) => readDocument(filePath) }), relative: reference.relative, prefix: `@${reference.name}` }
 }
@@ -1130,7 +1182,7 @@ ipcMain.handle('tools:list-directory', async (_event, relativePath, options = {}
       try { if (fsSync.existsSync(imageDescriptionFile(result.path === '.' ? entry.name : `${result.path}/${entry.name}`))) entry.described = true } catch { /* nome non valido */ }
     }
   }
-  if (!prefix && result.path === '.') { result.linked = linksStore.list(); result.references = referencesStore.list() }
+  if (!prefix && result.path === '.') { result.linked = linksStore.list(); result.references = [...referencesStore.list(), ...sharedFolders().map((item) => ({ ...item, project: true }))] }
   return result
 })
 ipcMain.handle('tools:read-file', async (_event, { path: relativePath, offset, limit, startLine, endLine } = {}) => {
@@ -1799,12 +1851,13 @@ function flushPreferences() {
 }
 
 ipcMain.on('preferences:load', (event) => { event.returnValue = loadPreferences() })
-ipcMain.on('preferences:set', (_event, key, value) => {
+function setPreferenceValue(key, value) {
   if (typeof key !== 'string' || !/^openwriter\.[A-Za-z0-9.]{1,60}$/.test(key) || typeof value !== 'string' || value.length > 20000) return
   loadPreferences()[key] = value
   clearTimeout(preferencesTimer)
   preferencesTimer = setTimeout(flushPreferences, 200)
-})
+}
+ipcMain.on('preferences:set', (_event, key, value) => setPreferenceValue(key, value))
 app.on('before-quit', flushPreferences)
 
 // Appunti di file con il sistema: copia/taglia dall'albero e incolla nel file manager o in altri programmi, e viceversa (vedi file-clipboard.cjs).
@@ -1917,6 +1970,8 @@ const mcpBridge = createMcpBridge({
   getWindow: () => mainWindow,
   getProjectPath: () => projectPath,
   isEnabled: () => loadPreferences()['openwriter.mcpEdit'] !== 'off',
+  // Con l'app aperta la ricerca per conoscenza di un agente esterno passa da qui: stessa ricerca dell'assistente, quindi anche per significato (se acceso).
+  localTools: { search_knowledge: (args) => searchKnowledgeTool(args, 'read_document') },
 })
 ipcMain.on('mcp:response', (_event, id, payload) => mcpBridge.answer(id, payload))
 
