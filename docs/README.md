@@ -170,6 +170,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [knowledge-service.cjs.md](reference/electron/knowledge-service.cjs.md) ([knowledge-service.cjs](../electron/knowledge-service.cjs)) — Main-process client of the search index worker
   - [knowledge-worker.cjs.md](reference/electron/knowledge-worker.cjs.md) ([knowledge-worker.cjs](../electron/knowledge-worker.cjs)) — Worker thread that owns the search index
   - [shared-knowledge.cjs.md](reference/electron/shared-knowledge.cjs.md) ([shared-knowledge.cjs](../electron/shared-knowledge.cjs)) — Which other projects the relevance search also covers
+  - [gpu-context.cjs.md](reference/electron/gpu-context.cjs.md) ([gpu-context.cjs](../electron/gpu-context.cjs)) — Hidden WebGPU window that computes vectors on the graphics card
   - [semantic-pack.cjs.md](reference/electron/semantic-pack.cjs.md) ([semantic-pack.cjs](../electron/semantic-pack.cjs)) — Downloadable model and runtime for the search by meaning
   - [semantic-embedder-worker.cjs.md](reference/electron/semantic-embedder-worker.cjs.md) ([semantic-embedder-worker.cjs](../electron/semantic-embedder-worker.cjs)) — Thread that runs the embedding model
   - [semantic-embedder.cjs.md](reference/electron/semantic-embedder.cjs.md) ([semantic-embedder.cjs](../electron/semantic-embedder.cjs)) — Turns texts into embedding vectors (WebAssembly)

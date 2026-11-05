@@ -8,7 +8,7 @@ Main-process client of the search index worker ([knowledge-worker.cjs](knowledge
 
 - `sync(project)`, `search(project, query, options)`, `stats(project)`, `rebuild(project)`: promises answered by the worker.
 - `changed(project, relatives)`: the folder watcher reports changed paths (relative to the project); they are collected and sent together after `debounceMs` (800 ms). `null` asks for a full scan.
-- `semanticConfigure({ directory, projects, model, purge })`, `semanticStatus(projects)` returns `{ total, embedded, running, error, active }`: the search by meaning (see [knowledge-worker.cjs](knowledge-worker.cjs.md)); `search` takes `options.semantic`.
+- `semanticConfigure({ device, model, directory, projects, purge })`, `semanticStatus(projects)` returns `{ total, embedded, running, error, active, device, model }`: the search by meaning (see [knowledge-worker.cjs](knowledge-worker.cjs.md)); `search` takes `options.semantic`. The options `gpuEmbed(texts, kind)` / `gpuRelease()` (the GPU device lives in the main process, [gpu-context.cjs](gpu-context.cjs.md)) and `onSemanticError({ device, model, error })` (a failure reported by the worker) are given to `createKnowledgeService`.
 - `syncing`: true while scans or updates are running or waiting (for the progress bar).
 - `available` / `error`: the index is an extra, so if the worker cannot start or stops, the service becomes unavailable, requests are rejected with a clear message and the app works as before (`search_files` remains).
 - `key(project)`: the key used for a project in the index (absolute path, lower case on Windows, where paths are case-insensitive).
