@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createGraphSim } from '../lib/graphLayout.js'
 import { createGraphRenderer, cssColor, webglAvailable } from '../lib/graphRenderer.js'
-import { loadProjectIcon } from '../lib/projectIcons.js'
+import { loadProjectIcon, onProjectIconsChanged } from '../lib/projectIcons.js'
 import { ProjectAvatar } from './ProjectIcon.jsx'
 import { t, tp } from '../i18n/index.js'
 
@@ -75,10 +75,22 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
     const entries = visible.map((node) => ({ image: null, initial: Array.from(String(node.name || '?').trim())[0]?.toUpperCase() || '?', hue: hashOf(node.name) % 360 }))
     renderer.setIcons(entries)
     let iconsCancelled = false
-    Promise.all(visible.map(async (node, position) => {
-      const url = await loadProjectIcon(node.path)
-      if (url) entries[position].image = await loadImage(url)
-    })).then(() => { if (!iconsCancelled && entries.some((entry) => entry.image)) renderer.setIcons(entries) })
+    // Rilegge le icone (quelle già note vengono dalla cache) e rifà l'atlante. `always`: anche se nessun progetto ha un'immagine (un'icona tolta torna all'iniziale).
+    // Più riletture possono sovrapporsi (due icone cambiate di seguito): conta solo l'ultima, altrimenti una più lenta riscriverebbe un'immagine vecchia.
+    let iconRun = 0
+    const loadIcons = async (always) => {
+      const run = ++iconRun
+      const images = await Promise.all(visible.map(async (node) => {
+        const url = await loadProjectIcon(node.path)
+        return url ? loadImage(url) : null
+      }))
+      if (iconsCancelled || run !== iconRun) return
+      images.forEach((image, position) => { entries[position].image = image })
+      if (always || entries.some((entry) => entry.image)) renderer.setIcons(entries)
+    }
+    loadIcons(false)
+    // L'utente cambia o toglie l'icona di un progetto (impostazioni del progetto): il grafo, anche se la Home è nascosta, si aggiorna.
+    const stopListeningIcons = onProjectIconsChanged(() => { loadIcons(true) })
 
     const resizeObserver = new ResizeObserver(() => { size.width = wrap.clientWidth || size.width; size.height = wrap.clientHeight || size.height })
     resizeObserver.observe(wrap)
@@ -212,6 +224,7 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
     return () => {
       running = false
       iconsCancelled = true
+      stopListeningIcons()
       cancelAnimationFrame(frameId)
       resizeObserver.disconnect()
       themeObserver.disconnect()
