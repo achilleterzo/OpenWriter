@@ -26,7 +26,7 @@ async function setup({ gpuEmbed, onSemanticError }) {
   fs.writeFileSync(path.join(project, 'cucina.md'), '# Cucina\n\nLa ricetta del pane richiede lievito.\n')
   const keepAlive = setInterval(() => {}, 1000)
   const service = createKnowledgeService({ file: path.join(directory, 'k.db'), hiddenDirectories: [], createWorker: (workerData) => new Worker(path.join(__dirname, '../electron/knowledge-worker.cjs'), { workerData }), gpuEmbed, onSemanticError })
-  const done = async () => { clearInterval(keepAlive); await service.close(); fs.rmSync(directory, { recursive: true, force: true }) }
+  const done = async () => { await service.close(); clearInterval(keepAlive); fs.rmSync(directory, { recursive: true, force: true }) }
   try { await service.sync(project) } catch (error) { await done(); throw error }
   const waitFor = async (check) => { for (let attempt = 0; attempt < 100; attempt += 1) { const status = await service.semanticStatus([project]); if (check(status)) return status; await new Promise((resolve) => setTimeout(resolve, 50)) } throw new Error('timeout') }
   return { service, project, done, waitFor }
