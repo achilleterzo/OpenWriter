@@ -87,8 +87,8 @@ function createGpuContext({ BrowserWindow, ipcMain, packDirectory, tokenizersFil
   }
 
   async function ensureWindow() {
-    if (window && !window.isDestroyed()) return
     if (starting) return starting
+    if (window && !window.isDestroyed()) return
     starting = (async () => {
       await startServer()
       if (!listening) { ipcMain.on('embed:reply', onReply); listening = true }
