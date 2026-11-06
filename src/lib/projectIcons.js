@@ -79,6 +79,12 @@ export function invalidateProjectIcon(directory) {
   listeners.forEach((listener) => listener())
 }
 
+// Per chi disegna le icone fuori da React (il grafo della Home): avvisa quando l'icona di un progetto è cambiata (scelta o tolta). Restituisce come smettere di ascoltare.
+export function onProjectIconsChanged(listener) {
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
+
 // L'icona di un progetto fuori da un componente (data URL o null), con la stessa cache di `useProjectIcon`.
 export async function loadProjectIcon(directory) {
   const key = keyOf(directory)
