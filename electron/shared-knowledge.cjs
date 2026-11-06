@@ -12,7 +12,8 @@ const { cleanName } = require('./project-references.cjs')
  * collegati come cartella di riferimento. La sigla ricava dal nome della cartella, unica rispetto ai riferimenti e agli altri progetti.
  */
 function sharedProjects({ current, projects, references = [], isShared }) {
-  const taken = new Set(references.map((item) => item.name.toLowerCase()))
+  // 'web' è la sigla riservata alle pagine salvate del progetto aperto: nessun progetto la prende.
+  const taken = new Set([...references.map((item) => item.name.toLowerCase()), 'web'])
   const chosen = []
   for (const project of projects) {
     if (project.missing || !project.path) continue

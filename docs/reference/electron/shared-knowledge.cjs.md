@@ -13,3 +13,5 @@ In `main.cjs`: `sharedFolders()` and `outsideFolders()` (references plus other p
 **Saved web pages as `@web`**: `outsideFolders` takes `webFolderOf` ([web-references.cjs](web-references.cjs.md)) and adds the folder of the pages saved in the project (`@web`) and, after each shared project, its own (`@<project>-web`), unless the name is already taken (a linked reference folder wins). They are indexed, read and searched exactly like reference folders.
 
 The search of the Home does not use the sharing filter: `outsideFor(null, { everything: true })` in [main.cjs](main.cjs.md) passes `searchIndexEnabled` instead of `sharedKnowledgeEnabled` as `isShared`, so every project with an index is searched (sharing keeps limiting what the assistant of another project sees).
+
+The alias `web` is reserved (it is the open project's saved pages): no other project takes it, it gets `web-2` and so on.
