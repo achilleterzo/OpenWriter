@@ -79,6 +79,21 @@ export function invalidateProjectIcon(directory) {
   listeners.forEach((listener) => listener())
 }
 
+// L'icona di un progetto fuori da un componente (data URL o null), con la stessa cache di `useProjectIcon`.
+export async function loadProjectIcon(directory) {
+  const key = keyOf(directory)
+  if (cache.has(key)) return cache.get(key)
+  if (!directory || !electronAPI?.getProjectIcon) return null
+  try {
+    const icon = (await electronAPI.getProjectIcon(directory)) || null
+    cache.set(key, icon)
+    return icon
+  } catch {
+    cache.set(key, null)
+    return null
+  }
+}
+
 export function useProjectIcon(directory) {
   const key = keyOf(directory)
   // Cambia a ogni invalidazione e a ogni lettura finita: serve a rifare il rendering e, con la cache svuotata, a rileggere l'icona.

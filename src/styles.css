@@ -643,3 +643,34 @@ body {
 .chat-composer .tiptap li > p { margin: 0; }
 .chat-composer .tiptap code { border-radius: 0.25rem; background: rgb(var(--slate-700)); padding: 0.1rem 0.3rem; font-size: 0.85em; }
 .chat-composer .tiptap a { color: rgb(var(--accent-400)); text-decoration: underline; }
+
+/* La Home dei progetti ha sempre uno sfondo grigio scuro appena sfumato, qualunque sia il tema: le variabili scure (e l'accento scelto, nella sua forma scura) si
+   ridichiarano qui, così bolle, sinapsi, testi e pannelli della Home restano coerenti e leggibili. */
+.home-dark {
+  color-scheme: dark;
+  --slate-50: 244 244 242; --slate-100: 233 233 230; --slate-200: 212 212 208; --slate-300: 184 184 180; --slate-400: 148 148 145; --slate-500: 112 112 110;
+  --slate-600: 82 82 82; --slate-700: 62 62 64; --slate-800: 46 46 49; --slate-900: 34 34 37; --slate-950: 24 24 26;
+  --emerald-300: 110 231 183; --emerald-400: 52 211 153; --rose-300: 253 164 175; --rose-400: 251 113 133; --amber-300: 252 211 77; --amber-400: 251 191 36;
+  --accent-300: 214 214 210; --accent-400: 190 190 186; --accent-500: 150 150 146; --accent-600: 108 108 106;
+  color: rgb(var(--slate-100));
+  background: radial-gradient(ellipse at 50% 38%, #313135 0%, #232327 52%, #17171a 100%);
+}
+:root[data-accent='violet'] .home-dark { --accent-300: 196 181 253; --accent-400: 167 139 250; --accent-500: 139 92 246; --accent-600: 124 58 237; }
+:root[data-accent='cyan'] .home-dark { --accent-300: 103 232 249; --accent-400: 34 211 238; --accent-500: 6 182 212; --accent-600: 8 145 178; }
+:root[data-accent='emerald'] .home-dark { --accent-300: 110 231 183; --accent-400: 52 211 153; --accent-500: 16 185 129; --accent-600: 5 150 105; }
+:root[data-accent='rose'] .home-dark { --accent-300: 253 164 175; --accent-400: 251 113 133; --accent-500: 244 63 94; --accent-600: 225 29 72; }
+:root[data-accent='amber'] .home-dark { --accent-300: 252 211 77; --accent-400: 251 191 36; --accent-500: 245 158 11; --accent-600: 217 119 6; }
+
+/* Nome dei progetti nel grafo: un'etichetta che segue il tema dell'app (il grafo ha lo sfondo scuro fisso, `.home-dark`, che non ridichiara queste variabili), così il
+   contrasto con lo sfondo resta alto: chiara con testo scuro nel tema chiaro, scura con testo chiaro nello scuro. */
+:root { --label-bg: 34 34 37; --label-fg: 244 244 242; --label-border: 82 82 82; }
+:root[data-theme='light'] { --label-bg: 250 250 248; --label-fg: 24 24 26; --label-border: 184 184 180; }
+.graph-label {
+  background: rgb(var(--label-bg) / 0.9);
+  color: rgb(var(--label-fg));
+  border: 1px solid rgb(var(--label-border));
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.4);
+  line-height: 1.25rem;
+}
+.graph-label[data-active='true'] { font-weight: 600; border-color: rgb(var(--accent-400)); }
+.graph-label[data-muted='true'] { color: rgb(var(--label-fg) / 0.62); }
