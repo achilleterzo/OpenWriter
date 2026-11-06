@@ -2,6 +2,8 @@
 
 # electron/knowledge-sync.cjs
 
+Symbolic links are never followed: both the scan and the update by paths use `lstat`, so a link that points outside the project is not indexed.
+
 Source: [`electron/knowledge-sync.cjs`](../../../electron/knowledge-sync.cjs)
 
 Keeps the search index ([knowledge-index.cjs](knowledge-index.cjs.md)) aligned with the files of a project. It runs inside the worker ([knowledge-worker.cjs](knowledge-worker.cjs.md)) but does not depend on it, so it is tested with an in-memory index and a temporary folder.

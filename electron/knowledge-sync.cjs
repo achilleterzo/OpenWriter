@@ -28,8 +28,9 @@ async function walk(project, base, hidden, found = new Map(), counter = { visite
     } else if (entry.isFile() && isIndexableName(entry.name)) {
       counter.visited += 1
       try {
-        const stat = await fs.stat(full)
-        if (stat.size <= MAX_FILE_BYTES) found.set(toRelative(project, full), { mtimeMs: Math.round(stat.mtimeMs), size: stat.size })
+        // lstat: un collegamento simbolico non si segue (potrebbe puntare fuori dal progetto), come in syncPaths.
+        const stat = await fs.lstat(full)
+        if (stat.isFile() && stat.size <= MAX_FILE_BYTES) found.set(toRelative(project, full), { mtimeMs: Math.round(stat.mtimeMs), size: stat.size })
       } catch { /* sparito nel frattempo */ }
     }
   }
