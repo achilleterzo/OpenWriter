@@ -1,4 +1,4 @@
-import { Anchor, ArrowUpCircle, Bookmark, Brain, FolderKanban, Files, History, Info, ListTree, MessageSquareText, Settings } from 'lucide-react'
+import { Anchor, ArrowUpCircle, Bookmark, Brain, FolderKanban, Files, Globe, History, Info, ListTree, MessageSquareText, Settings } from 'lucide-react'
 import { t } from '../i18n/index.js'
 
 export const sideTabs = [
@@ -8,6 +8,7 @@ export const sideTabs = [
   { id: 'notes', label: t('Notes'), icon: MessageSquareText },
   { id: 'bookmarks', label: t('Bookmarks'), icon: Bookmark },
   { id: 'anchors', label: t('Anchors'), icon: Anchor },
+  { id: 'web', label: t('Web references'), icon: Globe },
   { id: 'history', label: t('History'), icon: History },
   { id: 'info', label: t('Info'), icon: Info },
   { id: 'memory', label: t('Memory'), icon: Brain },

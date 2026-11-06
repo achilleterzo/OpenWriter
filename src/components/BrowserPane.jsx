@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { subscribeAppearance } from '../appearance.js'
-import { ArrowLeft, ArrowRight, BookOpen, Camera, Clock, ExternalLink, FileDown, Loader2, Minus, Moon, Plus, RotateCw, Sun, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BookOpen, Camera, Clock, ExternalLink, FileDown, Loader2, Minus, Moon, Plus, RotateCw, Star, Sun, X } from 'lucide-react'
 import { articleFileName, articleToMarkdown, extractArticle, readerDocument } from '../lib/readerMode.js'
+import { saveFromController } from '../lib/webReferences.js'
 import { t } from '../i18n/index.js'
 
 const SETTLE_MS = 700
@@ -52,7 +53,7 @@ function Suggestions({ items, highlight, hasQuery, hasHistory, onPick, onRemove,
 }
 
 // Scheda browser basata su <webview> isolato. Registra un controller con cui l'assistente può navigare e leggere la pagina.
-export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved, onScreenshot, onStatus }) {
+export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved, onScreenshot, onStatus, webRefsVersion = 0, onWebRefsChanged }) {
   const viewRef = useRef(null)
   // Una scheda ripristinata dopo un riavvio si apre alla pagina in cui era.
   const initialUrl = useRef(tab.initialUrl || 'about:blank')
@@ -247,6 +248,38 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
     }
   }
 
+  // Stellina: la pagina è tra i riferimenti web del progetto (copia in Markdown in .ow/web, sempre consultabile dall'assistente)? Cliccandola si aggiunge o si toglie.
+  const [savedPage, setSavedPage] = useState(null)
+  const [starBusy, setStarBusy] = useState(false)
+  const canSave = /^https?:/i.test(address)
+  useEffect(() => {
+    if (!canSave) { setSavedPage(null); return undefined }
+    let cancelled = false
+    window.electronAPI.webRefs.find(address).then((entry) => { if (!cancelled) setSavedPage(entry) }).catch(() => { if (!cancelled) setSavedPage(null) })
+    return () => { cancelled = true }
+  }, [address, canSave, webRefsVersion])
+
+  async function toggleStar() {
+    setStarBusy(true)
+    try {
+      if (savedPage) {
+        await window.electronAPI.webRefs.remove(savedPage.id)
+        setSavedPage(null)
+        onStatus?.(t('Removed from the context'))
+      } else {
+        const entry = await saveFromController(window.electronAPI, { evaluate: (code) => viewRef.current.executeJavaScript(code) }, { source: 'user' })
+        setSavedPage(entry)
+        onStatus?.(t('Added to the context: {title}', { title: entry.title }))
+      }
+      onWebRefsChanged?.()
+    } catch (error) {
+      console.error(error)
+      onStatus?.(error.message)
+    } finally {
+      setStarBusy(false)
+    }
+  }
+
   // Schermata della scheda (la parte visibile della pagina), salvata come PNG nella cartella screenshots del progetto.
   const [shotBusy, setShotBusy] = useState(false)
   async function saveScreenshot() {
@@ -291,6 +324,7 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
         <button type="button" aria-label={t('History')} title={t('History')} aria-expanded={suggestOpen} className={`${buttonClass} ${suggestOpen ? 'bg-slate-800 text-accent-400' : ''}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (suggestOpen) { closeSuggestions(); inputRef.current?.blur() } else { inputRef.current?.focus() } }}><Clock size={16} /></button>
         <button type="button" aria-label={t('Open in the system browser')} title={t('Open in the system browser')} className={buttonClass} onClick={() => { const url = viewRef.current?.getURL?.(); if (/^https?:\/\//i.test(url || '')) window.electronAPI.openLink(url) }}><ExternalLink size={16} /></button>
         <button type="button" aria-label={t('Save a screenshot')} title={t('Save a screenshot')} disabled={shotBusy || Boolean(reader)} className={buttonClass} onClick={saveScreenshot}>{shotBusy ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}</button>
+        <button type="button" aria-label={savedPage ? t('Remove from the context') : t('Add to the context')} title={savedPage ? t('Remove from the context') : t('Add to the context')} aria-pressed={Boolean(savedPage)} disabled={!canSave || starBusy} className={`${buttonClass} ${savedPage ? 'text-amber-400 hover:text-amber-300' : ''}`} onClick={toggleStar}>{starBusy ? <Loader2 size={16} className="animate-spin" /> : <Star size={16} className={savedPage ? 'fill-amber-400' : ''} />}</button>
         <button type="button" aria-label={reader ? t('Exit reading view') : t('Reading view')} title={reader ? t('Exit reading view') : t('Reading view')} aria-pressed={Boolean(reader)} disabled={readerBusy} className={`${buttonClass} ${reader ? 'bg-slate-800 text-accent-400' : ''}`} onClick={toggleReader}>{readerBusy ? <Loader2 size={16} className="animate-spin" /> : <BookOpen size={16} />}</button>
         {reader && (
           <>
