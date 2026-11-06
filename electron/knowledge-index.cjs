@@ -22,6 +22,11 @@ const VECTOR_CANDIDATES = 4 // quanti candidati per risultato chiede la ricerca 
 
 const wordCount = (text) => (text.match(/\S+/g) || []).length
 
+// Un frammento senza una lettera né una cifra (`###`, `---`, `***`, righe di tabella vuote…) non dice nulla e, ereditando i titoli, sale nei risultati: non si indicizza.
+const HAS_CONTENT = /[\p{L}\p{N}]/u
+// Versione del modo di dividere i documenti: se cambia, all'apertura i file si rileggono (i vettori dei frammenti rimasti uguali si riusano, sono legati al testo).
+const CHUNKER_VERSION = '3'
+
 // Immagini incorporate (`data:image/png;base64,…`, spesso centinaia di migliaia di caratteri su una riga, tipiche delle definizioni `[image1]: <data:…>` dei
 // documenti esportati): non sono testo, non si cercano e fanno solo massa. Si sostituiscono con `…`, le righe restano le stesse.
 const DATA_URI = /(data:[A-Za-z0-9.+-]+\/[A-Za-z0-9.+-]+;base64,)[A-Za-z0-9+\/=]{64,}/g
@@ -49,9 +54,11 @@ function chunkMarkdown(source, { maxWords = MAX_CHUNK_WORDS } = {}) {
   let pendingWords = 0
   let heading = ''
 
+  const keep = (chunk) => { if (HAS_CONTENT.test(chunk.text)) chunks.push(chunk) }
+
   const flush = () => {
     if (!pending.length) return
-    chunks.push({ heading, startLine: pending[0].start, endLine: pending[pending.length - 1].end, text: pending.map((item) => item.text).join('\n\n') })
+    keep({ heading, startLine: pending[0].start, endLine: pending[pending.length - 1].end, text: pending.map((item) => item.text).join('\n\n') })
     pending = []
     pendingWords = 0
   }
@@ -64,12 +71,12 @@ function chunkMarkdown(source, { maxWords = MAX_CHUNK_WORDS } = {}) {
       let piece = ''
       for (const sentence of text.split(/(?<=[.!?…])\s+/)) {
         if (piece && wordCount(piece) + wordCount(sentence) > maxWords) {
-          chunks.push({ heading, startLine: start, endLine: end, text: piece })
+          keep({ heading, startLine: start, endLine: end, text: piece })
           piece = ''
         }
         piece = piece ? `${piece} ${sentence}` : sentence
       }
-      if (piece) chunks.push({ heading, startLine: start, endLine: end, text: piece })
+      if (piece) keep({ heading, startLine: start, endLine: end, text: piece })
       return
     }
     if (pendingWords + words > maxWords) flush()
@@ -80,11 +87,20 @@ function chunkMarkdown(source, { maxWords = MAX_CHUNK_WORDS } = {}) {
   const endBlock = () => {
     if (!block.length) return
     const text = block.map((item) => item.text).join('\n').trim()
-    if (text) pushParagraph(text, block[0].line, block[block.length - 1].line)
+    if (text && HAS_CONTENT.test(text)) pushParagraph(text, block[0].line, block[block.length - 1].line)
     block = []
   }
 
+  // L'intestazione YAML in testa al file (tra due righe `---`, per esempio quella delle pagine web salvate) è metadato, non testo: non si indicizza (le righe restano quelle).
+  let frontmatterEnd = -1
+  if (lines[0]?.trim() === '---') {
+    for (let index = 1; index < Math.min(lines.length, 80); index += 1) {
+      if (lines[index].trim() === '---') { frontmatterEnd = index; break }
+    }
+  }
+
   lines.forEach((original, index) => {
+    if (index <= frontmatterEnd) return
     const raw = stripEmbeddedData(original)
     const line = index + 1
     const fenceMark = /^\s{0,3}(`{3,}|~{3,})/.exec(raw)
@@ -226,6 +242,11 @@ function openIndex(file, readOnly = false) {
       if (version !== null && version !== String(SCHEMA_VERSION) && !migrated) dropAll(db)
       createSchema(db)
       if (migrated) finishMigrationFrom2(db)
+      // Un chunker diverso: i file si rileggono alla prossima scansione (hash e data azzerati); i vettori dei frammenti identici restano.
+      if (db.prepare("select value from meta where key = 'chunker'").get()?.value !== CHUNKER_VERSION) {
+        db.exec("update files set hash = '', mtime_ms = null")
+        db.prepare("insert or replace into meta(key, value) values ('chunker', ?)").run(CHUNKER_VERSION)
+      }
       db.prepare("insert or replace into meta(key, value) values ('schema', ?)").run(String(SCHEMA_VERSION))
       db.exec('pragma quick_check')
       return db

@@ -122,6 +122,15 @@ function createKnowledgeService({ file, hiddenDirectories = [], createWorker, de
 }
 
 // Il testo che legge un assistente: un blocco per passaggio, con file e righe da aprire con read_file (startLine/endLine).
+// Le parole della ricerca, evidenziate con « » nel percorso dei titoli (lo snippet le evidenzia già nel testo): un passaggio può rispondere perché il titolo contiene la parola.
+// Senza accenti e maiuscole, come la ricerca; una parola che comincia con quella cercata si evidenzia tutta (l'ultima parola cercata vale anche come prefisso).
+function markTerms(text, query) {
+  const fold = (value) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+  const terms = [...new Set((String(query).match(/[\p{L}\p{N}]+/gu) || []).map(fold).filter((term) => term.length >= 2))].slice(0, 12)
+  if (!terms.length) return text
+  return text.replace(/[\p{L}\p{N}]+/gu, (word) => (terms.some((term) => fold(word).startsWith(term)) ? `«${word}»` : word))
+}
+
 function formatKnowledgeResults(query, { mode, results }, { files = 0 } = {}, readTool = 'read_file') {
   if (!files) return 'The search index of this project is empty or still being built: use search_files to look in the files.'
   if (!results.length) return `Nothing found for “${query}” in ${files} indexed documents. Try other words, synonyms or the singular form, or use search_files for an exact text or a regular expression.`
@@ -134,11 +143,11 @@ function formatKnowledgeResults(query, { mode, results }, { files = 0 } = {}, re
     '',
   ]
   results.forEach((entry, position) => {
-    lines.push(`${position + 1}. ${entry.path}:${entry.startLine}-${entry.endLine}${entry.heading ? ` — ${entry.heading}` : ''}`)
+    lines.push(`${position + 1}. ${entry.path}:${entry.startLine}-${entry.endLine}${entry.heading ? ` — ${markTerms(entry.heading, query)}` : ''}`)
     lines.push(`   ${entry.snippet.replace(/\s+/g, ' ').trim()}`)
   })
   lines.push('', `The passages come from an index that can be a few seconds behind the files: read the lines with ${readTool} (startLine/endLine) before quoting or editing them. The words between « » are the matches (a passage chosen by meaning may have none).`)
   return lines.join('\n')
 }
 
-module.exports = { createKnowledgeService, projectKey, formatKnowledgeResults }
+module.exports = { createKnowledgeService, projectKey, formatKnowledgeResults, markTerms }

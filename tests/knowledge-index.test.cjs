@@ -386,3 +386,70 @@ test('chunkMarkdown: le immagini incorporate (data:…;base64) non entrano nei f
   assert.equal(index.search(P, 'iVBORw0KGgoAAAANSUhEUgAA').results.length, 0)
   assert.equal(index.search(P, 'testo dopo').results.length, 1)
 })
+
+// ----- Qualità dei risultati: niente frammenti di soli simboli, parole evidenziate nei titoli, chunker versionato -----
+const { syncTree } = require('../electron/knowledge-sync.cjs')
+const { markTerms, formatKnowledgeResults } = require('../electron/knowledge-service.cjs')
+
+test('chunkMarkdown: i paragrafi di soli simboli (###, ---, ***) non entrano nei frammenti', () => {
+  const chunks = chunkMarkdown('# Titolo\n\n###\n\n---\n\nTesto vero.\n\n***\n')
+  assert.deepEqual(chunks.map((chunk) => [chunk.startLine, chunk.endLine, chunk.text]), [[7, 7, 'Testo vero.']])
+  assert.equal(chunkMarkdown('# A\n\n###\n').length, 0, 'un documento di soli simboli non produce frammenti')
+  assert.equal(chunkMarkdown('```\n###\n```\n').length, 0)
+  assert.equal(chunkMarkdown('# A\n\n```\nx = 1\n```\n').length, 1, 'il codice con lettere resta')
+  assert.equal(chunkMarkdown('# A\n\n2024\n').length, 1, 'una cifra basta')
+})
+
+test('markTerms: evidenzia le parole cercate nel titolo, senza accenti e maiuscole, e il prefisso della parola', () => {
+  assert.equal(markTerms('Partito Edonista Italiano › Perché nasce il PEI', 'edonista perche pei'), 'Partito «Edonista» Italiano › «Perché» nasce il «PEI»')
+  assert.equal(markTerms('Cosa propone il partito', 'prop'), 'Cosa «propone» il partito')
+  assert.equal(markTerms('Niente da evidenziare', 'zzz'), 'Niente da evidenziare')
+  assert.equal(markTerms('Titolo', ''), 'Titolo')
+  assert.equal(markTerms('Un titolo con a e i', 'a'), 'Un titolo con a e i', 'le parole di una sola lettera non si evidenziano')
+  const text = formatKnowledgeResults('edonista', { mode: 'hybrid', results: [{ path: 'a.md', startLine: 1, endLine: 2, heading: 'Il Partito Edonista', snippet: 'testo senza la parola' }] }, { files: 1 })
+  assert.match(text, /a\.md:1-2 — Il Partito «Edonista»/)
+})
+
+test('un chunker nuovo rilegge i file alla scansione successiva senza ricalcolare i vettori dei frammenti rimasti uguali', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ow-chunker-'))
+  const project = path.join(directory, 'p')
+  fs.mkdirSync(project)
+  fs.writeFileSync(path.join(project, 'a.md'), '# A\n\nIl faro segnala la costa.\n\n###\n')
+  const file = path.join(directory, 'k.db')
+  try {
+    const first = createKnowledgeIndex({ file })
+    await syncTree(first, project, '', new Set())
+    // Si simula un indice fatto con un chunker precedente: il frammento di soli simboli c'era, il marcatore di versione no.
+    const { DatabaseSync } = require('node:sqlite')
+    first.close()
+    const old = new DatabaseSync(file)
+    old.prepare("insert into chunks(file_id, ord, heading, start_line, end_line, text, hash) select id, 5, 'A', 5, 5, '###', 'junk' from files").run()
+    old.prepare("delete from meta where key = 'chunker'").run()
+    old.close()
+    const index = createKnowledgeIndex({ file })
+    index.storeEmbeddings('m', index.pendingEmbeddings([project], 'm', 50).map((item) => ({ hash: item.hash, vector: unit(1, 0, 0) })))
+    const before = index.embeddingStats([project], 'm').embedded
+    assert.ok(before >= 1)
+    // La riapertura ha azzerato data e hash dei file: la scansione li rilegge tutti.
+    await syncTree(index, project, '', new Set())
+    assert.deepEqual(index.pendingEmbeddings([project], 'm', 50), [], 'i vettori dei frammenti rimasti uguali si riusano')
+    assert.equal(index.search(project, 'faro').results.length, 1)
+    const { DatabaseSync: Db } = require('node:sqlite')
+    index.close()
+    const check = new Db(file, { readOnly: true })
+    assert.equal(check.prepare("select count(*) as n from chunks where text = '###'").get().n, 0, 'il frammento di soli simboli è sparito')
+    assert.equal(check.prepare("select value from meta where key = 'chunker'").get().value, '3')
+    check.close()
+  } finally { fs.rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('chunkMarkdown: l\'intestazione YAML in testa al file non è testo (e le righe restano quelle); una riga --- a metà no', () => {
+  const chunks = chunkMarkdown('---\nurl: https://x.test/a\ntitle: T\nsaved: 2026-11-05\n---\n\n# T\n\nTesto vero.\n')
+  assert.deepEqual(chunks.map((chunk) => [chunk.startLine, chunk.endLine, chunk.heading, chunk.text]), [[9, 9, 'T', 'Testo vero.']])
+  assert.equal(chunkMarkdown('---\nnon chiusa mai\n\ntesto\n').length, 1, 'un --- iniziale senza chiusura non è un\'intestazione')
+  assert.equal(chunkMarkdown('Prima.\n\n---\n\nSeconda.\n').length, 1, 'un --- a metà documento non tocca nulla')
+  const index = memory()
+  index.indexFile(P, 'web.md', '---\nurl: https://x.test/a\nsaved_by: agent\n---\n\n# Titolo\n\nIl faro.\n')
+  assert.equal(index.search(P, 'saved_by').results.length, 0, 'i metadati non si cercano')
+  assert.equal(index.search(P, 'faro').results.length, 1)
+})
