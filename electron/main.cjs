@@ -1212,12 +1212,14 @@ ipcMain.handle('project:knowledge-rebuild', async (_event, directory) => {
 // Ricerca per rilevanza sull'indice (knowledge-index.cjs): passaggi con file e righe. Non vale per le cartelle di riferimento.
 // Cosa sta fuori da un progetto e si cerca insieme ad esso: le cartelle di riferimento collegate e gli altri progetti che condividono. Per il progetto aperto sono quelle in uso;
 // per un altro progetto (un agente esterno che lavora altrove) si leggono i suoi riferimenti. Senza progetto: tutti i progetti che condividono.
-function outsideFor(base) {
+// `everything` (la ricerca della Home, che è dell'utente e non di un assistente): tutti i progetti con l'indice acceso, anche quelli che non condividono la loro conoscenza. Condividere
+// decide solo cosa vedono gli ALTRI progetti e i loro assistenti; le informazioni, nel proprio indice, ci sono comunque.
+function outsideFor(base, { everything = false } = {}) {
   if (base && projectPath && samePath(base, projectPath)) return outsideFolders()
   let references = []
   try { references = base ? createReferencesStore({ getProjectPath: () => base }).list() : [] } catch { references = [] }
   try {
-    return outsideFoldersOf({ current: base, references, projects: projectsStore.list(), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(), webFolderOf })
+    return outsideFoldersOf({ current: base, references, projects: projectsStore.list(), isShared: (directory) => { const file = createProjectFile({ getProjectPath: () => directory }); return everything ? file.searchIndexEnabled() : file.sharedKnowledgeEnabled() }, webFolderOf })
   } catch { return [] }
 }
 // Ricerca per rilevanza (e per significato, se c'è il modello) nel progetto, nei suoi riferimenti e negli altri progetti. Non dipende dal progetto aperto: `project` (un agente
@@ -1237,7 +1239,7 @@ async function runKnowledgeSearch(args = {}, { project: asked = null, home = fal
   // `others` (o il vecchio `references`): tutto ciò che sta fuori dal progetto, cioè gli altri progetti e le cartelle di riferimento.
   const wanted = String(args.scope || '').toLowerCase()
   const scope = wanted === 'project' ? 'project' : (wanted === 'others' || wanted === 'references') ? 'others' : 'all'
-  const outside = outsideFor(base)
+  const outside = outsideFor(base, { everything: home })
   const sourceOf = (item) => ({ key: knowledge.key(item.path), prefix: `@${item.name}`, item })
   let sources
   let folder = ''
