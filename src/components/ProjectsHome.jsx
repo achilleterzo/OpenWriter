@@ -18,6 +18,12 @@ const EXPANSION_TIMEOUT_MS = 15000
 // Sinonimi già chiesti al modello: la stessa parola (con lo stesso modello) non si chiede due volte, nemmeno tra una sessione e l'altra (30 giorni, al più 300 parole).
 const synonymCache = createSynonymCache({ read: () => getPreference('openwriter.synonymCache'), write: (text) => setPreference('openwriter.synonymCache', text) })
 
+// Memoria della Home. Cambiando progetto l'app mostra la schermata di caricamento al posto di tutto e smonta anche la Home: la ricerca (testo, risultati, sinonimi,
+// «meno pertinenti» mostrati, posizione nell'elenco) sta quindi qui fuori e al ritorno è com'era, finché l'app resta aperta. `done`: la ricerca già fatta (testo e
+// impostazione dei sinonimi), che al ritorno non si ripete.
+const memory = { query: '', search: null, expansion: null, showWeak: false, weakLoaded: false, scrollTop: 0, done: null }
+const blankSearch = () => ({ state: 'idle', results: [], partial: false, weakCount: 0, error: '', query: '' })
+
 // Chiede al modello linguistico i sinonimi della ricerca: il modello di ricerca (impostazioni → assistente di ricerca) se è attivo, altrimenti quello dell'assistente.
 // Vede solo la parola cercata. `use`: { provider, model } del modello di ricerca, o null; `modelId`: identifica il modello che risponde (per la cache). Fallisce con un messaggio comprensibile.
 async function expandQuery(text, use, modelId) {
@@ -60,18 +66,19 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
   const [graph, setGraph] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [query, setQuery] = useState('')
-  const [search, setSearch] = useState({ state: 'idle', results: [], partial: false, weakCount: 0, error: '', query: '' })
+  const [query, setQuery] = useState(memory.query)
+  const [search, setSearch] = useState(() => (memory.search && memory.search.state !== 'loading' ? memory.search : blankSearch()))
   // "Mostra anche meno pertinenti": i passaggi scartati dal filtro si chiedono una volta (`weakLoaded`) e si mostrano o nascondono qui, senza nuova ricerca.
-  const [showWeak, setShowWeak] = useState(false)
-  const weakLoaded = useRef(false)
+  const [showWeak, setShowWeak] = useState(memory.showWeak)
+  const weakLoaded = useRef(memory.weakLoaded)
   // Sinonimi con l'IA: acceso di default (si ricorda la scelta); se l'IA non è attiva la ricerca resta quella di prima e lo dice.
   const [synonyms, setSynonyms] = useState(() => getPreference(SYNONYMS_KEY) !== '0')
   const [aiOn, setAiOn] = useState(true)
   const [researchModel, setResearchModel] = useState(null) // { provider, model } se il modello di ricerca è attivo
   const [modelId, setModelId] = useState('') // il modello che risponde per i sinonimi (provider:modello), chiave della cache
   const [rerun, setRerun] = useState(0) // «Aggiorna» rifà anche la ricerca in corso (l'indice può essere cambiato)
-  const [expansion, setExpansion] = useState({ state: 'idle', terms: [], error: '' })
+  const [expansion, setExpansion] = useState(() => (memory.expansion && ['done', 'off', 'failed'].includes(memory.expansion.state) ? memory.expansion : { state: 'idle', terms: [], error: '' }))
+  useEffect(() => { memory.query = query; memory.search = search; memory.expansion = expansion; memory.showWeak = showWeak; memory.weakLoaded = weakLoaded.current }, [query, search, expansion, showWeak])
   // Il modello di ricerca, se impostato e attivo, funziona anche con l'assistente spento (come per lo strumento `research` della chat).
   useEffect(() => {
     electronAPI.ai?.getSettings?.().then((settings) => {
@@ -86,6 +93,9 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
   const input = useRef(null)
   // Pannello dei risultati: ancorato a destra, si allarga verso sinistra; la larghezza scelta si ricorda. Non può superare lo spazio della Home.
   const sectionRef = useRef(null)
+  const scrollRef = useRef(null)
+  // Tornando nella Home, l'elenco dei risultati riparte da dove era.
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = memory.scrollTop }, [])
   const [room, setRoom] = useState(1200)
   const [width, setWidth] = useState(loadResultsWidth)
   const widthRef = useRef(width)
@@ -132,19 +142,26 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
     const text = query.trim()
     if (Array.from(text).length < MIN_QUERY) {
       sequence.current += 1
-      setSearch({ state: 'idle', results: [], partial: false, weakCount: 0, error: '', query: '' })
+      memory.done = null
+      memory.scrollTop = 0
+      setSearch(blankSearch())
       setExpansion({ state: 'idle', terms: [], error: '' })
       setShowWeak(false)
       weakLoaded.current = false
       return undefined
     }
+    // Ricerca già fatta (tornando nella Home): si tengono i risultati com'erano, senza ripeterla né richiamare l'IA.
+    if (memory.done && memory.done.query === text && memory.done.synonyms === synonyms) return undefined
     const mine = ++sequence.current
     const stale = () => mine !== sequence.current
     const timer = setTimeout(async () => {
+      memory.done = null
+      memory.scrollTop = 0
       setSearch((current) => ({ ...current, state: 'loading', error: '' }))
       setExpansion({ state: 'idle', terms: [], error: '' })
       setShowWeak(false)
       weakLoaded.current = false
+      const finished = () => { if (!stale()) memory.done = { query: text, synonyms } }
       try {
         const answer = await electronAPI.searchProjects({ query: text, maxResults: 20 })
         if (stale()) return
@@ -153,20 +170,22 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
         if (!stale()) setSearch({ state: 'error', results: [], partial: false, weakCount: 0, error: reason.message, query: text })
         return
       }
-      if (!synonyms) return
-      if (!aiOn) { setExpansion({ state: 'off', terms: [], error: '' }); return }
+      if (!synonyms) { finished(); return }
+      if (!aiOn) { setExpansion({ state: 'off', terms: [], error: '' }); finished(); return }
       setExpansion({ state: 'loading', terms: [], error: '' })
       try {
         const terms = await expandQuery(text, researchModel, modelId)
         if (stale()) return
-        if (!terms.length) { setExpansion({ state: 'done', terms: [], error: '' }); return }
+        if (!terms.length) { setExpansion({ state: 'done', terms: [], error: '' }); finished(); return }
         setExpansion({ state: 'searching', terms, error: '' })
         const answer = await electronAPI.searchProjects({ query: text, terms, maxResults: weakLoaded.current ? 30 : 20, includeWeak: weakLoaded.current })
         if (stale()) return
         setSearch({ state: 'done', results: answer.results, partial: Boolean(answer.partial), weakCount: answer.weakCount || 0, error: '', query: text })
         setExpansion({ state: 'done', terms, error: '' })
+        finished()
       } catch (reason) {
         if (!stale()) setExpansion({ state: 'failed', terms: [], error: reason.message })
+        finished()
       }
     }, DEBOUNCE_MS)
     return () => clearTimeout(timer)
@@ -237,7 +256,7 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
           <button type="button" aria-pressed={synonyms} aria-label={t('Synonyms with AI')} title={synonyms ? (researchModel ? t('Synonyms with AI: on, with the research model {model} (it only sees the searched words)', { model: researchModel.model }) : t('Synonyms with AI: on (the AI model only sees the searched words)')) : t('Synonyms with AI: off')} className={`shrink-0 transition ${synonyms ? 'text-accent-400' : 'text-slate-500 hover:text-slate-200'}`} onClick={toggleSynonyms}><Sparkles size={15} /></button>
           {query && <button type="button" aria-label={t('Clear')} title={t('Clear')} className="shrink-0 text-slate-500 transition hover:text-slate-100" onClick={() => { setQuery(''); input.current?.focus() }}><X size={14} /></button>}
         </label>
-        <button type="button" aria-label={t('Refresh')} title={t('Refresh')} disabled={loading} className="pointer-events-auto rounded-lg border border-slate-700 bg-slate-900/90 p-2.5 text-slate-400 shadow-lg backdrop-blur transition hover:text-accent-400 disabled:opacity-50" onClick={() => { load(); setRerun((value) => value + 1) }}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /></button>
+        <button type="button" aria-label={t('Refresh')} title={t('Refresh')} disabled={loading} className="pointer-events-auto rounded-lg border border-slate-700 bg-slate-900/90 p-2.5 text-slate-400 shadow-lg backdrop-blur transition hover:text-accent-400 disabled:opacity-50" onClick={() => { memory.done = null; load(); setRerun((value) => value + 1) }}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /></button>
       </div>
 
       {/* Solo il grafo ha i colori fissi (sfondo grigio scuro, `.home-dark`); ricerca e risultati seguono il tema dell'app. */}
@@ -266,7 +285,7 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
             </span>
             <button type="button" aria-label={t('Close')} title={t('Close')} className="shrink-0 text-slate-500 transition hover:text-slate-100" onClick={() => setQuery('')}><X size={14} /></button>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div ref={scrollRef} onScroll={(event) => { memory.scrollTop = event.currentTarget.scrollTop }} className="min-h-0 flex-1 overflow-y-auto">
             {synonyms && expansion.state !== 'idle' && (
               <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-800/70 px-3 py-2 text-[11px] leading-4 text-slate-500" aria-live="polite">
                 {(expansion.state === 'loading' || expansion.state === 'searching') && <><Loader2 size={11} className="animate-spin" /> {expansion.state === 'loading' ? t('Asking the AI for synonyms…') : t('Searching the synonyms…')}</>}
@@ -278,13 +297,14 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
             )}
             {search.state === 'error' && <p className="p-3 text-xs text-rose-400">{search.error}</p>}
             {search.state === 'done' && search.partial && groups.length > 0 && <p className="border-b border-slate-800/70 px-3 py-2 text-[11px] leading-4 text-slate-500">{t('No passage contains all the words: these contain some of them.')}</p>}
-            {search.state === 'done' && !groups.length && <p className="p-3 text-xs text-slate-500">{t('Nothing relevant found. Only projects that share their knowledge and have an index are searched.')}</p>}
+            {search.state === 'done' && !groups.length && <p className="p-3 text-xs text-slate-500">{t('Nothing relevant found. Only projects with a search index are searched.')}</p>}
             {search.state === 'done' && !groups.length && canRevealWeak && revealButton}
             {groups.map((group) => (
               <div key={group.path} className="border-b border-slate-800/70 last:border-b-0">
                 <button type="button" title={group.path} className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-slate-800/70" onClick={() => onOpenProject(group.path)}>
                   <ProjectAvatar directory={group.path} name={group.name} active={known.has(group.path) && group.path === active} size={26} />
                   <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-100">{group.name}</span>
+                  {known.get(group.path) && !known.get(group.path).shared && <span className="shrink-0 rounded border border-slate-700 px-1.5 text-[10px] text-slate-500" title={t('This project does not share its knowledge with the others: its passages appear only in your own searches')}>{t('Not shared')}</span>}
                   <span className="shrink-0 rounded bg-slate-800 px-1.5 text-[11px] text-slate-400">{group.hits.length}</span>
                 </button>
                 <ul>

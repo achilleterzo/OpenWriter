@@ -1257,7 +1257,6 @@
   "No passage contains all the words: these contain some of them.": "Ningún pasaje contiene todas las palabras: estos contienen algunas.",
   "By meaning": "Por significado",
   "It does not contain the words: it is close in meaning": "No contiene las palabras: es cercano en significado",
-  "Nothing relevant found. Only projects that share their knowledge and have an index are searched.": "No se ha encontrado nada pertinente. Solo se buscan los proyectos que comparten su conocimiento y tienen índice.",
   "Relevance {percent}%: how much this passage stands out from the others for this search{detail}": "Relevancia {percent}%: cuánto destaca este pasaje sobre los demás en esta búsqueda{detail}",
   "Synonyms with AI": "Sinónimos con IA",
   "Synonyms with AI: on (the AI model only sees the searched words)": "Sinónimos con IA: activados (el modelo solo ve las palabras buscadas)",
@@ -1275,5 +1274,8 @@
   "Show less relevant too": "Mostrar también los menos relevantes",
   "Less relevant": "Poco relevante",
   "Below the relevance threshold: shown because you asked for it": "Por debajo del umbral de relevancia: se muestra porque lo has pedido",
-  "Less relevant passages are shown too, ordered by relevance.": "Se muestran también los pasajes menos relevantes, ordenados por relevancia."
+  "Less relevant passages are shown too, ordered by relevance.": "Se muestran también los pasajes menos relevantes, ordenados por relevancia.",
+  "Nothing relevant found. Only projects with a search index are searched.": "No se ha encontrado nada pertinente. Solo se buscan los proyectos con el índice de búsqueda activado.",
+  "Not shared": "No compartido",
+  "This project does not share its knowledge with the others: its passages appear only in your own searches": "Este proyecto no comparte su conocimiento con los demás: sus pasajes aparecen solo en tus propias búsquedas"
 }
