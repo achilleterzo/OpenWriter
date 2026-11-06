@@ -103,6 +103,8 @@ test('servizio con worker: scansione, ricerca, aggiornamento per percorsi, ricos
     createWorker: (workerData) => new Worker(path.join(__dirname, '..', 'electron', 'knowledge-worker.cjs'), { workerData }),
     debounceMs: 20,
   })
+  // Il worker non tiene vivo il processo (è unref): senza un altro handle attivo il test potrebbe finire mentre aspetta la risposta.
+  const keepAlive = setInterval(() => {}, 1000)
   try {
     const scan = await service.sync(p.directory)
     assert.equal(scan.indexed, 1)
@@ -124,6 +126,7 @@ test('servizio con worker: scansione, ricerca, aggiornamento per percorsi, ricos
     assert.equal(rebuilt.indexed, 1)
     assert.equal(service.available, true)
   } finally {
+    clearInterval(keepAlive)
     await service.close()
     p.remove()
     fs.rmSync(directory, { recursive: true, force: true })
