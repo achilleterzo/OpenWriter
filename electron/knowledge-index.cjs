@@ -19,6 +19,16 @@ const SNIPPET_WORDS = 24
 const BUSY_TIMEOUT_MS = 5000
 const RRF_K = 60 // costante della fusione per rango (Reciprocal Rank Fusion): quanto pesa il primo posto rispetto al decimo
 const VECTOR_CANDIDATES = 4 // quanti candidati per risultato chiede la ricerca per significato (poi si fonde e si scarta il resto)
+// Quanto un passaggio deve somigliare alla domanda per contare "per significato". I modelli di testo (e5) danno somiglianze in un intervallo stretto (0,75-0,90):
+// anche una domanda senza risposta ha i suoi "più vicini" a 0,83, quindi una soglia fissa non regge. Si misura invece quanto un passaggio si stacca dagli altri
+// per QUELLA domanda: il suo punteggio z (scostamenti standard sopra la media delle somiglianze con tutti i passaggi cercati).
+const Z_STRONG = 4 // un gruppo si stacca se almeno MIN_STRONG passaggi stanno sopra z 4: senza, i "vicini" sono rumore (anche se una parola compare per caso in un passaggio)
+const MIN_STRONG = 3
+const Z_WITH_WORDS = 3 // dato il gruppo, se anche le parole trovano qualcosa i vicini per significato si aggiungono da z 3…
+const Z_ALONE = 3.5 // …senza parole in comune da z 3,5
+const REL_FLOOR = 2 // fattore di pertinenza mostrato: 0 a z 2 (un passaggio qualunque), 1 a z 6 (un passaggio che si stacca nettamente)
+const REL_CEIL = 6
+const MIN_POPULATION = 60 // con meno vettori la media e la deviazione non dicono nulla: si tiene tutto come prima
 
 const wordCount = (text) => (text.match(/\S+/g) || []).length
 
@@ -130,6 +140,17 @@ function chunkMarkdown(source, { maxWords = MAX_CHUNK_WORDS } = {}) {
 
 // Parole cercate → espressione per MATCH. Ogni parola va tra virgolette (punteggiatura e operatori di FTS5 non devono mai arrivare alla sintassi) e
 // l'ultima è un prefisso (si cerca mentre si scrive). Una frase tra virgolette resta una frase. `mode`: 'and' (tutte) o 'or' (almeno una).
+const STOPWORDS = new Set(`
+a ad al alla alle allo agli ai all anche che chi ci col come con contro cui da dal dalla dalle dallo dai dagli dei del della delle dello degli di dove e ed era gli ha ho i il in io la le lei lo loro lui ma mi mia
+miei mio ne nel nella nelle nello nei negli noi non o per più se si sono su sul sulla sulle sullo sui sugli tra fra tu tua tuo un una uno vi voi
+the of and to in is it that for on with as by at an be this from or are was were not but have has had
+el la los las un una unos unas de del y o que en con por para se su sus al lo como pero más
+le la les un une des du de et ou que qui dans pour par sur avec au aux ce ces son sa ses est sont pas mais plus
+der die das ein eine einen und oder dass nicht mit von zu im am auf für ist sind den dem des
+o os as um uma uns umas do dos da das no nos na nas em com para por
+`.split(/\s+/).filter(Boolean))
+
+// `mode` 'or': le parole funzionali (di, della, the…) non contano: "almeno una parola" con "di" trova qualsiasi cosa. Se la domanda è fatta solo di quelle, restano.
 function buildMatchQuery(input, mode = 'and') {
   const terms = []
   const text = String(input ?? '')
@@ -139,7 +160,11 @@ function buildMatchQuery(input, mode = 'and') {
     if (words?.length) phrases.push(`"${words.join(' ')}"`)
     return ' '
   })
-  const words = rest.match(/[\p{L}\p{N}]+/gu) || []
+  let words = rest.match(/[\p{L}\p{N}]+/gu) || []
+  if (mode === 'or') {
+    const meaningful = words.filter((word) => !STOPWORDS.has(word.toLowerCase()))
+    if (meaningful.length) words = meaningful
+  }
   for (const [index, word] of words.entries()) terms.push(index === words.length - 1 && !phrases.length && word.length >= 2 ? `"${word}"*` : `"${word}"`)
   const all = [...phrases, ...terms].slice(0, MAX_QUERY_TERMS)
   return all.join(mode === 'or' ? ' OR ' : ' ')
@@ -284,6 +309,22 @@ function fuseRanked(lists) {
 }
 
 /**
+ * Quali vicini "per significato" sono davvero pertinenti. `items`: [{ similarity }] dal più vicino; `stats`: { population, mean, std } delle somiglianze della domanda
+ * con tutti i passaggi cercati; `hasWords`: le parole della domanda hanno già trovato dei passaggi. Una domanda senza risposta ("Tardigrado") non dà passaggi:
+ * meglio nessun risultato che dieci a caso. Ogni elemento tenuto riceve `z`.
+ */
+function relevantNeighbors(items, stats, hasWords) {
+  if (!stats || stats.population < MIN_POPULATION || !(stats.std > 1e-6)) return items
+  const scored = items.map((item) => ({ ...item, z: (item.similarity - stats.mean) / stats.std }))
+  // Il gruppo che si stacca serve sempre: una sola parola trovata per caso non rende pertinenti i passaggi "vicini" a essa.
+  if (scored.filter((item) => item.z >= Z_STRONG).length < MIN_STRONG) return []
+  return scored.filter((item) => item.z >= (hasWords ? Z_WITH_WORDS : Z_ALONE))
+}
+
+// Il fattore di pertinenza (0-1) di un passaggio, da z.
+const relevanceOf = (z) => Math.max(0, Math.min(1, (z - REL_FLOOR) / (REL_CEIL - REL_FLOOR)))
+
+/**
  * `file`: percorso del database (o ':memory:' nei test); `readOnly`: solo ricerca, senza mai toccare il file (vedi openReadOnly). Ogni funzione prende il progetto (la sua radice, una stringa qualsiasi purché sempre la
  * stessa) e percorsi relativi con `/`.
  */
@@ -311,27 +352,36 @@ function createKnowledgeIndex({ file, readOnly = false }) {
     const scratch = new Float32Array(dimensions)
     const scratchBytes = new Uint8Array(scratch.buffer)
     const best = [] // [{ id, similarity }] in ordine decrescente, lungo al più `count`
+    // Media e deviazione di tutte le somiglianze (Welford): il confronto è già esaustivo, la statistica non costa nulla in più.
+    const stats = { population: 0, mean: 0, std: 0 }
+    let spread = 0
     for (const row of rows) {
       if (row.vector.byteLength !== scratchBytes.byteLength) continue
       scratchBytes.set(row.vector)
       let similarity = 0
       for (let k = 0; k < dimensions; k += 1) similarity += scratch[k] * queryVector[k]
+      stats.population += 1
+      const delta = similarity - stats.mean
+      stats.mean += delta / stats.population
+      spread += delta * (similarity - stats.mean)
       if (best.length >= count && similarity <= best[best.length - 1].similarity) continue
       let position = best.length
       while (position > 0 && best[position - 1].similarity < similarity) position -= 1
       best.splice(position, 0, { id: row.id, similarity })
       if (best.length > count) best.pop()
     }
-    if (!best.length) return []
+    stats.std = stats.population > 1 ? Math.sqrt(spread / stats.population) : 0
+    if (!best.length) return { items: [], stats }
     const details = new Map(db.prepare(`
       select c.id as id, f.project as project, f.path as path, c.heading as heading, c.start_line as startLine, c.end_line as endLine, c.text as text
       from chunks c join files f on f.id = c.file_id where c.id in (${best.map(() => '?').join(',')})
     `).all(...best.map((item) => item.id)).map((row) => [row.id, row]))
-    return best.filter((item) => details.has(item.id)).map((item) => {
+    const items = best.filter((item) => details.has(item.id)).map((item) => {
       const { text, ...row } = details.get(item.id)
       const words = text.replace(/\s+/g, ' ').trim().split(' ')
       return { ...row, snippet: words.slice(0, SNIPPET_WORDS * 2).join(' ') + (words.length > SNIPPET_WORDS * 2 ? '…' : ''), similarity: item.similarity }
     })
+    return { items, stats }
   }
 
   return {
@@ -409,7 +459,7 @@ function createKnowledgeIndex({ file, readOnly = false }) {
      * semantic-embedder.cjs) la ricerca per parole si fonde con quella per significato: stessa lista, ordinata per rango in entrambe.
      * → { mode: 'and' | 'or' | 'hybrid', results: [{ id, project, path, heading, startLine, endLine, snippet, score }] }
      */
-    search(projectOrProjects, query, { limit = DEFAULT_LIMIT, folder = '', maxPerFile = DEFAULT_PER_FILE, queryVector = null, model = '' } = {}) {
+    search(projectOrProjects, query, { limit = DEFAULT_LIMIT, folder = '', maxPerFile = DEFAULT_PER_FILE, queryVector = null, model = '', includeWeak = false } = {}) {
       const size = Math.min(MAX_LIMIT, Math.max(1, Math.round(Number(limit)) || DEFAULT_LIMIT))
       const perFile = Math.max(1, Math.round(Number(maxPerFile)) || DEFAULT_PER_FILE)
       const scope = String(folder || '').replace(/^\/+|\/+$/g, '')
@@ -448,17 +498,63 @@ function createKnowledgeIndex({ file, readOnly = false }) {
         }
         return results
       }
+      // A ogni risultato (anche a quelli trovati dalle parole) si dà il fattore di pertinenza 0-1: il maggiore tra la vicinanza di significato (dal punteggio z, con
+      // somiglianza e z) e quella delle parole (un passaggio che contiene tutte le parole vale almeno 0,6; uno che ne contiene solo alcune, 0,25).
+      const annotate = (results, stats) => {
+        if (!results.length) return results
+        const usable = Boolean(stats) && stats.population >= MIN_POPULATION && stats.std > 1e-6
+        const missing = usable ? results.filter((row) => row.similarity === undefined).map((row) => row.id) : []
+        const known = new Map()
+        if (missing.length) {
+          const found = db.prepare(`
+            select c.id as id, e.vector as vector from chunks c join embeddings e on e.hash = c.hash and e.model = ?
+            where c.id in (${missing.map(() => '?').join(',')})
+          `).all(model, ...missing)
+          for (const entry of found) {
+            if (entry.vector.byteLength !== queryVector.length * 4) continue
+            const copy = new Float32Array(queryVector.length)
+            new Uint8Array(copy.buffer).set(entry.vector)
+            let similarity = 0
+            for (let k = 0; k < copy.length; k += 1) similarity += copy[k] * queryVector[k]
+            known.set(entry.id, similarity)
+          }
+        }
+        const wordsFloor = mode === 'and' ? 0.6 : 0.25
+        return results.map((row) => {
+          const byWords = row.via === undefined || row.via !== 'meaning'
+          const similarity = usable ? (row.similarity ?? known.get(row.id)) : undefined
+          const z = similarity === undefined ? undefined : (similarity - stats.mean) / stats.std
+          const semantic = z === undefined ? 0 : relevanceOf(z)
+          if (z === undefined && !byWords) return row
+          return { ...row, ...(z === undefined ? {} : { similarity, z }), relevance: Math.max(semantic, byWords ? wordsFloor : 0) }
+        })
+      }
       let mode = 'and'
       let rows = lexical('and')
       if (!rows.length) { mode = 'or'; rows = lexical('or') }
       if (!queryVector || !model) return { mode, results: finalize(rows) }
-      const nearest = vectorCandidates(projects, queryVector, scope, size * perFile * VECTOR_CANDIDATES, model)
-      if (!nearest.length) return { mode, results: finalize(rows) }
-      // Con il significato a disposizione, "almeno una parola" non serve più: farebbe salire per una parola comune (di, per, il) frammenti che non c'entrano.
-      return { mode: 'hybrid', results: finalize(fuseRanked([mode === 'and' ? rows : [], nearest])) }
+      const near = vectorCandidates(projects, queryVector, scope, size * perFile * VECTOR_CANDIDATES, model)
+      // Solo i vicini che si staccano davvero dagli altri; se nessuno lo fa, resta la ricerca per parole (anche vuota).
+      const nearest = relevantNeighbors(near.items, near.stats, rows.length > 0)
+      // I vicini scartati dal filtro sono i "meno pertinenti": si contano sempre (`weakCount`) e, con `includeWeak`, si aggiungono ai risultati con `weak: true`.
+      // Allora tutto si ordina per pertinenza (il fattore 0-1 di `annotate`), dal più al meno pertinente.
+      const keptIds = new Set(nearest.map((item) => item.id))
+      const filtering = Boolean(near.stats) && near.stats.population >= MIN_POPULATION && near.stats.std > 1e-6
+      const weakItems = filtering ? near.items.filter((item) => !keptIds.has(item.id)) : []
+      const weakCount = weakItems.length
+      const partial = mode === 'or' && rows.length > 0
+      if (includeWeak && weakCount) {
+        const pool = fuseRanked([rows, [...nearest, ...weakItems.map((item) => ({ ...item, weak: true }))]])
+        const ranked = annotate(pool, near.stats).sort((a, b) => (b.relevance ?? 0) - (a.relevance ?? 0))
+        return { mode: nearest.length || rows.length ? 'hybrid' : mode, partial, weakCount, results: finalize(ranked) }
+      }
+      if (!nearest.length) return { mode, weakCount, results: annotate(finalize(rows), near.stats) }
+      // Le parole parziali ("almeno una", senza le parole funzionali) si fondono con il significato; `partial`: nessun passaggio le ha tutte.
+      return { mode: 'hybrid', partial, weakCount, results: annotate(finalize(fuseRanked([rows, nearest])), near.stats) }
     },
 
     // ----- Ricerca per significato: i vettori sono una cache dei frammenti, mai l'unica copia di qualcosa. -----
+
 
     // Testi (distinti) dei frammenti dei progetti che non hanno ancora il vettore di questo modello.
     pendingEmbeddings(projects, model, limit = 16) {
@@ -504,6 +600,40 @@ function createKnowledgeIndex({ file, readOnly = false }) {
       return { total: Number(total.n), embedded: Number(embedded.n) }
     },
 
+    // Il "centro" semantico di ogni progetto: la media normalizzata dei vettori dei suoi frammenti (per il grafo dei progetti).
+    // → { [project]: { count, vector: Float32Array } }; un progetto senza vettori di questo modello non compare.
+    projectCentroids(projects, model) {
+      const list = [...new Set(projects)]
+      const result = {}
+      if (!list.length || !model) return result
+      const sums = new Map()
+      const rows = db.prepare(`
+        select f.project as project, e.vector as vector
+        from embeddings e join chunks c on c.hash = e.hash join files f on f.id = c.file_id
+        where e.model = ? and f.project in (${list.map(() => '?').join(',')})
+      `).iterate(model, ...list)
+      const scratch = new Float32Array(1024)
+      for (const row of rows) {
+        const dimensions = row.vector.byteLength / 4
+        if (!Number.isInteger(dimensions) || dimensions < 1 || dimensions > scratch.length) continue
+        new Uint8Array(scratch.buffer).set(row.vector)
+        let entry = sums.get(row.project)
+        if (!entry) { entry = { count: 0, sum: new Float64Array(dimensions) }; sums.set(row.project, entry) }
+        if (entry.sum.length !== dimensions) continue
+        for (let k = 0; k < dimensions; k += 1) entry.sum[k] += scratch[k]
+        entry.count += 1
+      }
+      for (const [project, { count, sum }] of sums) {
+        let norm = 0
+        for (let k = 0; k < sum.length; k += 1) norm += sum[k] * sum[k]
+        norm = Math.sqrt(norm) || 1
+        const vector = new Float32Array(sum.length)
+        for (let k = 0; k < sum.length; k += 1) vector[k] = sum[k] / norm
+        result[project] = { count, vector }
+      }
+      return result
+    },
+
     stats(project) {
       const files = db.prepare('select count(*) as files, max(indexed_at) as updatedAt from files where project = ?').get(project)
       const chunks = db.prepare('select count(*) as chunks from chunks c join files f on f.id = c.file_id where f.project = ?').get(project)
@@ -514,4 +644,4 @@ function createKnowledgeIndex({ file, readOnly = false }) {
   }
 }
 
-module.exports = { createKnowledgeIndex, chunkMarkdown, buildMatchQuery, fuseRanked, embeddingText, isAvailable, SCHEMA_VERSION }
+module.exports = { createKnowledgeIndex, chunkMarkdown, buildMatchQuery, fuseRanked, relevantNeighbors, embeddingText, isAvailable, SCHEMA_VERSION }

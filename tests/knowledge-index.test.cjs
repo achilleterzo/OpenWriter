@@ -3,7 +3,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { createKnowledgeIndex, chunkMarkdown, buildMatchQuery, SCHEMA_VERSION } = require('../electron/knowledge-index.cjs')
+const { createKnowledgeIndex, chunkMarkdown, buildMatchQuery, relevantNeighbors, SCHEMA_VERSION } = require('../electron/knowledge-index.cjs')
 
 const P = 'D:/progetto'
 const memory = () => createKnowledgeIndex({ file: ':memory:' })
@@ -452,4 +452,102 @@ test('chunkMarkdown: l\'intestazione YAML in testa al file non è testo (e le ri
   index.indexFile(P, 'web.md', '---\nurl: https://x.test/a\nsaved_by: agent\n---\n\n# Titolo\n\nIl faro.\n')
   assert.equal(index.search(P, 'saved_by').results.length, 0, 'i metadati non si cercano')
   assert.equal(index.search(P, 'faro').results.length, 1)
+})
+
+// ----- Pertinenza: un vicino "per significato" conta solo se si stacca dagli altri per quella domanda -----
+
+test('relevantNeighbors: senza abbastanza vettori non si giudica (si tiene tutto), con statistica degenere neppure', () => {
+  const items = [{ similarity: 0.8 }, { similarity: 0.79 }]
+  assert.equal(relevantNeighbors(items, { population: 10, mean: 0.7, std: 0.02 }, false), items)
+  assert.equal(relevantNeighbors(items, { population: 500, mean: 0.7, std: 0 }, false), items)
+})
+
+test('relevantNeighbors: una domanda senza risposta (nessun gruppo staccato) non dà nulla; un gruppo staccato sì', () => {
+  const stats = { population: 4000, mean: 0.76, std: 0.02 }
+  // z = (s - 0,76) / 0,02: un solo caso fortuito sopra z 4 non basta.
+  const loneOutlier = [0.85, 0.83, 0.82, 0.81].map((similarity) => ({ similarity }))
+  assert.deepEqual(relevantNeighbors(loneOutlier, stats, false), [])
+  // Tre sopra z 4 (0,84): il gruppo si stacca, e restano quelli da z 3,5 (0,83). Valori lontani dalle soglie, per non dipendere dagli arrotondamenti.
+  const group = [0.90, 0.87, 0.85, 0.835, 0.82].map((similarity) => ({ similarity }))
+  const kept = relevantNeighbors(group, stats, false)
+  assert.deepEqual(kept.map((item) => item.similarity), [0.90, 0.87, 0.85, 0.835])
+  assert.ok(kept.every((item) => item.z >= 3.5))
+})
+
+test('relevantNeighbors: il gruppo staccato serve sempre; con parole trovate i vicini si prendono da z 3, senza da z 3,5', () => {
+  const stats = { population: 4000, mean: 0.76, std: 0.02 }
+  const group = [0.90, 0.87, 0.85, 0.825, 0.80].map((similarity) => ({ similarity }))
+  assert.deepEqual(relevantNeighbors(group, stats, true).map((item) => item.similarity), [0.90, 0.87, 0.85, 0.825])
+  assert.deepEqual(relevantNeighbors(group, stats, false).map((item) => item.similarity), [0.90, 0.87, 0.85])
+  // Una parola trovata per caso non rende pertinenti i "vicini" di una domanda senza gruppo (il caso "Tardigrado").
+  const noGroup = [0.85, 0.83, 0.825, 0.82].map((similarity) => ({ similarity }))
+  assert.deepEqual(relevantNeighbors(noGroup, stats, true), [])
+})
+
+test('buildMatchQuery: in modo "or" le parole funzionali non contano (salvo che la domanda sia fatta solo di quelle)', () => {
+  assert.equal(buildMatchQuery('tecniche di sopravvivenza dei tardigradi', 'or'), '"tecniche" OR "sopravvivenza" OR "tardigradi"*')
+  assert.equal(buildMatchQuery('tecniche di sopravvivenza', 'and'), '"tecniche" "di" "sopravvivenza"*')
+  assert.equal(buildMatchQuery('di della', 'or'), '"di" OR "della"*')
+})
+
+test('search: con tanti vettori una domanda senza gruppo staccato non restituisce vicini a caso', () => {
+  const index = memory()
+  const M = 'm-pertinenza'
+  const dims = 8
+  const unitN = (values) => { const norm = Math.hypot(...values); return Float32Array.from(values.map((value) => value / norm)) }
+  // 80 passaggi con vettori quasi uguali tra loro (rumore piccolo): nessuno si stacca dagli altri per la domanda.
+  for (let n = 0; n < 80; n += 1) index.indexFile(P, `f${n}.md`, `# T${n}\n\nTesto numero ${n} senza particolarità.\n`)
+  const pending = index.pendingEmbeddings([P], M, 200)
+  index.storeEmbeddings(M, pending.map((item, i) => ({ hash: item.hash, vector: unitN(Array.from({ length: dims }, (_, k) => (k === 0 ? 1 : ((i * 7 + k * 13) % 11) / 100))) })))
+  const query = unitN([1, 0.05, 0.02, 0.03, 0.01, 0.04, 0.02, 0.01])
+  const found = index.search(P, 'tardigrado', { queryVector: query, model: M })
+  assert.equal(found.results.length, 0)
+  assert.notEqual(found.mode, 'hybrid')
+  index.close()
+})
+
+test('search: ogni risultato ha somiglianza, z e fattore di pertinenza (anche quello trovato solo dalle parole)', () => {
+  const index = memory()
+  const M = 'm-fattore'
+  const unitN = (values) => { const norm = Math.hypot(...values); return Float32Array.from(values.map((value) => value / norm)) }
+  for (let n = 0; n < 80; n += 1) index.indexFile(P, `f${n}.md`, `# T${n}\n\nTesto numero ${n} generico.\n`)
+  index.indexFile(P, 'gatti.md', '# Gatti\n\nI gatti dormono molto durante il giorno.\n')
+  index.indexFile(P, 'gatti2.md', '# Gatti 2\n\nUn gatto domestico caccia di notte.\n')
+  index.indexFile(P, 'gatti3.md', '# Gatti 3\n\nIl gatto fa le fusa quando è contento.\n')
+  const pending = index.pendingEmbeddings([P], M, 500)
+  const text = new Map(pending.map((item) => [item.hash, item.text]))
+  const vector = (item, i) => (/gatt/i.test(text.get(item.hash)) ? unitN([1, 0.05, 0.02, 0, 0, 0, 0, 0]) : unitN([0.2, 1, ((i * 7) % 13) / 30, ((i * 3) % 11) / 30, ((i * 5) % 7) / 30, 0.1, 0.05, 0.02]))
+  index.storeEmbeddings(M, pending.map((item, i) => ({ hash: item.hash, vector: vector(item, i) })))
+  const found = index.search(P, 'gatto', { queryVector: unitN([1, 0.04, 0.02, 0, 0, 0, 0, 0]), model: M })
+  assert.equal(found.mode, 'hybrid')
+  assert.ok(found.results.length >= 3)
+  for (const row of found.results) {
+    assert.ok(Number.isFinite(row.z) && row.relevance >= 0 && row.relevance <= 1, JSON.stringify(row))
+  }
+  assert.ok(found.results[0].relevance > 0.7, `pertinenza ${found.results[0].relevance}`)
+  assert.ok(found.results.every((row) => /gatt/i.test(row.path)), 'solo i passaggi sui gatti')
+  index.close()
+})
+
+test('search: con includeWeak si aggiungono i meno pertinenti (weak), sempre ordinati per pertinenza; senza, si contano soltanto', () => {
+  const index = memory()
+  const M = 'm-weak'
+  const unitN = (values) => { const norm = Math.hypot(...values); return Float32Array.from(values.map((value) => value / norm)) }
+  for (let n = 0; n < 80; n += 1) index.indexFile(P, `f${n}.md`, `# T${n}\n\nTesto numero ${n} generico.\n`)
+  for (let n = 1; n <= 3; n += 1) index.indexFile(P, `gatti${n}.md`, `# Gatti ${n}\n\nIl gatto dorme sul divano, ${n} volta al giorno.\n`)
+  const pending = index.pendingEmbeddings([P], M, 500)
+  const text = new Map(pending.map((item) => [item.hash, item.text]))
+  index.storeEmbeddings(M, pending.map((item, i) => ({ hash: item.hash, vector: /gatt/i.test(text.get(item.hash)) ? unitN([1, 0.05, 0.02, 0, 0, 0, 0, 0]) : unitN([0.2, 1, ((i * 7) % 13) / 30, ((i * 3) % 11) / 30, ((i * 5) % 7) / 30, 0.1, 0.05, 0.02]) })))
+  const options = { queryVector: unitN([1, 0.04, 0.02, 0, 0, 0, 0, 0]), model: M, limit: 12, maxPerFile: 1 }
+  const strict = index.search(P, 'felino', options)
+  assert.ok(strict.weakCount > 0, 'ci sono passaggi scartati')
+  assert.ok(strict.results.length >= 1 && strict.results.every((row) => !row.weak && /gatti/.test(row.path)))
+  const all = index.search(P, 'felino', { ...options, includeWeak: true })
+  assert.ok(all.results.length > strict.results.length)
+  assert.ok(all.results.some((row) => row.weak === true))
+  assert.ok(all.results.filter((row) => !row.weak).every((row) => /gatti/.test(row.path)))
+  const relevances = all.results.map((row) => row.relevance)
+  assert.deepEqual(relevances, [...relevances].sort((a, b) => b - a), 'ordinati per pertinenza')
+  assert.ok(!all.results[0].weak, 'in cima i pertinenti')
+  index.close()
 })
