@@ -79,7 +79,7 @@ async function syncPaths(index, project, relatives, hidden = new Set()) {
       continue
     }
     let stat = null
-    try { stat = await fs.stat(path.join(project, ...parts)) } catch { /* non esiste più */ }
+    try { stat = await fs.lstat(path.join(project, ...parts)) } catch { /* non esiste più */ }
     if (!stat) { summary.removed += index.removePath(project, relative); continue }
     if (stat.isDirectory()) { add(await syncTree(index, project, relative, hidden)); continue }
     if (!stat.isFile() || !isIndexableName(parts[parts.length - 1])) { summary.removed += index.removeFile(project, relative) ? 1 : 0; continue }
