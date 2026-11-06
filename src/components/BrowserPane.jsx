@@ -3,11 +3,14 @@ import { subscribeAppearance } from '../appearance.js'
 import { ArrowLeft, ArrowRight, BookOpen, Camera, Clock, ExternalLink, FileDown, Loader2, Minus, Moon, Plus, RotateCw, Star, Sun, X } from 'lucide-react'
 import { articleFileName, articleToMarkdown, extractArticle, readerDocument } from '../lib/readerMode.js'
 import { saveFromController } from '../lib/webReferences.js'
+import { isPrivateHost } from '../lib/webAddress.js'
 import { t } from '../i18n/index.js'
 
 const SETTLE_MS = 700
 const NAVIGATION_TIMEOUT_MS = 25000
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms) })
+// Una pagina web (http o https) di una rete locale o privata; about:blank e simili no.
+const isPrivateUrl = (value) => { try { const url = new URL(value); return /^https?:$/.test(url.protocol) && isPrivateHost(url.hostname) } catch { return false } }
 
 // Indirizzo digitato: URL completo, dominio senza protocollo oppure ricerca.
 function toAddress(input) {
@@ -105,9 +108,18 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
     // Le navigazioni comandate dall'assistente (controller qui sotto) vanno nella sua cronologia, a parte; il resto è dell'utente.
     let agentActive = 0
     let agentUntil = 0
+    // Durante una navigazione dell'assistente il processo principale impedisce di arrivare alla rete locale o privata (anche per reindirizzamento o DNS);
+    // se la scheda ci è comunque finita (script della pagina), viene svuotata e l'azione fallisce.
+    const guard = (on) => window.electronAPI?.guardAgentBrowser?.({ contentsId: view.getWebContentsId(), on }).catch(() => {})
     const byAgent = async (action) => {
       agentActive += 1
-      try { return await action() } finally { agentActive -= 1; agentUntil = Date.now() + SETTLE_MS + 1000 }
+      await whenReady()
+      await guard(true)
+      try {
+        const result = await action()
+        if (isPrivateUrl(view.getURL())) { view.loadURL('about:blank').catch(() => {}); throw new Error('Local and private-network addresses are not allowed') }
+        return result
+      } finally { await guard(false); agentActive -= 1; agentUntil = Date.now() + SETTLE_MS + 1000 }
     }
     const remember = (url, title) => { if (/^https?:/i.test(url)) window.electronAPI?.browserHistory?.add({ url, title, agent: agentActive > 0 || Date.now() < agentUntil }).catch(() => {}) }
     const onNavigate = (event) => { setAddress(event.url); syncHistory() }

@@ -1452,6 +1452,37 @@ ipcMain.handle('browser:set-color-scheme', async (_event, { contentsId, dark } =
     return false
   }
 })
+// Navigazioni comandate dall'assistente o da un agente: mentre durano, la scheda non può raggiungere la rete locale o privata, né aprendo l'indirizzo né seguendo un
+// reindirizzamento, né con un nome che il DNS risolve in un indirizzo privato (vedi private-address.mjs). Le pagine che l'utente apre da sé non sono toccate.
+const guardedBrowsers = new Set()
+const guardedSessions = new WeakSet()
+const privateAddress = () => import(pathToFileURL(path.join(__dirname, 'private-address.mjs')).href)
+async function isPublicDestination(rawUrl) {
+  const { isPrivateHost, isPrivateAddress } = await privateAddress()
+  let url
+  try { url = new URL(rawUrl) } catch { return false }
+  if (!/^https?:$/.test(url.protocol) || isPrivateHost(url.hostname)) return false
+  const host = url.hostname.replace(/^\[|\]$/g, '')
+  if (isPrivateAddress(host)) return false
+  try {
+    const found = await require('node:dns').promises.lookup(host, { all: true })
+    return found.every((entry) => !isPrivateAddress(entry.address))
+  } catch { return true } // non si risolve: la pagina non si caricherebbe comunque
+}
+function guardSession(contents) {
+  if (guardedSessions.has(contents.session)) return
+  guardedSessions.add(contents.session)
+  contents.session.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
+    if (!guardedBrowsers.has(details.webContentsId) || !['mainFrame', 'subFrame'].includes(details.resourceType)) { callback({}); return }
+    isPublicDestination(details.url).then((allowed) => callback({ cancel: !allowed }), () => callback({ cancel: true }))
+  })
+}
+ipcMain.handle('browser:guard-agent', (_event, { contentsId, on } = {}) => {
+  const contents = webContents.fromId(Number(contentsId))
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) return false
+  if (on) { guardSession(contents); guardedBrowsers.add(contents.id) } else guardedBrowsers.delete(contents.id)
+  return true
+})
 // Schermata della scheda del browser, a piena risoluzione, salvata come PNG in <progetto>/screenshots/. Restituisce il percorso del file.
 ipcMain.handle('browser:save-screenshot', async (_event, { contentsId, title } = {}) => {
   if (!projectPath) throw new Error(t('Open a project folder to save screenshots'))
