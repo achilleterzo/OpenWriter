@@ -1,0 +1,416 @@
+/**
+ * Il disegno della rete dei progetti in WebGL2, senza librerie: le bolle sono quadrati istanziati con l'icona presa da un atlante di texture
+ * (maschera circolare, bordo e alone nello shader); le sinapsi sono curve quadratiche a nastro con un impulso luminoso che scorre lungo la linea.
+ * Il canvas è trasparente (sotto c'è lo sfondo dell'app). Le etichette non si disegnano qui: sono testo HTML sopra il canvas.
+ * Il chiamante tiene la fisica (graphLayout.js) e passa a `draw` le posizioni in coordinate del mondo (origine al centro) e la camera.
+ */
+const CELL = 128 // lato di una cella dell'atlante, in pixel
+const COLUMNS = 8
+const SEGMENTS = 28 // tratti di ogni sinapsi
+
+const BACKDROP_VERTEX = `#version 300 es
+void main() {
+  // Un triangolo che copre tutto lo schermo, senza buffer.
+  vec2 corners[3] = vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+  gl_Position = vec4(corners[gl_VertexID], 0.0, 1.0);
+}`
+
+// Lo sfondo: un piano grigio con vista d'orizzonte. Il cielo si schiarisce verso l'orizzonte, il piano è una griglia in prospettiva che svanisce nella foschia,
+// i bordi si scuriscono. Sempre grigi neutri (indipendenti dal tema). Con la vista che si sposta la griglia scorre piano (parallasse: è lontana).
+const BACKDROP_FRAGMENT = `#version 300 es
+precision highp float;
+uniform vec2 canvasSize;
+uniform vec2 pan;
+uniform float zoom;
+uniform float time;
+out vec4 color;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+void main() {
+  vec2 uv = gl_FragCoord.xy / canvasSize;
+  float t = 1.0 - uv.y;                 // 0 in alto, 1 in basso
+  float aspect = canvasSize.x / canvasSize.y;
+  float horizon = 0.34;
+  vec3 skyTop = vec3(0.070, 0.070, 0.078);
+  // All'orizzonte cielo e piano hanno lo STESSO grigio: nessun salto di colore, la linea si scioglie.
+  vec3 skyLow = vec3(0.190, 0.190, 0.205);
+  vec3 floorFar = skyLow;
+  vec3 floorNear = vec3(0.078, 0.078, 0.086);
+  vec3 col;
+  if (t < horizon) {
+    col = mix(skyTop, skyLow, pow(t / horizon, 1.9));
+  } else {
+    float d = (t - horizon) / (1.0 - horizon);          // 0 all'orizzonte, 1 in basso
+    col = mix(floorFar, floorNear, pow(d, 0.5));
+    float depth = 1.0 / max(d, 0.003);                  // 1 vicino, grande lontano
+    float scale = 1.35 * pow(zoom, 0.5);
+    vec2 plane = vec2((uv.x - 0.5) * aspect * depth, depth) * scale;
+    plane += vec2(pan.x, pan.y + time * 14.0) * 0.0032;
+    vec2 cell = abs(fract(plane - 0.5) - 0.5) / max(fwidth(plane), vec2(1e-5));
+    float line = 1.0 - min(min(cell.x, cell.y), 1.0);
+    float near = smoothstep(0.04, 0.5, d);              // lontano le linee si perdono nella foschia
+    col += vec3(0.50, 0.50, 0.54) * line * 0.15 * near;
+  }
+  // Foschia all'orizzonte: una fascia chiara che unisce cielo e piano.
+  // Più larga sopra che sotto (la luce si perde nel cielo) e più tenue: luminosità e foschia si fondono senza un bordo.
+  float spread = t < horizon ? 0.16 : 0.10;
+  float haze = exp(-pow((t - horizon) / spread, 2.0));
+  col = mix(col, vec3(0.262, 0.262, 0.280), haze * 0.50);
+  // Bordi più scuri: attira lo sguardo al centro.
+  float vignette = smoothstep(1.05, 0.30, length((uv - 0.5) * vec2(aspect * 0.75, 1.0)));
+  col *= mix(0.66, 1.0, vignette);
+  // Un velo di rumore: niente "scalini" nelle sfumature scure.
+  col += (hash(gl_FragCoord.xy + fract(time)) - 0.5) / 255.0;
+  color = vec4(col, 1.0);
+}`
+
+const NODE_VERTEX = `#version 300 es
+precision highp float;
+layout(location = 0) in vec2 corner;
+layout(location = 1) in vec4 body;   // centro (x, y), raggio, indice cella
+layout(location = 2) in vec4 mood;   // evidenziata, attenuata, tipo (0 normale, 1 non connesso), vuoto
+uniform vec2 resolution;
+uniform vec2 pan;
+uniform float zoom;
+out vec2 local;
+out float cell;
+out vec4 moodOut;
+void main() {
+  float reach = body.z * 1.7;
+  vec2 world = body.xy + corner * reach;
+  vec2 screen = (world - pan) * zoom;
+  gl_Position = vec4(screen.x / (resolution.x * 0.5), -screen.y / (resolution.y * 0.5), 0.0, 1.0);
+  local = corner * 1.7;
+  cell = body.w;
+  moodOut = mood;
+}`
+
+const NODE_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 local;
+in float cell;
+in vec4 moodOut;
+uniform sampler2D atlas;
+uniform vec2 atlasGrid;   // colonne, righe
+uniform vec3 accent;
+uniform vec3 border;
+uniform float time;
+out vec4 color;
+void main() {
+  float r = length(local);
+  float edge = fwidth(r) * 1.2;
+  float body = 1.0 - smoothstep(1.0 - edge, 1.0, r);
+  vec2 uv = local * 0.5 + 0.5;
+  float column = mod(cell, atlasGrid.x);
+  float row = floor(cell / atlasGrid.x);
+  vec2 atlasUv = (vec2(column, row) + clamp(uv, 0.0, 1.0)) / atlasGrid;
+  vec4 icon = texture(atlas, atlasUv);
+  vec3 face = mix(border * 0.55, icon.rgb, icon.a);
+  float ring = smoothstep(0.86, 0.9, r) * body;
+  float lit = moodOut.x;
+  vec3 rim = mix(border, accent, lit);
+  vec3 rgb = mix(face, rim, ring);
+  // Alone: sempre leggero, forte quando la bolla è evidenziata; le bolle non connesse "respirano" piano.
+  float glowShape = exp(-pow(max(r - 1.0, 0.0) * 2.6, 2.0));
+  float breath = moodOut.z > 0.5 ? 0.5 + 0.5 * sin(time * 0.9 + cell * 1.7) : 0.0;
+  float glow = glowShape * (0.12 + 0.18 * breath + 0.75 * lit) * (1.0 - body);
+  float fade = 1.0 - 0.72 * moodOut.y;
+  float alpha = (body + glow) * fade;
+  vec3 mixed = (rgb * body + accent * glow) * fade;
+  color = vec4(mixed, alpha);
+}`
+
+const EDGE_VERTEX = `#version 300 es
+precision highp float;
+layout(location = 0) in vec4 ends;    // a (x, y), b (x, y)
+layout(location = 1) in vec4 style;   // peso, curva, fase, evidenziata
+layout(location = 2) in vec2 reach;   // quanto si vede la sinapsi all'estremo a e all'estremo b (1 sempre; in una ricerca 0 per chi è escluso)
+uniform vec2 resolution;
+uniform vec2 pan;
+uniform float zoom;
+out float along;
+out float across;
+out vec4 styleOut;
+out vec2 reachOut;
+void main() {
+  int id = gl_VertexID;
+  float t = float(id / 2) / float(${SEGMENTS});
+  float side = float(id % 2) * 2.0 - 1.0;
+  vec2 a = ends.xy;
+  vec2 b = ends.zw;
+  vec2 delta = b - a;
+  float len = max(length(delta), 1.0);
+  vec2 normal = vec2(-delta.y, delta.x) / len;
+  vec2 control = (a + b) * 0.5 + normal * len * style.y;
+  float u = 1.0 - t;
+  vec2 point = u * u * a + 2.0 * u * t * control + t * t * b;
+  vec2 tangent = normalize(2.0 * u * (control - a) + 2.0 * t * (b - control));
+  vec2 offsetDir = vec2(-tangent.y, tangent.x);
+  float width = (1.2 + 2.6 * style.x + 2.2 * style.w) / zoom;
+  vec2 world = point + offsetDir * side * width;
+  vec2 screen = (world - pan) * zoom;
+  gl_Position = vec4(screen.x / (resolution.x * 0.5), -screen.y / (resolution.y * 0.5), 0.0, 1.0);
+  along = t;
+  across = side;
+  styleOut = style;
+  reachOut = reach;
+}`
+
+const EDGE_FRAGMENT = `#version 300 es
+precision highp float;
+in float along;
+in float across;
+in vec4 styleOut;
+in vec2 reachOut;
+uniform vec3 accent;
+uniform float time;
+uniform float dim;
+out vec4 color;
+void main() {
+  float weight = styleOut.x;
+  float lit = styleOut.w;
+  float core = 1.0 - smoothstep(0.35, 1.0, abs(across));
+  // L'impulso: una piccola onda luminosa che percorre la sinapsi; le più forti pulsano più spesso.
+  float speed = 0.18 + 0.22 * weight;
+  float head = fract(time * speed + styleOut.z);
+  float gap = abs(along - head);
+  gap = min(gap, 1.0 - gap);
+  float pulse = exp(-pow(gap * 9.0, 2.0));
+  float base = 0.16 + 0.34 * weight + 0.35 * lit;
+  // Durante una ricerca la sinapsi si interrompe verso un progetto escluso: svanisce dal lato di chi ha risultati, e sparisce se lo sono entrambi.
+  float visible = mix(reachOut.x, reachOut.y, smoothstep(0.25, 0.75, along));
+  float alpha = core * (base + pulse * (0.45 + 0.4 * weight)) * (1.0 - dim * (1.0 - lit)) * mix(0.0, 1.0, visible * visible);
+  color = vec4(accent * alpha, alpha);
+}`
+
+function compile(gl, type, source) {
+  const shader = gl.createShader(type)
+  gl.shaderSource(shader, source)
+  gl.compileShader(shader)
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const log = gl.getShaderInfoLog(shader)
+    // Senza messaggio, di solito il contesto è perso (canvas già usato o scheda video in difficoltà).
+    throw new Error(`${type === gl.VERTEX_SHADER ? 'Vertex' : 'Fragment'} shader: ${log || (gl.isContextLost() ? 'the WebGL context was lost' : 'compile error')}`)
+  }
+  return shader
+}
+
+function program(gl, vertex, fragment) {
+  const result = gl.createProgram()
+  gl.attachShader(result, compile(gl, gl.VERTEX_SHADER, vertex))
+  gl.attachShader(result, compile(gl, gl.FRAGMENT_SHADER, fragment))
+  gl.linkProgram(result)
+  if (!gl.getProgramParameter(result, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(result) || 'Program link error')
+  return result
+}
+
+// Un colore delle variabili CSS del tema ("190 190 186") come tre numeri 0-1.
+export function cssColor(name, fallback = [0.75, 0.75, 0.73], element = document.documentElement) {
+  try {
+    const parts = getComputedStyle(element).getPropertyValue(name).trim().split(/\s+/).map(Number)
+    if (parts.length >= 3 && parts.every((value) => Number.isFinite(value))) return parts.slice(0, 3).map((value) => value / 255)
+  } catch { /* si usa il colore di riserva */ }
+  return fallback
+}
+
+export function webglAvailable() {
+  try {
+    const canvas = document.createElement('canvas')
+    return Boolean(canvas.getContext('webgl2'))
+  } catch { return false }
+}
+
+// L'atlante: una cella per progetto. L'icona (o, senza, un cerchio con l'iniziale) è disegnata a 128 px; il tondo lo fa lo shader.
+function buildAtlas(entries) {
+  const rows = Math.max(1, Math.ceil(entries.length / COLUMNS))
+  const canvas = document.createElement('canvas')
+  canvas.width = COLUMNS * CELL
+  canvas.height = rows * CELL
+  const context = canvas.getContext('2d')
+  entries.forEach((entry, index) => {
+    const x = (index % COLUMNS) * CELL
+    const y = Math.floor(index / COLUMNS) * CELL
+    if (entry.image) {
+      const side = Math.min(entry.image.naturalWidth || CELL, entry.image.naturalHeight || CELL) || CELL
+      const sx = ((entry.image.naturalWidth || CELL) - side) / 2
+      const sy = ((entry.image.naturalHeight || CELL) - side) / 2
+      context.fillStyle = 'rgba(30,30,32,1)'
+      context.fillRect(x, y, CELL, CELL)
+      context.drawImage(entry.image, sx, sy, side, side, x, y, CELL, CELL)
+    } else {
+      const hue = entry.hue ?? 0
+      const gradient = context.createLinearGradient(x, y, x + CELL, y + CELL)
+      gradient.addColorStop(0, `hsl(${hue} 18% 26%)`)
+      gradient.addColorStop(1, `hsl(${(hue + 40) % 360} 16% 17%)`)
+      context.fillStyle = gradient
+      context.fillRect(x, y, CELL, CELL)
+      context.fillStyle = 'rgba(235,235,230,0.92)'
+      context.font = `600 ${Math.round(CELL * 0.46)}px system-ui, sans-serif`
+      context.textAlign = 'center'
+      context.textBaseline = 'middle'
+      context.fillText(entry.initial || '?', x + CELL / 2, y + CELL / 2 + 4)
+    }
+  })
+  return { canvas, rows }
+}
+
+export function createGraphRenderer(canvas) {
+  const gl = canvas.getContext('webgl2', { alpha: true, premultipliedAlpha: true, antialias: true })
+  if (!gl) throw new Error('WebGL2 is not available')
+  const backdropProgram = program(gl, BACKDROP_VERTEX, BACKDROP_FRAGMENT)
+  const nodeProgram = program(gl, NODE_VERTEX, NODE_FRAGMENT)
+  const edgeProgram = program(gl, EDGE_VERTEX, EDGE_FRAGMENT)
+  const locations = (prog, names) => Object.fromEntries(names.map((name) => [name, gl.getUniformLocation(prog, name)]))
+  const backdropUniform = locations(backdropProgram, ['canvasSize', 'pan', 'zoom', 'time'])
+  const nodeUniform = locations(nodeProgram, ['resolution', 'pan', 'zoom', 'atlas', 'atlasGrid', 'accent', 'border', 'time'])
+  const edgeUniform = locations(edgeProgram, ['resolution', 'pan', 'zoom', 'accent', 'time', 'dim'])
+
+  // Geometria condivisa: un quadrato da -1 a 1 (le bolle).
+  const quad = gl.createBuffer()
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad)
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW)
+
+  const nodeBuffer = gl.createBuffer()
+  const nodeVao = gl.createVertexArray()
+  gl.bindVertexArray(nodeVao)
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad)
+  gl.enableVertexAttribArray(0)
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0)
+  gl.bindBuffer(gl.ARRAY_BUFFER, nodeBuffer)
+  gl.enableVertexAttribArray(1)
+  gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 32, 0)
+  gl.vertexAttribDivisor(1, 1)
+  gl.enableVertexAttribArray(2)
+  gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 32, 16)
+  gl.vertexAttribDivisor(2, 1)
+
+  const edgeBuffer = gl.createBuffer()
+  const edgeVao = gl.createVertexArray()
+  gl.bindVertexArray(edgeVao)
+  gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuffer)
+  gl.enableVertexAttribArray(0)
+  gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 40, 0)
+  gl.vertexAttribDivisor(0, 1)
+  gl.enableVertexAttribArray(1)
+  gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 40, 16)
+  gl.vertexAttribDivisor(1, 1)
+  gl.enableVertexAttribArray(2)
+  gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 40, 32)
+  gl.vertexAttribDivisor(2, 1)
+  gl.bindVertexArray(null)
+
+  const texture = gl.createTexture()
+  const emptyVao = gl.createVertexArray() // lo sfondo non ha attributi
+  let atlasRows = 1
+  let nodeData = new Float32Array(0)
+  let edgeData = new Float32Array(0)
+  let disposed = false
+
+  // `entries`: [{ image: HTMLImageElement | null, initial, hue }] nell'ordine dei nodi.
+  function setIcons(entries) {
+    const { canvas: atlas, rows } = buildAtlas(entries)
+    atlasRows = rows
+    gl.bindTexture(gl.TEXTURE_2D, texture)
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlas)
+    gl.generateMipmap(gl.TEXTURE_2D)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  }
+
+  function resize() {
+    const ratio = Math.min(2, window.devicePixelRatio || 1)
+    const width = Math.max(1, Math.round(canvas.clientWidth * ratio))
+    const height = Math.max(1, Math.round(canvas.clientHeight * ratio))
+    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height }
+    return { width: canvas.clientWidth, height: canvas.clientHeight }
+  }
+
+  /**
+   * frame: { time, still, pan: [x, y], zoom, colors: { accent, border },
+   *          nodes: [{ x, y, r, cell, lit, dim, free }], edges: [{ ax, ay, bx, by, weight, curve, phase, lit, reachA, reachB }], dim }
+   */
+  function draw(frame) {
+    if (disposed) return
+    const size = resize()
+    gl.viewport(0, 0, canvas.width, canvas.height)
+    gl.clearColor(0, 0, 0, 0)
+    gl.clear(gl.COLOR_BUFFER_BIT)
+    // Prima lo sfondo (opaco, senza miscelazione), poi sinapsi e bolle.
+    gl.disable(gl.BLEND)
+    gl.useProgram(backdropProgram)
+    gl.uniform2f(backdropUniform.canvasSize, canvas.width, canvas.height)
+    gl.uniform2f(backdropUniform.pan, frame.pan[0], frame.pan[1])
+    gl.uniform1f(backdropUniform.zoom, frame.zoom)
+    gl.uniform1f(backdropUniform.time, frame.still ? 0 : frame.time)
+    gl.bindVertexArray(emptyVao)
+    gl.drawArrays(gl.TRIANGLES, 0, 3)
+    gl.enable(gl.BLEND)
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+
+    if (frame.edges.length) {
+      if (edgeData.length < frame.edges.length * 10) edgeData = new Float32Array(frame.edges.length * 10 * 2)
+      frame.edges.forEach((edge, index) => {
+        const o = index * 10
+        edgeData[o] = edge.ax; edgeData[o + 1] = edge.ay; edgeData[o + 2] = edge.bx; edgeData[o + 3] = edge.by
+        edgeData[o + 4] = edge.weight; edgeData[o + 5] = edge.curve; edgeData[o + 6] = edge.phase; edgeData[o + 7] = edge.lit
+        edgeData[o + 8] = edge.reachA; edgeData[o + 9] = edge.reachB
+      })
+      gl.useProgram(edgeProgram)
+      gl.uniform2f(edgeUniform.resolution, size.width, size.height)
+      gl.uniform2f(edgeUniform.pan, frame.pan[0], frame.pan[1])
+      gl.uniform1f(edgeUniform.zoom, frame.zoom)
+      gl.uniform3fv(edgeUniform.accent, frame.colors.accent)
+      gl.uniform1f(edgeUniform.time, frame.time)
+      gl.uniform1f(edgeUniform.dim, frame.dim || 0)
+      gl.bindVertexArray(edgeVao)
+      gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuffer)
+      gl.bufferData(gl.ARRAY_BUFFER, edgeData.subarray(0, frame.edges.length * 10), gl.DYNAMIC_DRAW)
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, (SEGMENTS + 1) * 2, frame.edges.length)
+    }
+
+    if (frame.nodes.length) {
+      if (nodeData.length < frame.nodes.length * 8) nodeData = new Float32Array(frame.nodes.length * 8 * 2)
+      frame.nodes.forEach((node, index) => {
+        const o = index * 8
+        nodeData[o] = node.x; nodeData[o + 1] = node.y; nodeData[o + 2] = node.r; nodeData[o + 3] = node.cell
+        nodeData[o + 4] = node.lit; nodeData[o + 5] = node.dim; nodeData[o + 6] = node.free ? 1 : 0; nodeData[o + 7] = 0
+      })
+      gl.useProgram(nodeProgram)
+      gl.uniform2f(nodeUniform.resolution, size.width, size.height)
+      gl.uniform2f(nodeUniform.pan, frame.pan[0], frame.pan[1])
+      gl.uniform1f(nodeUniform.zoom, frame.zoom)
+      gl.uniform2f(nodeUniform.atlasGrid, COLUMNS, atlasRows)
+      gl.uniform3fv(nodeUniform.accent, frame.colors.accent)
+      gl.uniform3fv(nodeUniform.border, frame.colors.border)
+      gl.uniform1f(nodeUniform.time, frame.time)
+      gl.activeTexture(gl.TEXTURE0)
+      gl.bindTexture(gl.TEXTURE_2D, texture)
+      gl.uniform1i(nodeUniform.atlas, 0)
+      gl.bindVertexArray(nodeVao)
+      gl.bindBuffer(gl.ARRAY_BUFFER, nodeBuffer)
+      gl.bufferData(gl.ARRAY_BUFFER, nodeData.subarray(0, frame.nodes.length * 8), gl.DYNAMIC_DRAW)
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, frame.nodes.length)
+    }
+    gl.bindVertexArray(null)
+  }
+
+  function dispose() {
+    if (disposed) return
+    disposed = true
+    gl.deleteTexture(texture)
+    gl.deleteBuffer(quad)
+    gl.deleteBuffer(nodeBuffer)
+    gl.deleteBuffer(edgeBuffer)
+    gl.deleteVertexArray(nodeVao)
+    gl.deleteVertexArray(edgeVao)
+    gl.deleteVertexArray(emptyVao)
+    gl.deleteProgram(backdropProgram)
+    gl.deleteProgram(nodeProgram)
+    gl.deleteProgram(edgeProgram)
+    gl.getExtension('WEBGL_lose_context')?.loseContext()
+  }
+
+  return { setIcons, draw, resize, dispose }
+}
