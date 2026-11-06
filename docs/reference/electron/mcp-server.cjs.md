@@ -27,3 +27,7 @@ Write tools (`WRITE_TOOLS`, absent with `--read-only`):
 Quotations for notes must be plain words, unique and within one paragraph or heading: the server reduces the document to the plain text of [markdown-plain.cjs](markdown-plain.cjs.md), the same the editor sees, and anchors them, failing with a clear message when the passage is not found or appears more than once. A bookmark link is a path relative to the project root, or a `file:///` address for a document outside the project (between Windows drives there is no relative path).
 
 With no project at all (the agent does not work in a project and the app has none open) `search_knowledge` still works, on every shared project (`@name/…` paths), and `read_document` opens those `@name/…` paths.
+
+The pages the user saved with the star of the browser tab ([web-references.cjs](web-references.cjs.md)) are `@web/…` for `search_knowledge`, `read_document` and `list_documents`, and appear in `project_info` (`sharedWithThisProject`) as "saved web pages"; those of the other shared projects are `@<project>-web`.
+
+Web references ([web-references.cjs](web-references.cjs.md)): `list_web_references` (read: title, address, `@web/…` path, who saved it, saved, updated and checked dates and the age in days, from `.ow/web.json`) and, among the writing tools, `save_web_reference` and `refresh_web_reference` (through the app, which opens the page in a background browser tab; saved as `agent`): an agent can save pages that it finds important for the work as context, check how old each copy is and refresh it.

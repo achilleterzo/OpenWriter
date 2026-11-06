@@ -15,3 +15,5 @@ The requests that arrive from the MCP server — an external agent, through the 
 - the edit tools: a document that is not open is opened in a tab first; the previous version goes to the history before the edit (at most once a minute per document); when the edit is done the tab of the document comes to the front and the status bar says that an agent proposed changes.
 
 Called from [App.jsx](../App.jsx.md) when the main process forwards a request (`onMcpRequest`), answering with `answerMcp`.
+
+`save_web_reference` and `refresh_web_reference` (from an external agent, saved as `agent`) run through [webReferences.js](webReferences.js.md) in the background browser tab; they need the editing-by-agents setting like the other writing tools.

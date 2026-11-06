@@ -18,3 +18,5 @@ Assistant side panel. Largest UI component of the app.
 - Renders notes with accept/reject controls and applies editor edits through the editor with undo support; an image returned by a tool or attached by the user can be opened in a full viewer.
 
 The model and the reasoning effort are chosen in the composer with [ModelPicker.jsx](ModelPicker.jsx.md) (search by name, filter by accepted input) and the efforts of the provider.
+
+The web pages the user added to the context ([web-references.cjs](../../../electron/web-references.cjs.md)) are listed in the system prompt (title, address and `@web/…` path, up to 30) next to the project memory; the assistant reads one with `read_file` and finds passages in them with `search_knowledge`.

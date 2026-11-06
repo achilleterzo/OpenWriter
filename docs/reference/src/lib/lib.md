@@ -33,6 +33,8 @@ Non-React helpers used by the editor and the assistant.
 - [quickActions.js](quickActions.js.md) — Chat quick actions: defaults, custom ones, project ones, and what to save
 - [rawMarkdownExtensions.js](rawMarkdownExtensions.js.md) — Front matter and HTML kept as raw text through the round trip
 - [readerMode.js](readerMode.js.md) — Article extraction, reading view, and save as Markdown
+- [webAddress.js](webAddress.js.md) — Which web addresses the assistant and agents may open
+- [webReferences.js](webReferences.js.md) — Save and refresh web pages as references of the project
 - [searchExtension.js](searchExtension.js.md) — Tiptap extension powering live find highlight and match counting
 - [researchAgent.js](researchAgent.js.md) — Research assistant: a second model that explores the project and reports back
 - [selectionText.js](selectionText.js.md) — Text of the editor selection, blocks separated by a blank line

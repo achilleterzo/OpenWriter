@@ -169,6 +169,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [knowledge-sync.cjs.md](reference/electron/knowledge-sync.cjs.md) ([knowledge-sync.cjs](../electron/knowledge-sync.cjs)) — Keeps the search index aligned with the project files
   - [knowledge-service.cjs.md](reference/electron/knowledge-service.cjs.md) ([knowledge-service.cjs](../electron/knowledge-service.cjs)) — Main-process client of the search index worker
   - [knowledge-worker.cjs.md](reference/electron/knowledge-worker.cjs.md) ([knowledge-worker.cjs](../electron/knowledge-worker.cjs)) — Worker thread that owns the search index
+  - [web-references.cjs.md](reference/electron/web-references.cjs.md) ([web-references.cjs](../electron/web-references.cjs)) — Web pages saved with a Markdown copy in .ow/web (the @web folder)
   - [shared-knowledge.cjs.md](reference/electron/shared-knowledge.cjs.md) ([shared-knowledge.cjs](../electron/shared-knowledge.cjs)) — Which other projects the relevance search also covers
   - [gpu-context.cjs.md](reference/electron/gpu-context.cjs.md) ([gpu-context.cjs](../electron/gpu-context.cjs)) — Hidden WebGPU window that computes vectors on the graphics card
   - [semantic-pack.cjs.md](reference/electron/semantic-pack.cjs.md) ([semantic-pack.cjs](../electron/semantic-pack.cjs)) — Downloadable model and runtime for the search by meaning
