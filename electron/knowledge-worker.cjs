@@ -18,7 +18,7 @@ const index = createKnowledgeIndex({ file: workerData.file })
  * riferisce al processo principale, che può passare a un altro dispositivo: la ricerca per parole continua sempre a funzionare.
  */
 const BATCH = { cpu: 8, gpu: 32 }
-const semantic = { device: null, model: '', directory: null, projects: [], embedder: null, running: false, again: false, error: null }
+const semantic = { device: null, model: '', directory: null, projects: [], embedder: null, running: false, again: false, error: null, generation: 0 }
 
 // Il dispositivo GPU vive nel processo principale: le richieste partono come { call, op: 'gpu-embed' } e tornano come { call, result | error }.
 const remote = new Map()
@@ -59,26 +59,37 @@ async function embedPending() {
   if (semantic.running) { semantic.again = true; return }
   if (!semantic.device || !semantic.projects.length) return
   semantic.running = true
+  let failed = false
   try {
     do {
       semantic.again = false
-      const embedder = await ensureEmbedder()
-      for (;;) {
-        if (!semantic.device || !semantic.projects.length) break
-        const model = semantic.model
-        const batch = index.pendingEmbeddings(semantic.projects, model, BATCH[semantic.device] || 8)
-        if (!batch.length) break
-        const vectors = await embedder.embed(batch.map((item) => item.text), 'passage')
-        // Se nel frattempo si è cambiato modello, questi vettori non appartengono più a quello attivo: si scartano (il ciclo riparte da capo).
-        if (semantic.model !== model) { semantic.again = true; break }
-        index.storeEmbeddings(model, batch.map((item, position) => ({ hash: item.hash, vector: vectors[position] })))
+      // `generation` cambia a ogni riconfigurazione (dispositivo, modello, pacchetto): un giro cominciato con la vecchia non vale più e ricomincia con la nuova.
+      const generation = semantic.generation
+      try {
+        const embedder = await ensureEmbedder()
+        for (;;) {
+          if (!semantic.device || !semantic.projects.length) break
+          const model = semantic.model
+          const batch = index.pendingEmbeddings(semantic.projects, model, BATCH[semantic.device] || 8)
+          if (!batch.length) break
+          const vectors = await embedder.embed(batch.map((item) => item.text), 'passage')
+          // Se nel frattempo si è cambiato modello, questi vettori non appartengono più a quello attivo: si scartano (il ciclo riparte da capo).
+          if (semantic.generation !== generation || semantic.model !== model) { semantic.again = true; break }
+          index.storeEmbeddings(model, batch.map((item, position) => ({ hash: item.hash, vector: vectors[position] })))
+        }
+      } catch (error) {
+        // Il vecchio dispositivo chiuso sotto i piedi dalla riconfigurazione non è un guasto: si riparte con quello nuovo, senza toccarlo.
+        if (semantic.generation !== generation) { semantic.again = true; continue }
+        failed = true
+        reportError(error)
+        await dropEmbedder().catch(() => {})
+        break
       }
     } while (semantic.again)
-    index.pruneEmbeddings()
-    semantic.error = null
-  } catch (error) {
-    reportError(error)
-    await dropEmbedder().catch(() => {})
+    if (!failed) {
+      index.pruneEmbeddings()
+      semantic.error = null
+    }
   } finally {
     semantic.running = false
   }
@@ -109,7 +120,7 @@ const operations = {
   // vettorizzare; `purge`: modelli di cui buttare i vettori (si è tolto il loro pacchetto).
   semantic: async ({ device = null, model = '', directory = null, projects = [], purge = [] }) => {
     const changed = semantic.device !== device || semantic.model !== model || semantic.directory !== directory
-    if (changed || !device) { await dropEmbedder().catch(() => {}); semantic.error = null }
+    if (changed || !device) { semantic.generation += 1; await dropEmbedder().catch(() => {}); semantic.error = null }
     semantic.device = device
     semantic.model = device ? model : ''
     semantic.directory = directory
@@ -119,6 +130,21 @@ const operations = {
   },
   semanticStatus: ({ projects = [] }) => ({ ...index.embeddingStats(projects, semantic.model), running: semantic.running, error: semantic.error, active: Boolean(semantic.device), device: semantic.device, model: semantic.model }),
   close: async () => { await dropEmbedder().catch(() => {}); index.close(); return true },
+}
+
+// Le operazioni che leggono i file e scrivono nell'indice di un progetto (scansione, aggiornamento per percorsi, ricostruzione, svuotamento) hanno una coda per
+// progetto: sono asincrone e, se si accavallassero, una scansione partita prima potrebbe togliere dall'indice (o rimetterci) ciò che un aggiornamento più
+// recente ha appena sistemato. Progetti diversi restano indipendenti.
+const MUTATES_FILES = new Set(['sync', 'paths', 'rebuild', 'clear'])
+const queues = new Map()
+function serialized(project, task) {
+  const key = String(project ?? '').replace(/\\/g, '/').toLowerCase()
+  const previous = queues.get(key) || Promise.resolve()
+  const next = previous.catch(() => {}).then(task)
+  const tail = next.catch(() => {})
+  queues.set(key, tail)
+  tail.then(() => { if (queues.get(key) === tail) queues.delete(key) })
+  return next
 }
 
 // Dopo ogni operazione che cambia i frammenti (o la configurazione) si riprende a calcolare i vettori mancanti.
@@ -137,7 +163,7 @@ parentPort.on('message', async (message) => {
   try {
     const run = operations[op]
     if (!run) throw new Error(`Unknown operation ${op}`)
-    parentPort.postMessage({ id, result: await run(request) })
+    parentPort.postMessage({ id, result: await (MUTATES_FILES.has(op) ? serialized(request.project, () => run(request)) : run(request)) })
     if (REFRESHES_EMBEDDINGS.has(op)) embedPending()
   } catch (error) {
     parentPort.postMessage({ id, error: String(error?.message || error) })

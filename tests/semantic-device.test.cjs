@@ -26,8 +26,8 @@ async function setup({ gpuEmbed, onSemanticError }) {
   fs.writeFileSync(path.join(project, 'cucina.md'), '# Cucina\n\nLa ricetta del pane richiede lievito.\n')
   const keepAlive = setInterval(() => {}, 1000)
   const service = createKnowledgeService({ file: path.join(directory, 'k.db'), hiddenDirectories: [], createWorker: (workerData) => new Worker(path.join(__dirname, '../electron/knowledge-worker.cjs'), { workerData }), gpuEmbed, onSemanticError })
-  await service.sync(project)
   const done = async () => { clearInterval(keepAlive); await service.close(); fs.rmSync(directory, { recursive: true, force: true }) }
+  try { await service.sync(project) } catch (error) { await done(); throw error }
   const waitFor = async (check) => { for (let attempt = 0; attempt < 100; attempt += 1) { const status = await service.semanticStatus([project]); if (check(status)) return status; await new Promise((resolve) => setTimeout(resolve, 50)) } throw new Error('timeout') }
   return { service, project, done, waitFor }
 }
@@ -102,4 +102,24 @@ test('senza gpuEmbed (nessuna GPU) il dispositivo GPU fallisce con un messaggio 
     await service.semanticConfigure({ device: 'gpu', model: 'gpu-fake', projects: [project] })
     assert.match((await waitFor((value) => value.error)).error, /GPU is not available/)
   } finally { await done() }
+})
+
+test('riconfigurare mentre i vettori si calcolano: nessun errore e il calcolo riparte con la nuova configurazione', async () => {
+  let release = null
+  const gate = new Promise((resolve) => { release = resolve })
+  let first = true
+  const { service, project, done, waitFor } = await setup({
+    gpuEmbed: async (texts) => {
+      if (first) { first = false; await gate } // il primo gruppo resta in attesa mentre si cambia modello
+      return texts.map(fakeVector)
+    },
+  })
+  try {
+    await service.semanticConfigure({ device: 'gpu', model: 'gpu-fake', projects: [project] })
+    await waitFor((value) => value.running)
+    await service.semanticConfigure({ device: 'gpu', model: 'gpu-fake-2', projects: [project] })
+    release()
+    const status = await waitFor((value) => value.model === 'gpu-fake-2' && value.embedded === 2 && !value.running)
+    assert.equal(status.error, null)
+  } finally { release?.(); await done() }
 })
