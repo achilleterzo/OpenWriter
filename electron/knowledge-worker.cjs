@@ -102,6 +102,7 @@ const operations = {
     return index.search(project, query, { ...options, queryVector, model: semantic.model })
   },
   stats: ({ project }) => index.stats(project),
+  centroids: ({ projects = [] }) => index.projectCentroids(projects, semantic.model),
   clear: ({ project }) => index.clearProject(project),
   rebuild: async ({ project }) => { index.clearProject(project); return syncTree(index, project, '', hidden) },
   // `device`: 'cpu', 'gpu' o null (spento); `model`: identificativo dei vettori; `directory`: il pacchetto CPU (la GPU non ne ha bisogno qui); `projects`: chiavi da
