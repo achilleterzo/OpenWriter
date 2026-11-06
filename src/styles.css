@@ -624,3 +624,22 @@ body {
 .document-editor .tiptap .ow-bookmark-range { border-bottom: 1px dotted rgb(var(--accent-400)); }
 .document-editor .tiptap .ow-bookmark-range.ow-bookmark-flagged { border-bottom-color: rgb(var(--amber-400)); }
 .document-editor .tiptap .ow-bookmark-range.ow-bookmark-active { background: rgb(var(--accent-400) / 0.15); }
+
+/* Campo della chat: Markdown ristretto, senza barra degli strumenti. Il reset di Tailwind toglie i segni di lista: qui si ripristinano. */
+.chat-composer .tiptap {
+  min-height: 4.5rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  padding: 0.5rem 0.75rem;
+  outline: none;
+  line-height: 1.5rem;
+  overflow-wrap: anywhere;
+}
+
+.chat-composer .tiptap p { margin: 0; }
+.chat-composer .tiptap ul { margin: 0; padding-left: 1.25rem; list-style: disc; }
+.chat-composer .tiptap ol { margin: 0; padding-left: 1.25rem; list-style: decimal; }
+.chat-composer .tiptap ul ul { list-style: circle; }
+.chat-composer .tiptap li > p { margin: 0; }
+.chat-composer .tiptap code { border-radius: 0.25rem; background: rgb(var(--slate-700)); padding: 0.1rem 0.3rem; font-size: 0.85em; }
+.chat-composer .tiptap a { color: rgb(var(--accent-400)); text-decoration: underline; }
