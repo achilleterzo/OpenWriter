@@ -33,6 +33,14 @@ export async function saveFromController(api, controller, { source = 'user', che
 
 // La scheda del browser in secondo piano per assistente e agenti: si crea la prima volta e si riusa (se l'utente la chiude se ne apre un'altra).
 let captureTabId = null
+// La scheda è una sola: due salvataggi insieme si contenderebbero la pagina (uno navigherebbe mentre l'altro la legge, e una copia finirebbe col contenuto
+// dell'altra richiesta). Si accodano: ognuno apre, legge e salva da solo.
+let captureQueue = Promise.resolve()
+function exclusive(task) {
+  const run = captureQueue.then(task, task)
+  captureQueue = run.then(() => {}, () => {})
+  return run
+}
 async function captureController(getBrowser) {
   if (captureTabId) {
     try { return await getBrowser({ tab: captureTabId, create: false, activate: false }) } catch { captureTabId = null }
@@ -45,9 +53,11 @@ async function captureController(getBrowser) {
 // Apre l'indirizzo in segreto e lo salva. → la voce (con `change`: created | updated | unchanged).
 export async function saveFromUrl({ api, getBrowser }, url, { source = 'assistant' } = {}) {
   const address = publicWebAddress(url).href
-  const target = await captureController(getBrowser)
-  await target.controller.navigate(address)
-  return saveFromController(api, target.controller, { source })
+  return exclusive(async () => {
+    const target = await captureController(getBrowser)
+    await target.controller.navigate(address)
+    return saveFromController(api, target.controller, { source })
+  })
 }
 
 // Rinfresca una pagina già salvata: la riapre, confronta e (se non `checkOnly`) aggiorna la copia. `reference`: id, nome del file, indirizzo o parte del titolo.
@@ -58,9 +68,11 @@ export async function refreshReference({ api, getBrowser }, reference, { checkOn
   const entry = list.find((item) => item.id === wanted || item.file.toLowerCase() === lower) || list.find((item) => item.url === wanted) || list.find((item) => item.title.toLowerCase().includes(lower) || item.url.toLowerCase().includes(lower))
   if (!entry) throw new Error(`No saved web page matches "${wanted}": the saved pages are listed in the conversation (and in .ow/web.json); use save_web_reference to save a new one`)
   const address = publicWebAddress(entry.url).href
-  const target = await captureController(getBrowser)
-  await target.controller.navigate(address)
-  return saveFromController(api, target.controller, { source, checkOnly, matchUrl: entry.url })
+  return exclusive(async () => {
+    const target = await captureController(getBrowser)
+    await target.controller.navigate(address)
+    return saveFromController(api, target.controller, { source, checkOnly, matchUrl: entry.url })
+  })
 }
 
 const day = (iso) => String(iso || '').slice(0, 10)

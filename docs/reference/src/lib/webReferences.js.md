@@ -11,3 +11,5 @@ Saving a web page as a reference of the project ([web-references.cjs](../../elec
 - `saveFromUrl({ api, getBrowser }, url, { source })`: opens the address in a **background browser tab** (created the first time and reused, so the user's own tab is never navigated; only public http(s) addresses, see [webAddress.js](webAddress.js.md)) and saves it.
 - `refreshReference({ api, getBrowser }, reference, { checkOnly, source })`: reopens a saved page (found by id, file name, address or title) and compares: unchanged, changed, or updated.
 - `describeSavedReference(entry)`: the answer for the model: saved, updated (with the lines that changed), changed (not updated: call again without `check_only`) or up to date.
+
+The background tab is one, so saves and refreshes go through a queue: each one opens, reads and saves on its own, and two requests at the same time can no longer save the page that the other one was loading.
