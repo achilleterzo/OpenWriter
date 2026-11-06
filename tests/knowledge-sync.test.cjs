@@ -126,8 +126,8 @@ test('servizio con worker: scansione, ricerca, aggiornamento per percorsi, ricos
     assert.equal(rebuilt.indexed, 1)
     assert.equal(service.available, true)
   } finally {
-    clearInterval(keepAlive)
     await service.close()
+    clearInterval(keepAlive)
     p.remove()
     fs.rmSync(directory, { recursive: true, force: true })
   }

@@ -115,6 +115,8 @@ function createKnowledgeService({ file, hiddenDirectories = [], createWorker, de
     async close() {
       clearTimeout(timer)
       if (!worker) return
+      // Il worker non tiene vivo il processo (unref): mentre si attende la sua risposta di chiusura deve farlo, altrimenti chi chiude per ultimo (un test) esce prima.
+      worker.ref?.()
       try { await request('close') } catch { /* già chiuso */ }
       const current = worker
       worker = null

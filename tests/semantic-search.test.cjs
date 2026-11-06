@@ -55,8 +55,8 @@ test('ricerca per significato con il modello vero: domande senza parole in comun
     assert.equal((await service.semanticStatus([project])).embedded, 0)
     assert.equal((await service.search(project, 'cacciavite', { semantic: true })).results[0].path, 'mobile.md')
   } finally {
-    clearInterval(keepAlive)
     await service.close()
+    clearInterval(keepAlive)
     fs.rmSync(directory, { recursive: true, force: true })
   }
 })
@@ -87,8 +87,8 @@ test('mentre i vettori si calcolano, stato e ricerca per parole rispondono subit
     assert.ok(sawRunning, 'il calcolo era in corso durante le richieste')
     assert.ok(slowest < 1500, `una richiesta ha aspettato ${Math.round(slowest)} ms`)
   } finally {
-    clearInterval(keepAlive)
     await service.close()
+    clearInterval(keepAlive)
     fs.rmSync(directory, { recursive: true, force: true })
   }
 })
