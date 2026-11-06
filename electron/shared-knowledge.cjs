@@ -41,7 +41,10 @@ function outsideFolders({ current, references = [], projects = [], isShared, web
   const result = [...available]
   const web = current ? webFolderOf(current) : null
   if (web && !taken.has('web')) { taken.add('web'); result.push({ name: 'web', path: web, web: true }) }
-  for (const item of sharedProjects({ current, projects, references: available, isShared })) {
+  for (const project of sharedProjects({ current, projects, references: available, isShared })) {
+    let projectName = project.name
+    for (let counter = 2; taken.has(projectName.toLowerCase()); counter += 1) projectName = `${project.name}-${counter}`
+    const item = { ...project, name: projectName }
     taken.add(item.name.toLowerCase())
     result.push({ ...item, project: true })
     const folder = webFolderOf(item.path)
