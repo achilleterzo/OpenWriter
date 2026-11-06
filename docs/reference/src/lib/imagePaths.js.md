@@ -12,3 +12,4 @@ Image path handling for Markdown documents (Windows-separator tolerant, case-ins
 - Helpers: `dirname`, `isInside`, plus internal `relativePath`/`joinPath` (`..`-aware) and a decode that never throws.
 
 Paths are compared with [pathCompare.js](pathCompare.js.md): case matters on Linux, not on Windows and macOS.
+Encoding: the paths written in the Markdown (`sourceForImage`, `linkForDocument`) are encoded segment by segment with `encodeURIComponent` (and `(` `)` too), so a file name with `#`, `?`, `%` or parentheses does not break the link; `/` and a drive letter (`C:`) stay as they are. Reading (`displaySource`, `resolveDocumentLink`) decodes the path part the same way (`%23` is `#`); the fragment after `#` is decoded apart.

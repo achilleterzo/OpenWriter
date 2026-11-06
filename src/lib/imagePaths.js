@@ -33,6 +33,10 @@ function joinPath(directory, relative) {
 }
 
 const safeDecode = (value) => { try { return decodeURI(value) } catch { return value } }
+// Un percorso nel Markdown: ogni segmento codificato per intero (anche # ? % e le parentesi, che altrimenti spezzerebbero il collegamento); "/" e l'unità "C:" restano.
+const encodePath = (value) => normalize(value).split('/').map((segment) => (/^[A-Za-z]:$/.test(segment) ? segment : encodeURIComponent(segment).replace(/[()]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`))).join('/')
+// L'inverso, per i percorsi (non per i frammenti): decodeURI lascerebbe %23, %3F e simili.
+const decodePath = (value) => { try { return decodeURIComponent(value) } catch { return safeDecode(value) } }
 
 /** Testo da scrivere nel Markdown per l'immagine `imagePath` (assoluto) inserita nel documento `documentPath`. */
 // File immagine che l'app sa mostrare (quelli del protocollo ow-file) e indirizzo per mostrarlo.
@@ -42,13 +46,13 @@ export const imageFileUrl = (absolutePath) => `ow-file://local/${encodeURICompon
 export function sourceForImage(imagePath, documentPath, project) {
   const image = normalize(imagePath)
   const directory = dirname(documentPath)
-  if (isInside(image, project) || isInside(image, directory)) return encodeURI(relativePath(directory, image))
-  return encodeURI(`file://${image.startsWith('/') ? '' : '/'}${image}`)
+  if (isInside(image, project) || isInside(image, directory)) return encodePath(relativePath(directory, image))
+  return `file://${image.startsWith('/') ? '' : '/'}${encodePath(image)}`
 }
 
 /** Collegamento da scrivere nel Markdown per il file `targetPath` (assoluto), relativo alla cartella del documento `documentPath`. */
 export function linkForDocument(targetPath, documentPath) {
-  return encodeURI(relativePath(dirname(documentPath), targetPath))
+  return encodePath(relativePath(dirname(documentPath), targetPath))
 }
 
 /** Indirizzo da caricare nell'editor per il `src` scritto nel Markdown; stringa vuota se non si può risolvere. */
@@ -57,11 +61,11 @@ export function displaySource(src, documentPath) {
   if (/^(https?:|data:image\/|ow-file:)/i.test(value)) return value
   let absolute
   if (/^file:\/\//i.test(value)) {
-    absolute = safeDecode(value.replace(/^file:\/\//i, ''))
+    absolute = decodePath(value.replace(/^file:\/\//i, ''))
     if (/^\/[A-Za-z]:/.test(absolute)) absolute = absolute.slice(1)
   } else {
     if (!documentPath) return ''
-    absolute = joinPath(dirname(documentPath), safeDecode(value))
+    absolute = joinPath(dirname(documentPath), decodePath(value))
   }
   return `ow-file://local/${encodeURIComponent(absolute)}`
 }
@@ -81,11 +85,11 @@ export function resolveDocumentLink(href, documentPath) {
   const clean = value.replace(/[?#].*$/, '')
   const fragment = /#(.*)$/.test(value) ? safeDecode(/#(.*)$/.exec(value)[1]) : ''
   if (/^file:\/\//i.test(clean)) {
-    let absolute = safeDecode(clean.replace(/^file:\/\//i, ''))
+    let absolute = decodePath(clean.replace(/^file:\/\//i, ''))
     if (/^\/[A-Za-z]:/.test(absolute)) absolute = absolute.slice(1)
     return { kind: 'file', path: absolute, fragment }
   }
-  if (/^([A-Za-z]:)?[\\/]/.test(clean)) return { kind: 'file', path: normalize(safeDecode(clean)), fragment }
+  if (/^([A-Za-z]:)?[\\/]/.test(clean)) return { kind: 'file', path: normalize(decodePath(clean)), fragment }
   if (!documentPath) return { kind: 'unresolved' }
-  return { kind: 'file', path: joinPath(dirname(documentPath), safeDecode(clean)), fragment }
+  return { kind: 'file', path: joinPath(dirname(documentPath), decodePath(clean)), fragment }
 }
