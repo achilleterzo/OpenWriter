@@ -13,6 +13,7 @@ import HistoryPanel from './components/HistoryPanel.jsx'
 import NotesPanel from './components/NotesPanel.jsx'
 import BookmarksPanel from './components/BookmarksPanel.jsx'
 import ProjectsPanel from './components/ProjectsPanel.jsx'
+import ProjectsHome from './components/ProjectsHome.jsx'
 import MemoryPanel from './components/MemoryPanel.jsx'
 import WebReferencesPanel from './components/WebReferencesPanel.jsx'
 import { WEB_REFERENCES_CHANGED } from './lib/webReferences.js'
@@ -425,6 +426,20 @@ export default function App() {
   const openProject = useCallback((directory) => switchProject(() => electronAPI.openProject(directory)), [switchProject])
   openProjectRef.current = openProject
   // Scegliendo un progetto dal pannello Progetti si passa subito ai suoi file (se la scelta è annullata non cambia nulla).
+  // Con la scheda Progetti attiva l'area centrale mostra la Home (la rete dei progetti) al posto dei documenti e della chat, che restano montati.
+  const homeOpen = sideTab === 'projects'
+  // Dopo la prima visita la Home resta montata (nascosta quando non serve): ricerca, risultati e posizione nell'elenco restano com'erano al ritorno.
+  const [homeSeen, setHomeSeen] = useState(false)
+  useEffect(() => { if (homeOpen) setHomeSeen(true) }, [homeOpen])
+  // Dalla Home: un progetto si apre (se non lo è già) e si passa ai suoi file; un risultato di ricerca apre anche il documento.
+  const openFromHome = async (directory) => {
+    if (project && samePath(directory, project)) { setSideTab('files'); return true }
+    const chosen = await showFiles(openProject(directory))
+    return Boolean(chosen)
+  }
+  const openHomeResult = async (hit) => {
+    if (await openFromHome(hit.project)) openFileRef.current?.(hit.absolute)
+  }
   const showFiles = (picking) => picking.then((chosen) => { if (chosen) setSideTab('files'); return chosen })
   const createProject = useCallback((name) => switchProject(() => electronAPI.createProject(name)), [switchProject])
 
@@ -1376,6 +1391,7 @@ export default function App() {
           </aside>
         )}
         <main className="flex min-w-0 flex-1 flex-col">
+          <div className={homeOpen ? 'hidden' : 'contents'}>
           <TabBar tabs={tabs} onPromote={workspace.promoteTab} unsavedCount={unsavedTabs(tabs).length} onSaveAll={saveAllTabs} activeId={activeTab?.id ?? null} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
             {!tabs.length && (
@@ -1395,6 +1411,8 @@ export default function App() {
               ? <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onOpenFull={() => workspace.openFull(tab.id)} onExtractImages={() => workspace.extractImages(tab.sourcePath)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />
               : null))}
           </section>
+          </div>
+          {(homeOpen || homeSeen) && <div className={homeOpen ? 'contents' : 'hidden'}><ProjectsHome project={project} visible={homeOpen} onOpenProject={openFromHome} onOpenResult={openHomeResult} /></div>}
           <ToastHost />
           {largeLoading && (
             <div role="status" aria-live="polite" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -1413,7 +1431,7 @@ export default function App() {
           </footer>
         </main>
         {/* Sempre montato: chiudere il pannello non interrompe una richiesta in corso. */}
-        <aside style={{ width: widths.right }} className={assistantOpen ? 'relative flex min-w-0 shrink-0 flex-col overflow-hidden border-l border-slate-800 bg-slate-900/60' : 'hidden'}>
+        <aside style={{ width: widths.right }} className={assistantOpen && !homeOpen ? 'relative flex min-w-0 shrink-0 flex-col overflow-hidden border-l border-slate-800 bg-slate-900/60' : 'hidden'}>
           {assistantOpen && <PanelResizer side="right" label={t('Assistant width')} width={widths.right} min={PANELS.right.min} max={maxWidthFor('right', resizeContext('right'))} defaultWidth={PANELS.right.default} onChange={resizePanel('right')} onCommit={commitLayout} />}
           <AiChatPanel
             editor={editors[contextTab?.id]}

@@ -26,6 +26,20 @@ export function loadLayout() {
   }
 }
 
+// Pannello dei risultati della ricerca nella Home (ancorato a destra, si allarga verso sinistra): la larghezza scelta si ricorda a parte.
+export const RESULTS_PANEL = { min: 300, max: 900, default: 416 }
+const RESULTS_KEY = 'openwriter.homeResultsWidth'
+
+export function loadResultsWidth() {
+  const saved = Number(getPreference(RESULTS_KEY))
+  const { min, max, default: fallback } = RESULTS_PANEL
+  return Math.round(Math.min(max, Math.max(min, Number.isFinite(saved) && saved > 0 ? saved : fallback)))
+}
+
+export function saveResultsWidth(width) {
+  setPreference(RESULTS_KEY, String(Math.round(width)))
+}
+
 export function saveLayout(layout) {
   setPreference(STORAGE_KEY, JSON.stringify(layout))
 }
