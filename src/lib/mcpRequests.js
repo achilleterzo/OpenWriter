@@ -1,4 +1,5 @@
 import { createToolRunner } from './aiTools.js'
+import { describeSavedReference, refreshReference, saveFromUrl } from './webReferences.js'
 import { getPending } from './pendingChangesExtension.js'
 import { isInsidePath, samePath } from './pathCompare.js'
 import { t } from '../i18n/index.js'
@@ -45,6 +46,9 @@ export async function handleMcpRequest({ tool, args = {} }, { api, toolBridge, p
     return `Project ${opened} is now open in OpenWriter.`
   }
   if (!project) throw new Error('No project is open in OpenWriter')
+  // Riferimenti web: un agente salva (o rinfresca) una pagina che ritiene importante per il lavoro; la copia va in .ow/web e l'utente la vede nel pannello «Riferimenti web».
+  if (tool === 'save_web_reference') return describeSavedReference(await saveFromUrl({ api, getBrowser: (options) => toolBridge.getBrowser(options) }, String(args.url ?? ''), { source: 'agent' }))
+  if (tool === 'refresh_web_reference') return describeSavedReference(await refreshReference({ api, getBrowser: (options) => toolBridge.getBrowser(options) }, String(args.reference ?? ''), { checkOnly: args.check_only === true || args.check_only === 'true', source: 'agent' }))
   // Testo non salvato dei documenti aperti, per la ricerca del server MCP.
   if (tool === 'dirty_documents') return JSON.stringify(toolBridge.getDirtyDocuments())
   // Una richiesta all'assistente di OpenWriter: parte in una chat dell'app, in parallelo al lavoro dell'agente che l'ha inviata.

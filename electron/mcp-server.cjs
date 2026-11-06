@@ -33,6 +33,7 @@ const { createProjectTools } = require('./project-tools.cjs')
 const { projectKey, formatKnowledgeResults } = require('./knowledge-service.cjs')
 const { createLinksStore } = require('./project-links.cjs')
 const { createReferencesStore } = require('./project-references.cjs')
+const { webFolderOf, createWebReferencesStore } = require('./web-references.cjs')
 const { createProjectsStore } = require('./projects.cjs')
 const { outsideFolders } = require('./shared-knowledge.cjs')
 const { isSameOrInside, samePath } = require('./path-compare.cjs')
@@ -125,6 +126,7 @@ const linksStore = createLinksStore({ getProjectPath: projectPath })
 // Fuori dal progetto: le cartelle di riferimento collegate e gli altri progetti dell'utente che condividono la loro conoscenza (come nell'app,
 // vedi shared-knowledge.cjs). Si indicano come `@sigla/…` e si leggono soltanto: la ricerca e read_document li raggiungono, nient'altro.
 const referencesStore = createReferencesStore({ getProjectPath: projectPath })
+const webStore = createWebReferencesStore({ getProjectPath: projectPath })
 const projectsStore = createProjectsStore({ filePath: () => path.join(dataDirectory, 'projects.json') })
 const currentProject = () => { try { return projectPath() } catch { return null } }
 function outsideSources() {
@@ -135,6 +137,7 @@ function outsideSources() {
       references: current ? referencesStore.list() : [],
       projects: projectsStore.list(),
       isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(),
+      webFolderOf,
     })
   } catch { return [] }
 }
@@ -378,7 +381,7 @@ const TOOLS = [
         // I documenti raggiungibili: quelli del progetto, più questi due elenchi (fuori dalla cartella del progetto).
         linkedDocuments: linkedDocuments(),
         // Fuori dal progetto ma raggiungibili in sola lettura (read_document, list_documents, search_knowledge): cartelle di riferimento e altri progetti che condividono.
-        sharedWithThisProject: outsideSources().map((item) => ({ name: `@${item.name}`, kind: item.project ? 'project' : 'reference folder', path: item.path })),
+        sharedWithThisProject: outsideSources().map((item) => ({ name: `@${item.name}`, kind: item.project ? 'project' : item.web ? 'saved web pages' : 'reference folder', path: item.path })),
         openDocumentsOutsideProject: (app?.open || []).filter((item) => item.path && !item.insideProject).map((item) => item.path),
         ...(app ? { sessionIsCurrent: app.isOpenInApp } : {}),
         name: settings.name || path.basename(project),
@@ -551,6 +554,16 @@ const TOOLS = [
         const files = sources.reduce((total, source) => total + index.stats(source.key).files, 0)
         return formatKnowledgeResults(query, found, { files }, 'read_document')
       } finally { index.close() }
+    },
+  },
+  {
+    name: 'list_web_references',
+    description: 'Lists the web pages saved as REFERENCES of the project (the star of the OpenWriter browser, or save_web_reference): title, address, the Markdown copy (read it with read_document using the "file" path, "@web/…"), who saved it, when it was saved, last updated and last checked, and the age in days. Use it to see what is already saved and whether a copy may be out of date; refresh one with refresh_web_reference. Each copy also starts with a header (YAML) that records the same.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    run() {
+      const now = Date.now()
+      const days = (iso) => Math.max(0, Math.floor((now - Date.parse(iso)) / 86400000))
+      return webStore.list().map((entry) => ({ title: entry.title, url: entry.url, file: `@web/${entry.file}`, savedBy: entry.source, savedAt: entry.savedAt, updatedAt: entry.updatedAt, checkedAt: entry.checkedAt, ageDays: days(entry.updatedAt), daysSinceCheck: days(entry.checkedAt), copyExists: entry.exists }))
     },
   },
   {
@@ -734,6 +747,18 @@ const WRITE_TOOLS = [
     description: 'Opens a document in a tab of the OpenWriter editor and brings it in front, so the user sees it. The path is relative to the project root, or the absolute path of a file OUTSIDE the project (.md, .txt, .docx, .pdf): opening it makes it part of the active workspace, so afterwards you can read it (read_open_document, read_document) and annotate it. The instruction files for the assistant (.ow/context.md and the other .md files in the root of .ow) can be opened this way too, to edit them. Needs the OpenWriter app running with this project open.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'path relative to the project root, or absolute path of a document outside the project' } }, required: ['path'], additionalProperties: false },
     run: (args) => bridgeCall('open_document', args),
+  },
+  {
+    name: 'save_web_reference',
+    description: 'Saves a web page as a REFERENCE of the project when you find it important for the work (a source, documentation, an article the user will need): the app opens it in a background browser tab and stores a Markdown copy in .ow/web with a header (address, dates, saved by "agent"). From then on it is part of the project context: the OpenWriter assistant and you can read it (read_document "@web/…") and search it (search_knowledge); the user sees it in the "Web references" panel and can remove it. If the page is already saved it is refreshed. Do not save every page you read. Needs the OpenWriter app running with this project open.',
+    inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'full http(s) address of the page' } }, required: ['url'], additionalProperties: false },
+    run: (args) => bridgeCall('save_web_reference', args),
+  },
+  {
+    name: 'refresh_web_reference',
+    description: 'Checks whether a saved web page has changed (compared with the saved copy) and, unless check_only is true, updates the copy with the current content. Use list_web_references to see how old each copy is. Answers "up to date" or how many lines changed. Needs the OpenWriter app running with this project open.',
+    inputSchema: { type: 'object', properties: { reference: { type: 'string', description: 'id, "@web/…" file name, address or part of the title of the saved page' }, check_only: { type: 'boolean', description: 'true to only compare, without updating the copy (default false)' } }, required: ['reference'], additionalProperties: false },
+    run: (args) => bridgeCall('refresh_web_reference', args),
   },
   {
     name: 'ask_agent',
