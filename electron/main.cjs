@@ -27,6 +27,7 @@ const { createFontsStore } = require('./fonts.cjs')
 const { parsePdf, MARKER } = require('./pdf-import.cjs')
 const { createBrowserHistory } = require('./browser-history.cjs')
 const { createReferencesStore } = require('./project-references.cjs')
+const { createWebReferencesStore, webFolderOf } = require('./web-references.cjs')
 const projectPack = require('./project-pack.cjs')
 const { createBookmarksStore } = require('./bookmarks-store.cjs')
 const { embedImages } = require('./markdown-embed.cjs')
@@ -37,7 +38,7 @@ const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./ski
 const { createKnowledgeService, formatKnowledgeResults } = require('./knowledge-service.cjs')
 const { createSemanticPack } = require('./semantic-pack.cjs')
 const { createGpuContext } = require('./gpu-context.cjs')
-const { sharedProjects, outsideFolders: outsideFoldersOf } = require('./shared-knowledge.cjs')
+const { outsideFolders: outsideFoldersOf } = require('./shared-knowledge.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
 const MAX_SKILL_FILE_BYTES = MAX_SKILL_CHARS * 4
 const images = require('./images.cjs')
@@ -93,6 +94,7 @@ const bookmarksStore = createBookmarksStore({ getProjectPath: storePath, getMain
 const linksStore = createLinksStore({ getProjectPath: () => projectPath })
 // Cartelle di riferimento (fuori dal progetto, solo lettura per l'assistente).
 const referencesStore = createReferencesStore({ getProjectPath: () => projectPath })
+const webStore = createWebReferencesStore({ getProjectPath: () => projectPath })
 const skillsStore = createSkillsStore({ getGlobalDirectory: () => path.join(app.getPath('userData'), 'skills') })
 const projectTools = createProjectTools({ getProjectPath: () => projectPath, readDocument: (filePath) => readDocument(filePath) })
 const aiRequests = new Map()
@@ -196,10 +198,10 @@ function activeDevice() {
 // La ricerca per significato non dipende dal progetto aperto: ogni progetto con l'indice acceso ha i suoi vettori e la ricerca li usa tutti. `semanticAvailable`:
 // c'è un modello installato e abilitato, quindi ogni ricerca può essere per parole e per significato.
 const semanticAvailable = () => Boolean(semanticAllowed() && activeDevice())
-// I testi da vettorizzare: il progetto aperto, le sue cartelle di riferimento e gli altri progetti che condividono la conoscenza (tutti con l'indice acceso).
+// I testi da vettorizzare: il progetto aperto, le sue cartelle di riferimento, le pagine web salvate e gli altri progetti che condividono la conoscenza (con l'indice acceso).
 const semanticTargets = () => {
   if (!projectPath || !knowledgeOn || !semanticAvailable()) return []
-  return [projectPath, ...referenceFolders().map((item) => item.path), ...sharedFolders().map((item) => item.path)]
+  return [projectPath, ...outsideFolders().map((item) => item.path)]
 }
 // `purge`: identificativi dei modelli di cui buttare i vettori (si è tolto il loro pacchetto).
 function configureSemantic({ purge = [] } = {}) {
@@ -217,7 +219,7 @@ function startKnowledge() {
   // Le cartelle di riferimento del progetto (collegate dall'utente, quindi con il suo consenso) si indicizzano a parte: una sola volta anche se più progetti le usano.
   for (const reference of referenceFolders()) knowledge.sync(reference.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
   // Gli altri progetti che condividono la loro conoscenza: si riallineano all'apertura (non più spesso di ogni due minuti), senza sorvegliarli.
-  for (const other of sharedFolders()) {
+  for (const other of outsideFolders().filter((item) => item.project || (item.web && item.name !== 'web'))) {
     const key = knowledge.key(other.path)
     if (Date.now() - (sharedSynced.get(key) || 0) < 120000) continue
     sharedSynced.set(key, Date.now())
@@ -227,15 +229,22 @@ function startKnowledge() {
   configureSemantic()
 }
 const sharedSynced = new Map()
-// Gli altri progetti dell'utente che condividono la loro conoscenza (vedi shared-knowledge.cjs); chi ha spento l'indice o la condivisione non c'è.
-const sharedFolders = () => {
+// Tutto ciò che sta fuori dal progetto e si cerca insieme ad esso (`@sigla/…`, sempre in sola lettura): le cartelle di riferimento, le pagine web salvate (`@web`), gli altri progetti che
+// condividono la loro conoscenza (vedi shared-knowledge.cjs; chi ha spento l'indice o la condivisione non c'è) e le loro pagine web (`@nome-web`).
+const outsideFolders = () => {
   try {
-    return projectPath ? sharedProjects({ current: projectPath, projects: projectsStore.list(), references: referenceFolders(), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled() }) : []
+    return projectPath ? outsideFoldersOf({ current: projectPath, references: referencesStore.list(), projects: projectsStore.list(), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(), webFolderOf }) : []
   } catch { return [] }
 }
-// Tutto ciò che sta fuori dal progetto e si cerca insieme ad esso: le cartelle di riferimento e gli altri progetti (`@sigla/…`, sempre in sola lettura).
-const outsideFolders = () => [...referenceFolders(), ...sharedFolders()]
-const referenceFolders = () => { try { return projectPath ? referencesStore.list().filter((item) => !item.missing) : [] } catch { return [] } }
+// Le cartelle di riferimento collegate e le pagine web salvate del progetto (`.ow/web`, automatica: `@web`).
+const referenceFolders = () => {
+  try {
+    if (!projectPath) return []
+    const list = referencesStore.list().filter((item) => !item.missing)
+    const web = webFolderOf(projectPath)
+    return web && !list.some((item) => item.name.toLowerCase() === 'web') ? [...list, { name: 'web', path: web, web: true }] : list
+  } catch { return [] }
+}
 // Chi cambia una cartella di riferimento (di solito un altro programma) la tiene aggiornata nell'indice, come per il progetto.
 let referenceWatchers = []
 function stopReferenceWatch() {
@@ -1201,7 +1210,7 @@ function outsideFor(base) {
   let references = []
   try { references = base ? createReferencesStore({ getProjectPath: () => base }).list() : [] } catch { references = [] }
   try {
-    return outsideFoldersOf({ current: base, references, projects: projectsStore.list(), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled() })
+    return outsideFoldersOf({ current: base, references, projects: projectsStore.list(), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(), webFolderOf })
   } catch { return [] }
 }
 // Ricerca per rilevanza (e per significato, se c'è il modello) nel progetto, nei suoi riferimenti e negli altri progetti. Non dipende dal progetto aperto: `project` (un agente
@@ -1259,9 +1268,9 @@ ipcMain.handle('tools:search-knowledge', (_event, args) => searchKnowledgeTool(a
 function outsideRoot(given) {
   try { return referencesStore.resolve(given) } catch (error) {
     const [name, ...rest] = String(given || '').slice(1).replace(/\\/g, '/').split('/')
-    const shared = sharedFolders().find((item) => item.name.toLowerCase() === name.toLowerCase())
-    if (!shared) throw error
-    return { name: shared.name, root: shared.path, relative: rest.filter(Boolean).join('/') }
+    const outside = outsideFolders().find((item) => item.name.toLowerCase() === name.toLowerCase())
+    if (!outside) throw error
+    return { name: outside.name, root: outside.path, relative: rest.filter(Boolean).join('/') }
   }
 }
 function toolsFor(given) {
@@ -1282,7 +1291,7 @@ ipcMain.handle('tools:list-directory', async (_event, relativePath, options = {}
       try { if (fsSync.existsSync(imageDescriptionFile(result.path === '.' ? entry.name : `${result.path}/${entry.name}`))) entry.described = true } catch { /* nome non valido */ }
     }
   }
-  if (!prefix && result.path === '.') { result.linked = linksStore.list(); result.references = [...referencesStore.list(), ...sharedFolders().map((item) => ({ ...item, project: true }))] }
+  if (!prefix && result.path === '.') { result.linked = linksStore.list(); const linked = referencesStore.list(); result.references = [...linked, ...outsideFolders().filter((item) => !linked.some((reference) => reference.name === item.name)).map((item) => ({ name: item.name, path: item.path, ...(item.project ? { project: true } : {}), ...(item.web ? { web: true } : {}) }))] }
   return result
 })
 ipcMain.handle('tools:read-file', async (_event, { path: relativePath, offset, limit, startLine, endLine } = {}) => {
@@ -1470,6 +1479,27 @@ ipcMain.handle('tools:create-project', async (_event, { name, documents } = {}) 
   return { path: target, links: writeLinksTo(target, linked) }
 })
 ipcMain.handle('references:list', () => (projectPath ? referencesStore.list() : []))
+// Riferimenti web (la stellina del browser): pagine salvate con una copia in Markdown in `.ow/web` (vedi web-references.cjs). Salvare o togliere una pagina riallinea
+// subito la ricerca: la cartella `.ow/web` è la cartella di riferimento automatica `@web`.
+async function webReferencesChanged() {
+  watchReferences()
+  if (!knowledgeOn || !projectPath) return
+  const folder = webStore.folder()
+  if (webFolderOf(projectPath)) knowledge.sync(folder).catch(() => {}); else knowledge.clear(folder).catch(() => {})
+  configureSemantic()
+}
+ipcMain.handle('webrefs:list', () => (projectPath ? webStore.list() : []))
+ipcMain.handle('webrefs:find', (_event, url) => (projectPath ? webStore.find(String(url || '')) : null))
+ipcMain.handle('webrefs:save', async (_event, page = {}) => {
+  const entry = webStore.save({ url: String(page.url || ''), title: String(page.title || ''), markdown: String(page.markdown || ''), siteName: String(page.siteName || ''), source: String(page.source || 'user'), checkOnly: page.checkOnly === true })
+  await webReferencesChanged()
+  return entry
+})
+ipcMain.handle('webrefs:remove', async (_event, id) => {
+  const list = webStore.remove(String(id || ''))
+  await webReferencesChanged()
+  return list
+})
 // Aggiunge una cartella di riferimento: si sceglie col dialogo (o, per il trascinamento, si passa il percorso).
 ipcMain.handle('references:add', async (_event, directory) => {
   if (!projectPath) throw new Error(t('No project open'))

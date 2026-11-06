@@ -114,6 +114,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeImageDescription: (path, description) => ipcRenderer.invoke('images:write-description', path, description),
   captureRect: (rect) => ipcRenderer.invoke('images:capture-page', rect),
   captureWebview: (contentsId) => ipcRenderer.invoke('images:capture-webview', contentsId),
+  webRefs: {
+    list: () => ipcRenderer.invoke('webrefs:list'),
+    find: (url) => ipcRenderer.invoke('webrefs:find', url),
+    save: (page) => ipcRenderer.invoke('webrefs:save', page),
+    remove: (id) => ipcRenderer.invoke('webrefs:remove', id),
+  },
   browserHistory: {
     // Con `{ agent: true }` si usa la cronologia dell'assistente invece di quella dell'utente.
     list: (options) => ipcRenderer.invoke('browser-history:list', options),
