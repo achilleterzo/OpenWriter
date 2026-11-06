@@ -173,6 +173,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [shared-knowledge.cjs.md](reference/electron/shared-knowledge.cjs.md) ([shared-knowledge.cjs](../electron/shared-knowledge.cjs)) — Which other projects the relevance search also covers
   - [project-graph.cjs.md](reference/electron/project-graph.cjs.md) ([project-graph.cjs](../electron/project-graph.cjs)) — Which projects of the Home network are connected (affinity by meaning)
   - [search-merge.cjs.md](reference/electron/search-merge.cjs.md) ([search-merge.cjs](../electron/search-merge.cjs)) — Merges the searches of a question and its synonyms
+  - [private-address.mjs.md](reference/electron/private-address.mjs.md) ([private-address.mjs](../electron/private-address.mjs)) — Network addresses the agents' browser may not reach (local, private, service)
   - [gpu-context.cjs.md](reference/electron/gpu-context.cjs.md) ([gpu-context.cjs](../electron/gpu-context.cjs)) — Hidden WebGPU window that computes vectors on the graphics card
   - [semantic-pack.cjs.md](reference/electron/semantic-pack.cjs.md) ([semantic-pack.cjs](../electron/semantic-pack.cjs)) — Downloadable model and runtime for the search by meaning
   - [semantic-embedder-worker.cjs.md](reference/electron/semantic-embedder-worker.cjs.md) ([semantic-embedder-worker.cjs](../electron/semantic-embedder-worker.cjs)) — Thread that runs the embedding model
