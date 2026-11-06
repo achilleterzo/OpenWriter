@@ -39,6 +39,8 @@ const { createKnowledgeService, formatKnowledgeResults } = require('./knowledge-
 const { createSemanticPack } = require('./semantic-pack.cjs')
 const { createGpuContext } = require('./gpu-context.cjs')
 const { outsideFolders: outsideFoldersOf } = require('./shared-knowledge.cjs')
+const { affinityEdges, uniformEdges, collectVectors } = require('./project-graph.cjs')
+const { mergeSearches, cleanTerms } = require('./search-merge.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
 const MAX_SKILL_FILE_BYTES = MAX_SKILL_CHARS * 4
 const images = require('./images.cjs')
@@ -204,9 +206,12 @@ const semanticTargets = () => {
   return [projectPath, ...outsideFolders().map((item) => item.path)]
 }
 // `purge`: identificativi dei modelli di cui buttare i vettori (si è tolto il loro pacchetto).
+// L'ultimo elenco di progetti configurato per i vettori: se ne cambia uno (un progetto aggiunto, che condivide da poco…) si riconfigura.
+let semanticSignature = ''
 function configureSemantic({ purge = [] } = {}) {
   if (!knowledge.available) return Promise.resolve(false)
   const projects = semanticTargets()
+  semanticSignature = projects.map((item) => knowledge.key(item)).sort().join('|')
   const device = projects.length ? activeDevice() : null
   return knowledge.semanticConfigure({ device, model: device ? semanticPacks[device].id : '', directory: device === 'cpu' ? semanticPacks.cpu.directory : null, projects, purge })
     .catch((error) => { console.error('Ricerca per significato non configurata:', error.message); return false })
@@ -1200,6 +1205,8 @@ ipcMain.handle('project:knowledge-rebuild', async (_event, directory) => {
   if (!target) throw new Error(t('No project open'))
   if (!knowledge.available) throw new Error(knowledge.error || 'The search index is not available')
   await knowledge.rebuild(target)
+  // Un progetto aggiunto da poco può non essere ancora tra quelli di cui calcolare i vettori: senza, ricostruito l'indice non avrebbe mai il suo significato.
+  await configureSemantic()
   return knowledgeStatus(target)
 })
 // Ricerca per rilevanza sull'indice (knowledge-index.cjs): passaggi con file e righe. Non vale per le cartelle di riferimento.
@@ -1215,22 +1222,23 @@ function outsideFor(base) {
 }
 // Ricerca per rilevanza (e per significato, se c'è il modello) nel progetto, nei suoi riferimenti e negli altri progetti. Non dipende dal progetto aperto: `project` (un agente
 // esterno) indica da quale progetto si cerca; senza, si usa quello aperto, e senza nessuno si cerca in tutti i progetti che condividono la loro conoscenza.
-async function searchKnowledgeTool(args = {}, readTool = 'read_file', { project: asked = null } = {}) {
+async function runKnowledgeSearch(args = {}, { project: asked = null, home = false } = {}) {
   const known = (directory) => Boolean((projectPath && samePath(directory, projectPath)) || projectsStore.list().some((item) => samePath(item.path, directory)))
-  const base = asked && known(path.resolve(String(asked))) ? path.resolve(String(asked)) : (asked ? null : projectPath)
+  // `home`: la ricerca della Home non parte da nessun progetto, anche se uno è aperto: cerca in tutti quelli che condividono la conoscenza.
+  const base = home ? null : asked && known(path.resolve(String(asked))) ? path.resolve(String(asked)) : (asked ? null : projectPath)
   const query = String(args.query || '').trim()
   if (!query) throw new Error('Missing parameter "query"')
   if (!knowledge.available) throw new Error('The search index is not available: use search_files')
   if (base) {
     const on = projectPath && samePath(base, projectPath) ? knowledgeOn : createProjectFile({ getProjectPath: () => base }).searchIndexEnabled()
     if (!on) throw new Error('The search index is turned off for this project: use search_files')
-  } else if (!asked && !projectPath) throw new Error(t('No project open'))
+  } else if (!asked && !projectPath && !home) throw new Error(t('No project open'))
   const given = String(args.path || '').trim().replace(/\\/g, '/')
   // `others` (o il vecchio `references`): tutto ciò che sta fuori dal progetto, cioè gli altri progetti e le cartelle di riferimento.
   const wanted = String(args.scope || '').toLowerCase()
   const scope = wanted === 'project' ? 'project' : (wanted === 'others' || wanted === 'references') ? 'others' : 'all'
   const outside = outsideFor(base)
-  const sourceOf = (item) => ({ key: knowledge.key(item.path), prefix: `@${item.name}` })
+  const sourceOf = (item) => ({ key: knowledge.key(item.path), prefix: `@${item.name}`, item })
   let sources
   let folder = ''
   if (given.startsWith('@')) {
@@ -1249,19 +1257,120 @@ async function searchKnowledgeTool(args = {}, readTool = 'read_file', { project:
         folder = clean === '.' ? '' : clean
       }
     }
-    const projectSource = base ? { key: knowledge.key(base), prefix: '' } : null
+    const projectSource = base ? { key: knowledge.key(base), prefix: '', item: null } : null
     // Un percorso del progetto restringe la ricerca al progetto.
     sources = folder ? [projectSource] : [...(scope === 'others' || !projectSource ? [] : [projectSource]), ...(scope === 'project' ? [] : outside.map(sourceOf))]
   }
   if (!sources.length) throw new Error('There are no other projects or reference folders to search: use scope "project" or leave it out')
   const [found, ...stats] = await Promise.all([
-    knowledge.search(sources.map((source) => source.key), query, { folder, limit: Number(args.maxResults) || 10, semantic: semanticAvailable() }),
+    knowledge.search(sources.map((source) => source.key), query, { folder, limit: Number(args.maxResults) || 10, semantic: semanticAvailable(), includeWeak: args.includeWeak === true }),
     ...sources.map((source) => knowledge.stats(source.key)),
   ])
   const prefixes = new Map(sources.map((source) => [source.key, source.prefix]))
-  found.results = found.results.map((entry) => ({ ...entry, path: withPrefix(prefixes.get(entry.project) ?? '', entry.path) }))
-  return formatKnowledgeResults(query, found, { files: stats.reduce((total, item) => total + item.files, 0) }, readTool)
+  const bySource = new Map(sources.map((source) => [source.key, source]))
+  found.results = found.results.map((entry) => ({ ...entry, source: bySource.get(entry.project), path: withPrefix(prefixes.get(entry.project) ?? '', entry.path), relative: entry.path }))
+  return { query, found, files: stats.reduce((total, item) => total + item.files, 0), outside }
 }
+async function searchKnowledgeTool(args = {}, readTool = 'read_file', context = {}) {
+  const { query, found, files } = await runKnowledgeSearch(args, context)
+  return formatKnowledgeResults(query, { ...found, results: found.results.map(({ source: _source, relative: _relative, ...entry }) => entry) }, { files }, readTool)
+}
+// Ricerca della Home: gli stessi passaggi che vedrebbe l'assistente, ma strutturati (con il progetto di ogni passaggio e il file da aprire).
+async function searchProjectsForHome(args = {}) {
+  const maxResults = Math.min(30, Math.max(1, Number(args.maxResults) || 20))
+  const query = String(args.query || '').trim()
+  // `terms`: sinonimi e termini affini chiesti dall'interfaccia al modello linguistico; ognuno si cerca a parte (parole e significato) e i risultati si uniscono.
+  const terms = cleanTerms(args.terms, query)
+  // `includeWeak`: anche i passaggi che il filtro di pertinenza scarta ("meno pertinenti"), con `weak: true`, ordinati per pertinenza.
+  const includeWeak = args.includeWeak === true
+  const base = await runKnowledgeSearch({ query, maxResults, includeWeak }, { home: true })
+  const { found, files, outside } = base
+  // Le pagine web salvate di un progetto (`@nome-web`) appartengono a quel progetto.
+  const ownerOf = (item) => (item.web ? outside.find((other) => other.project && (item.name === `${other.name}-web` || item.name.startsWith(`${other.name}-web-`))) || null : item)
+  const shape = (entries) => entries.flatMap((entry) => {
+    const item = entry.source?.item
+    const owner = item ? ownerOf(item) : null
+    if (!item || !owner) return []
+    return [{
+      project: owner.path, projectName: owner.name, file: entry.relative, absolute: path.join(item.path, entry.relative),
+      display: entry.path, heading: entry.heading || '', startLine: entry.startLine, endLine: entry.endLine, snippet: String(entry.snippet || '').replace(/\s+/g, ' ').trim(),
+      // Perché compare: 'words' (contiene le parole), 'meaning' (solo per significato) o 'both'.
+      via: entry.via || 'words',
+      // Pertinenza 0-1 (da quanto il passaggio si stacca dagli altri per questa domanda) e punteggio z; assenti senza ricerca per significato.
+      ...(entry.relevance !== undefined ? { relevance: Math.round(entry.relevance * 100) / 100 } : {}),
+      ...(entry.z !== undefined ? { z: Math.round(entry.z * 10) / 10 } : {}),
+      ...(entry.weak ? { weak: true } : {}),
+    }]
+  })
+  let results = shape(found.results)
+  let weakCount = found.weakCount || 0
+  if (terms.length) {
+    const extra = await Promise.all(terms.map(async (term) => {
+      try {
+        const { found: termFound } = await runKnowledgeSearch({ query: term, maxResults: 10, includeWeak }, { home: true })
+        weakCount += termFound.weakCount || 0
+        return { term, original: false, results: shape(termFound.results) }
+      } catch { return { term, original: false, results: [] } }
+    }))
+    results = mergeSearches([{ term: query, original: true, results }, ...extra], { limit: maxResults + 10 })
+  }
+  // `partial`: nessun passaggio contiene tutte le parole (si mostrano quelli che ne hanno qualcuna).
+  return { query, terms, mode: found.mode, partial: found.mode === 'or' || Boolean(found.partial), weakCount, files, results }
+}
+ipcMain.handle('projects:search', (_event, args) => searchProjectsForHome(args))
+
+// Dati del grafo della Home: ogni progetto (con le sue opzioni) e le connessioni per affinità. I vettori medi si ricalcolano solo se l'indice del progetto è cambiato.
+const centroidCache = new Map() // chiave → { signature, vector }
+ipcMain.handle('projects:graph', async () => {
+  const list = projectsStore.list().filter((item) => item && item.path)
+  const device = semanticAllowed() ? activeDevice() : null
+  const model = device ? semanticPacks[device].id : ''
+  const nodes = []
+  for (const item of list) {
+    const base = { path: item.path, name: item.name, missing: Boolean(item.missing), openedAt: item.openedAt || null }
+    if (item.missing) { nodes.push({ ...base, indexed: false, shared: false, files: 0, chunks: 0, updatedAt: null }); continue }
+    let file = null
+    try { file = createProjectFile({ getProjectPath: () => item.path }) } catch { file = null }
+    const indexed = Boolean(file?.searchIndexEnabled())
+    const shared = Boolean(file?.sharedKnowledgeEnabled())
+    let stats = { files: 0, chunks: 0, updatedAt: null }
+    if (indexed && knowledge.available) { try { stats = await knowledge.stats(item.path) } catch { /* senza statistiche il progetto resta senza linee */ } }
+    nodes.push({ ...base, indexed, shared, files: stats.files, chunks: stats.chunks, updatedAt: stats.updatedAt })
+  }
+  // Un progetto che condivide e ha l'indice acceso ma nessun passaggio (appena aggiunto): si indicizza (non più spesso di ogni due minuti), senza aspettare l'apertura.
+  for (const node of nodes) {
+    if (!node.shared || !node.indexed || node.chunks > 0 || !knowledge.available) continue
+    const key = knowledge.key(node.path)
+    if (Date.now() - (sharedSynced.get(key) || 0) < 120000) continue
+    sharedSynced.set(key, Date.now())
+    knowledge.sync(node.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
+  }
+  // I vettori si calcolano per i progetti dell'elenco corrente: se è cambiato dall'ultima configurazione, si riconfigura.
+  if (knowledge.available && semanticAvailable()) {
+    const wanted = semanticTargets().map((item) => knowledge.key(item)).sort().join('|')
+    if (wanted && wanted !== semanticSignature) await configureSemantic()
+  }
+  const sharing = nodes.filter((node) => node.shared && node.chunks > 0)
+  let vectors = new Map()
+  let pending = new Set()
+  if (model && knowledge.available && sharing.length > 1) {
+    try {
+      ({ vectors, pending } = await collectVectors({
+        nodes: sharing, model, cache: centroidCache, key: (directory) => knowledge.key(directory),
+        centroids: (paths) => knowledge.centroids(paths),
+        status: async (directory) => { try { return await knowledge.semanticStatus([directory]) } catch { return null } },
+      }))
+    } catch (error) { console.error('Vettori medi dei progetti non calcolati:', error.message) }
+  }
+  for (const node of nodes) node.pendingVectors = pending.has(node.path)
+  let edges = []
+  let approximate = false
+  if (vectors.size > 1) edges = affinityEdges(sharing.filter((node) => vectors.has(node.path)).map((node) => ({ id: node.path, vector: vectors.get(node.path) })))
+  else if (sharing.length > 1) { edges = uniformEdges(sharing.map((node) => node.path)); approximate = true }
+  // `busy`: l'indice sta ancora lavorando (scansione o vettori): l'interfaccia riguarda il grafo finché non ha finito.
+  const busy = pending.size > 0 || (knowledge.available && knowledge.syncing)
+  return { nodes, edges, approximate, busy, semantic: vectors.size > 1 }
+})
 ipcMain.handle('tools:search-knowledge', (_event, args) => searchKnowledgeTool(args))
 // Gli strumenti di lettura valgono anche per le cartelle di riferimento: un percorso `@sigla/…` si legge dentro quella cartella (e solo lì).
 // `@sigla/…` → la radice: un riferimento, oppure un altro progetto che condivide la sua conoscenza.

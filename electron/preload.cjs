@@ -175,6 +175,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   copyProjectContext: (request) => ipcRenderer.invoke('projects:copy-context', request),
   getMainProject: () => ipcRenderer.invoke('workspace:get-main'),
   listProjects: () => ipcRenderer.invoke('workspace:list-projects'),
+  getProjectGraph: () => ipcRenderer.invoke('projects:graph'),
+  searchProjects: (args) => ipcRenderer.invoke('projects:search', args),
   openProject: (directory) => ipcRenderer.invoke('workspace:open-project', directory),
   createProject: (name) => ipcRenderer.invoke('workspace:create-project', name),
   removeProject: (directory) => ipcRenderer.invoke('workspace:remove-project', directory),
