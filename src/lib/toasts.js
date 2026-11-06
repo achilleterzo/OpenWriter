@@ -33,6 +33,13 @@ function schedule(id, level) {
   timers.set(id, setTimeout(() => dismiss(id), DURATION[level]))
 }
 
+// Con il mouse sopra una notifica il timer si ferma (per leggerla o copiarla) e riparte quando esce.
+export function hold(id) { clearTimeout(timers.get(id)); timers.delete(id) }
+export function release(id) {
+  const item = items.find((entry) => entry.id === id)
+  if (item) schedule(id, item.level)
+}
+
 export function notify(level, message, { detail = '' } = {}) {
   const kind = LEVELS.includes(level) ? level : 'info'
   const text = String(message ?? '').trim()
