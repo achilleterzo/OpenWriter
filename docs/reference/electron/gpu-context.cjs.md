@@ -4,7 +4,7 @@
 
 Source: [`electron/gpu-context.cjs`](../../../electron/gpu-context.cjs)
 
-The context that computes the vectors on the graphics card. WebGPU only exists inside Chromium, not in Node threads, so the GPU pack ([semantic-pack.cjs](semantic-pack.cjs.md)) runs in a **hidden window** (`electron/gpu-embedder/`: `index.html`, `page.mjs`, `preload.cjs`) that loads the fp16 model with `onnxruntime-web` (WebGPU backend). The main process sends it texts and receives vectors; the index worker asks the main process (see [knowledge-service.cjs](knowledge-service.cjs.md)).
+The context that computes the vectors on the graphics card. A request is sent only after the page has declared itself ready (the handshake message with id 0); a window that exists but has not done so is not used. WebGPU only exists inside Chromium, not in Node threads, so the GPU pack ([semantic-pack.cjs](semantic-pack.cjs.md)) runs in a **hidden window** (`electron/gpu-embedder/`: `index.html`, `page.mjs`, `preload.cjs`) that loads the fp16 model with `onnxruntime-web` (WebGPU backend). The main process sends it texts and receives vectors; the index worker asks the main process (see [knowledge-service.cjs](knowledge-service.cjs.md)).
 
 `createGpuContext({ BrowserWindow, ipcMain, packDirectory, tokenizersFile, idleMs })` returns:
 - `probe()`: which adapter WebGPU would use (`{ webgpu, vendor, architecture, device, description, fp16 }`, or `{ webgpu: false, reason }`), without loading the model.

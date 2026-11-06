@@ -70,7 +70,7 @@ function createGpuContext({ BrowserWindow, ipcMain, packDirectory, tokenizersFil
 
   function onReply(event, id, payload) {
     if (!window || event.sender !== window.webContents) return // solo la nostra finestra
-    if (id === 0) { if (payload?.ready) readyResolve?.(); return }
+    if (id === 0) { if (payload?.ready) { pageReady = true; readyResolve?.() } return }
     const entry = pending.get(id)
     if (!entry) return
     pending.delete(id)
@@ -79,6 +79,8 @@ function createGpuContext({ BrowserWindow, ipcMain, packDirectory, tokenizersFil
     if (payload?.error) entry.reject(new Error(payload.error)); else entry.resolve(payload)
   }
   let readyResolve = null
+  // La pagina ha dichiarato di essere pronta a ricevere richieste (messaggio con id 0): finché non lo fa, niente richieste.
+  let pageReady = false
   let listening = false
 
   function failAll(error) {
@@ -88,8 +90,9 @@ function createGpuContext({ BrowserWindow, ipcMain, packDirectory, tokenizersFil
 
   async function ensureWindow() {
     if (starting) return starting
-    if (window && !window.isDestroyed()) return
+    if (window && !window.isDestroyed() && pageReady) return
     starting = (async () => {
+      pageReady = false
       await startServer()
       if (!listening) { ipcMain.on('embed:reply', onReply); listening = true }
       const created = new BrowserWindow({
@@ -112,12 +115,15 @@ function createGpuContext({ BrowserWindow, ipcMain, packDirectory, tokenizersFil
       created.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
       created.webContents.on('render-process-gone', (_event, details) => { failAll(new Error(`The GPU page stopped (${details.reason})`)); if (window === created) window = null })
       created.on('closed', () => { if (window === created) window = null })
+      let readyTimer = null
       const ready = new Promise((resolve, reject) => {
         readyResolve = resolve
-        setTimeout(() => reject(new Error('The GPU page did not start in time')), READY_TIMEOUT_MS)
+        readyTimer = setTimeout(() => reject(new Error('The GPU page did not start in time')), READY_TIMEOUT_MS)
       })
-      await created.loadURL(`http://127.0.0.1:${server.address().port}/${token}/`)
-      await ready
+      try {
+        await created.loadURL(`http://127.0.0.1:${server.address().port}/${token}/`)
+        await ready
+      } finally { clearTimeout(readyTimer) }
     })().finally(() => { starting = null })
     return starting
   }
@@ -145,6 +151,7 @@ function createGpuContext({ BrowserWindow, ipcMain, packDirectory, tokenizersFil
     failAll(new Error('The GPU context was closed'))
     const current = window
     window = null
+    pageReady = false
     try { if (current && !current.isDestroyed()) current.destroy() } catch { /* già chiusa */ }
   }
 
