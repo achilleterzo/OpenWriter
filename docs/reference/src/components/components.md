@@ -36,6 +36,9 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [ProjectSettings.jsx](pages/ProjectSettings.jsx.md) — Project settings: name, icon, context, languages, skills
 - [ProjectSettingsDialog.jsx](pages/ProjectSettingsDialog.jsx.md) — Window holding the settings of a project
 - [ProjectsPanel.jsx](pages/ProjectsPanel.jsx.md) — Projects view with avatars and context menu
+- [ProjectsHome.jsx](pages/ProjectsHome.jsx.md) — Home: network of projects and search by meaning
+- [ProjectGraph.jsx](pages/ProjectGraph.jsx.md) — Bubbles and synapses of the Home network
+- [ChatComposer.jsx](pages/ChatComposer.jsx.md) — Restricted Markdown message field of the chat
 - [QuickActionsSettings.jsx](pages/QuickActionsSettings.jsx.md) — Settings section for the chat quick actions
 - [Segmented.jsx](pages/Segmented.jsx.md) — Group of buttons for a single choice
 - [SelectionToolbar.jsx](pages/SelectionToolbar.jsx.md) — Floating bar of the selection: marks, links, images

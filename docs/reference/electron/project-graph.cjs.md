@@ -1,0 +1,9 @@
+---
+
+# project-graph.cjs
+
+Source: [`electron/project-graph.cjs`](../../../electron/project-graph.cjs)
+
+Which projects of the Home network are connected. Projects that share their knowledge all see each other, so sharing alone would draw a complete tangle; the lines join instead each project to the few closest in meaning. `affinityEdges(nodes, { perNode })` takes `[{ id, vector }]` (the mean vector of each project, see `projectCentroids` in [knowledge-index.cjs](knowledge-index.cjs.md)), computes the cosine of every pair, keeps only the pairs above the median of all pairs (the cosines of text models sit in a narrow range, so the threshold is relative) and, per project, its `perNode` best pairs. Each connection has a `weight` in (0, 1] (how close, rescaled over the kept pairs) used for the thickness, the pulse and the distance in the Home. `uniformEdges(ids)` is the fallback without vectors: a few projects joined all to all, many in a ring (the Home flags it as approximate). `cosine(a, b)` is the dot product of two normalised vectors.
+
+`collectVectors({ nodes, model, cache, key, centroids, status })` gets the mean vector of each sharing project with a cache. A mean computed while the vectors of the project are only partly ready is provisional: it is used (so the project can already be connected) but not remembered, because the cache signature (passages and date of the index) would not change when the vectors are finished and the project would stay "half done". It returns `vectors` and `pending` (the projects whose vectors are still being computed). In [main.cjs](main.cjs.md) the `projects:graph` handler also makes sure the vectors are computed for the current list of projects (a project added after the last configuration was never in it: its passages existed but had no vectors, so no lines), indexes a sharing project that has no passages yet, and answers `busy` while the index is still working.
