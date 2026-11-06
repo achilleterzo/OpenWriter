@@ -70,7 +70,7 @@ The documentation in `docs/` is part of the change, not an afterthought, and it 
 
 - Reference pages live in `docs/reference/`, mirroring the source tree: one page per module (`electron/*.cjs`, `src/App.jsx`, `src/lib/*`, `src/components/*`), inside folders that follow the real directory hierarchy.
 - Every page starts with an `H1` equal to the module path and a `Source:` line linking the physical file, with the right number of `../` steps for its depth (`../../../` from `electron/` and `src/`, `../../../../` from `src/lib/` and `src/i18n/`, `../../../../../` from `src/components/pages/` and `src/i18n/locales/`).
-- `docs/INDEX.md` lists every page in its real hierarchy, `docs/reference/src/lib/lib.md` and `docs/reference/src/components/components.md` list the same pages as their folders, and `docs/reference/coverage.md` is the quick check that the pages still match the source tree.
+- `docs/README.md` lists every page in its real hierarchy, `docs/reference/src/lib/lib.md` and `docs/reference/src/components/components.md` list the same pages as their folders, and `docs/reference/coverage.md` is the quick check that the pages still match the source tree.
 - When you add, rename or remove a module, add, rename or remove its page in the same pull request, and update the three indexes above. The checks listed in `coverage.md` are the ones to satisfy.
 - The reference pages describe what the code does, concisely and in English, for someone who has to work on it: responsibilities, exported functions and their options, limits, file formats, IPC channels and tool names. The user-facing overview at the root (`README.md`) is updated only when a feature changes for the user.
 
