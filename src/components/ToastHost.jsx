@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-react'
-import { dismiss, subscribe } from '../lib/toasts.js'
+import { AlertTriangle, Check, CheckCircle2, Copy, Info, X, XCircle } from 'lucide-react'
+import { dismiss, hold, release, subscribe } from '../lib/toasts.js'
 import { t } from '../i18n/index.js'
 
 // Colori dei quattro livelli: il tema chiaro li adatta da solo (sono variabili CSS).
@@ -15,8 +15,19 @@ const LEVELS = {
 export default function ToastHost() {
   const [items, setItems] = useState([])
   const [open, setOpen] = useState(null)
+  const [copied, setCopied] = useState(null)
   useEffect(() => subscribe(setItems), [])
   if (!items.length) return null
+
+  // Si copia il messaggio con il dettaglio (traccia dell'errore), come lo si vedrebbe espanso.
+  async function copy(item) {
+    try {
+      await navigator.clipboard.writeText(item.detail ? `${item.message}
+${item.detail}` : item.message)
+      setCopied(item.id)
+      setTimeout(() => setCopied((current) => (current === item.id ? null : current)), 1500)
+    } catch (error) { console.warn('Copia della notifica non riuscita', error) }
+  }
 
   return (
     <div className="pointer-events-none fixed bottom-8 right-4 z-[60] flex w-96 max-w-[calc(100vw-2rem)] flex-col gap-2" aria-live="polite">
@@ -24,16 +35,17 @@ export default function ToastHost() {
         const { icon: Icon, bar, text } = LEVELS[item.level]
         const expanded = open === item.id
         return (
-          <div key={item.id} role={item.level === 'error' ? 'alert' : 'status'} className="pointer-events-auto flex overflow-hidden rounded-lg border border-slate-700 bg-slate-900 text-sm text-slate-200 shadow-xl">
+          <div key={item.id} role={item.level === 'error' ? 'alert' : 'status'} onMouseEnter={() => hold(item.id)} onMouseLeave={() => release(item.id)} className="pointer-events-auto flex overflow-hidden rounded-lg border border-slate-700 bg-slate-900 text-sm text-slate-200 shadow-xl">
             <span className={`w-1.5 shrink-0 ${bar}`} aria-hidden="true" />
             <button type="button" className="flex min-w-0 flex-1 items-start gap-2.5 px-3 py-2.5 text-left" onClick={() => item.detail && setOpen(expanded ? null : item.id)} title={item.detail ? t('Show details') : undefined}>
               <Icon size={16} className={`mt-0.5 shrink-0 ${text}`} />
               <span className="min-w-0 flex-1">
                 <span className={`block break-words ${expanded ? '' : 'line-clamp-3'}`}>{item.message}{item.count > 1 && <span className="ml-1.5 rounded bg-slate-800 px-1 text-xs text-slate-400">×{item.count}</span>}</span>
-                {expanded && item.detail && <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap break-words text-xs text-slate-400">{item.detail}</pre>}
+                {expanded && item.detail && <pre className="mt-1.5 max-h-40 select-text overflow-auto whitespace-pre-wrap break-words text-xs text-slate-400">{item.detail}</pre>}
               </span>
             </button>
-            <button type="button" aria-label={t('Close')} title={t('Close')} className="shrink-0 px-2 text-slate-500 transition hover:text-slate-100" onClick={() => dismiss(item.id)}><X size={14} /></button>
+            <button type="button" aria-label={t('Copy')} title={t('Copy')} className="shrink-0 px-1.5 text-slate-500 transition hover:text-slate-100" onClick={() => copy(item)}>{copied === item.id ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}</button>
+            <button type="button" aria-label={t('Close')} title={t('Close')} className="shrink-0 pl-1 pr-2 text-slate-500 transition hover:text-slate-100" onClick={() => dismiss(item.id)}><X size={14} /></button>
           </div>
         )
       })}

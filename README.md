@@ -183,7 +183,7 @@ npm start
 
 ## Documentation
 
-The technical documentation is available in [`docs/INDEX.md`](docs/INDEX.md). It covers the application architecture, project storage, assistant tools, development workflow, and release process.
+The technical documentation is available in [`docs/README.md`](docs/README.md). It covers the application architecture, project storage, assistant tools, development workflow, and release process.
 
 All the project documentation in `docs/` was produced with OpenWriter itself, using its editor and AI assistant.
 
@@ -203,7 +203,9 @@ It updates the package version when needed, runs linting and tests, builds Windo
 
 ## Contributing
 
-Issues and pull requests are welcome. Before opening a pull request, please run:
+Issues and pull requests are welcome. The general guidelines — project layout, code conventions, documentation duties, and how to report a bug — are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Before opening a pull request, please run:
 
 ```bash
 npm run lint

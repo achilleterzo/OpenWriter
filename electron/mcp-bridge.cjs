@@ -13,13 +13,15 @@ const { samePath } = require('./path-compare.cjs')
  * Il server MCP legge quel file e chiama POST /call con il token. Ogni richiesta passa all'interfaccia (renderer), che esegue lo strumento
  * sull'editor e risponde. Si accettano solo gli strumenti elencati in ALLOWED e solo per il progetto aperto nell'app.
  */
-const ALLOWED = new Set(['read_open_document', 'replace_text', 'insert_text', 'replace_document', 'open_document', 'open_project', 'ask_agent', 'dirty_documents'])
+const ALLOWED = new Set(['read_open_document', 'replace_text', 'insert_text', 'replace_document', 'open_document', 'open_project', 'ask_agent', 'dirty_documents', 'search_knowledge', 'save_web_reference', 'refresh_web_reference'])
+// Strumenti che l'app esegue da sé (`localTools`, nel processo principale: non passano dall'interfaccia) e che non toccano i documenti: valgono anche con le modifiche degli agenti spente.
+const LOCAL = new Set(['search_knowledge'])
 // Strumenti che non dipendono dal progetto aperto nell'app (anzi, lo cambiano).
 const ANY_PROJECT = new Set(['open_project'])
 const MAX_BODY_BYTES = 8 * 1024 * 1024
 const REQUEST_TIMEOUT_MS = 120_000
 
-function createMcpBridge({ directory, getWindow, getProjectPath, isEnabled = () => true }) {
+function createMcpBridge({ directory, getWindow, getProjectPath, isEnabled = () => true, localTools = {} }) {
   const bridgeFile = path.join(directory, 'mcp-bridge.json')
   const token = crypto.randomBytes(24).toString('hex')
   const pending = new Map()
@@ -85,12 +87,16 @@ function createMcpBridge({ directory, getWindow, getProjectPath, isEnabled = () 
     let message
     try { message = JSON.parse(body) } catch { reply(response, 400, { ok: false, error: 'Invalid JSON' }); return }
     if (!ALLOWED.has(message.tool)) { reply(response, 400, { ok: false, error: `Unknown tool: ${message.tool}` }); return }
-    if (!isEnabled()) { reply(response, 403, { ok: false, error: 'Editing by agents is turned off in OpenWriter (Settings > Agents (MCP))' }); return }
+    if (!LOCAL.has(message.tool) && !isEnabled()) { reply(response, 403, { ok: false, error: 'Editing by agents is turned off in OpenWriter (Settings > Agents (MCP))' }); return }
     const open = getProjectPath()
-    if (!open && !ANY_PROJECT.has(message.tool)) { reply(response, 409, { ok: false, error: 'No project is open in OpenWriter' }); return }
-    if (!ANY_PROJECT.has(message.tool) && !sameProject(message.project, open)) { reply(response, 409, { ok: false, error: `The project open in OpenWriter is "${open}", not the one this agent is working on: open the right project in OpenWriter first` }); return }
+    // Gli strumenti locali di sola lettura (la ricerca) non dipendono dal progetto aperto: ricevono quello da cui cerca l'agente e decidono da sé.
+    const wide = LOCAL.has(message.tool)
+    if (!wide && !open && !ANY_PROJECT.has(message.tool)) { reply(response, 409, { ok: false, error: 'No project is open in OpenWriter' }); return }
+    if (!wide && !ANY_PROJECT.has(message.tool) && !sameProject(message.project, open)) { reply(response, 409, { ok: false, error: `The project open in OpenWriter is "${open}", not the one this agent is working on: open the right project in OpenWriter first` }); return }
     try {
-      const text = await dispatch(message.tool, message.arguments && typeof message.arguments === 'object' ? message.arguments : {})
+      const given = message.arguments && typeof message.arguments === 'object' ? message.arguments : {}
+      if (LOCAL.has(message.tool) && !localTools[message.tool]) throw new Error(`Unknown tool: ${message.tool}`)
+      const text = LOCAL.has(message.tool) ? await localTools[message.tool](given, { project: message.project || null }) : await dispatch(message.tool, given)
       reply(response, 200, { ok: true, text })
     } catch (error) {
       reply(response, 200, { ok: false, error: error.message })

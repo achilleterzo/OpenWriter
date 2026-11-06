@@ -165,6 +165,19 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [chat-store.cjs.md](reference/electron/chat-store.cjs.md) ([chat-store.cjs](../electron/chat-store.cjs)) — Conversations and attachments
   - [notes-store.cjs.md](reference/electron/notes-store.cjs.md) ([notes-store.cjs](../electron/notes-store.cjs)) — Anchored notes and suggestions
   - [bookmarks-store.cjs.md](reference/electron/bookmarks-store.cjs.md) ([bookmarks-store.cjs](../electron/bookmarks-store.cjs)) — Named anchors in documents, linkable as `file.md#name`
+  - [knowledge-index.cjs.md](reference/electron/knowledge-index.cjs.md) ([knowledge-index.cjs](../electron/knowledge-index.cjs)) — Ranked full-text search index (SQLite FTS5) over project documents
+  - [knowledge-sync.cjs.md](reference/electron/knowledge-sync.cjs.md) ([knowledge-sync.cjs](../electron/knowledge-sync.cjs)) — Keeps the search index aligned with the project files
+  - [knowledge-service.cjs.md](reference/electron/knowledge-service.cjs.md) ([knowledge-service.cjs](../electron/knowledge-service.cjs)) — Main-process client of the search index worker
+  - [knowledge-worker.cjs.md](reference/electron/knowledge-worker.cjs.md) ([knowledge-worker.cjs](../electron/knowledge-worker.cjs)) — Worker thread that owns the search index
+  - [web-references.cjs.md](reference/electron/web-references.cjs.md) ([web-references.cjs](../electron/web-references.cjs)) — Web pages saved with a Markdown copy in .ow/web (the @web folder)
+  - [shared-knowledge.cjs.md](reference/electron/shared-knowledge.cjs.md) ([shared-knowledge.cjs](../electron/shared-knowledge.cjs)) — Which other projects the relevance search also covers
+  - [project-graph.cjs.md](reference/electron/project-graph.cjs.md) ([project-graph.cjs](../electron/project-graph.cjs)) — Which projects of the Home network are connected (affinity by meaning)
+  - [search-merge.cjs.md](reference/electron/search-merge.cjs.md) ([search-merge.cjs](../electron/search-merge.cjs)) — Merges the searches of a question and its synonyms
+  - [private-address.mjs.md](reference/electron/private-address.mjs.md) ([private-address.mjs](../electron/private-address.mjs)) — Network addresses the agents' browser may not reach (local, private, service)
+  - [gpu-context.cjs.md](reference/electron/gpu-context.cjs.md) ([gpu-context.cjs](../electron/gpu-context.cjs)) — Hidden WebGPU window that computes vectors on the graphics card
+  - [semantic-pack.cjs.md](reference/electron/semantic-pack.cjs.md) ([semantic-pack.cjs](../electron/semantic-pack.cjs)) — Downloadable model and runtime for the search by meaning
+  - [semantic-embedder-worker.cjs.md](reference/electron/semantic-embedder-worker.cjs.md) ([semantic-embedder-worker.cjs](../electron/semantic-embedder-worker.cjs)) — Thread that runs the embedding model
+  - [semantic-embedder.cjs.md](reference/electron/semantic-embedder.cjs.md) ([semantic-embedder.cjs](../electron/semantic-embedder.cjs)) — Turns texts into embedding vectors (WebAssembly)
   - [memory-store.cjs.md](reference/electron/memory-store.cjs.md) ([memory-store.cjs](../electron/memory-store.cjs)) — Project memory entries and file references
   - [skills-store.cjs.md](reference/electron/skills-store.cjs.md) ([skills-store.cjs](../electron/skills-store.cjs)) — Writing skills: global and project libraries
   - [project-tools.cjs.md](reference/electron/project-tools.cjs.md) ([project-tools.cjs](../electron/project-tools.cjs)) — File tools for the assistant (listing, reading, creating; the search lives in `project-search.cjs`)
@@ -231,6 +244,10 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [pendingChangesExtension.js.md](reference/src/lib/pendingChangesExtension.js.md) ([pendingChangesExtension.js](../src/lib/pendingChangesExtension.js)) — Assistant edits marked for review
     - [preferences.js.md](reference/src/lib/preferences.js.md) ([preferences.js](../src/lib/preferences.js)) — Interface preferences in the app data
     - [projectIcons.js.md](reference/src/lib/projectIcons.js.md) ([projectIcons.js](../src/lib/projectIcons.js)) — Project icons: reading, caching, choosing
+    - [graphLayout.js.md](reference/src/lib/graphLayout.js.md) ([graphLayout.js](../src/lib/graphLayout.js)) — Physics of the Home network of projects
+    - [graphRenderer.js.md](reference/src/lib/graphRenderer.js.md) ([graphRenderer.js](../src/lib/graphRenderer.js)) — WebGL2 drawing of the Home network
+    - [queryExpansion.js.md](reference/src/lib/queryExpansion.js.md) ([queryExpansion.js](../src/lib/queryExpansion.js)) — Synonyms of a search asked to the language model
+    - [synonymCache.js.md](reference/src/lib/synonymCache.js.md) ([synonymCache.js](../src/lib/synonymCache.js)) — Remembers the synonyms already asked to the model
     - [quickActions.js.md](reference/src/lib/quickActions.js.md) ([quickActions.js](../src/lib/quickActions.js)) — Chat quick actions and their defaults
     - [rawMarkdownExtensions.js.md](reference/src/lib/rawMarkdownExtensions.js.md) ([rawMarkdownExtensions.js](../src/lib/rawMarkdownExtensions.js)) — Front matter and HTML kept as raw text
     - [readerMode.js.md](reference/src/lib/readerMode.js.md) ([readerMode.js](../src/lib/readerMode.js)) — Article extraction, reading view, save as Markdown

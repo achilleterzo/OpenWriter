@@ -30,7 +30,12 @@ const { createBookmarksStore } = require('./bookmarks-store.cjs')
 const { createMemoryStore } = require('./memory-store.cjs')
 const { createSkillsStore } = require('./skills-store.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
+const { projectKey, formatKnowledgeResults } = require('./knowledge-service.cjs')
 const { createLinksStore } = require('./project-links.cjs')
+const { createReferencesStore } = require('./project-references.cjs')
+const { webFolderOf, createWebReferencesStore } = require('./web-references.cjs')
+const { createProjectsStore } = require('./projects.cjs')
+const { outsideFolders } = require('./shared-knowledge.cjs')
 const { isSameOrInside, samePath } = require('./path-compare.cjs')
 const { findOwners } = require('./project-owner.cjs')
 const { analyzeMarkdown, markdownToPlain } = require('./markdown-plain.cjs')
@@ -117,6 +122,37 @@ async function readDocument(filePath) {
   throw new Error('PDF files cannot be read from here: open the PDF in OpenWriter, which converts it to a Markdown file next to it, then read that file.')
 }
 const linksStore = createLinksStore({ getProjectPath: projectPath })
+
+// Fuori dal progetto: le cartelle di riferimento collegate e gli altri progetti dell'utente che condividono la loro conoscenza (come nell'app,
+// vedi shared-knowledge.cjs). Si indicano come `@sigla/…` e si leggono soltanto: la ricerca e read_document li raggiungono, nient'altro.
+const referencesStore = createReferencesStore({ getProjectPath: projectPath })
+const webStore = createWebReferencesStore({ getProjectPath: projectPath })
+const projectsStore = createProjectsStore({ filePath: () => path.join(dataDirectory, 'projects.json') })
+const currentProject = () => { try { return projectPath() } catch { return null } }
+function outsideSources() {
+  try {
+    const current = currentProject()
+    return outsideFolders({
+      current,
+      references: current ? referencesStore.list() : [],
+      projects: projectsStore.list(),
+      isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(),
+      webFolderOf,
+    })
+  } catch { return [] }
+}
+// `@sigla/percorso` → { name, root, relative }; null se il percorso non comincia con `@`.
+function outsideRoot(given) {
+  const value = String(given || '').trim()
+  if (!value.startsWith('@')) return null
+  const [name, ...rest] = value.slice(1).split(/[\\/]/)
+  const found = outsideSources().find((item) => item.name.toLowerCase() === name.toLowerCase())
+  if (!found) throw new Error(`"@${name}" is not a reference folder or a shared project of this one: project_info lists the available ones`)
+  if (!isDirectory(found.path)) throw new Error(`The folder of "@${found.name}" is missing`)
+  return { name: found.name, root: found.path, relative: rest.filter(Boolean).join('/') }
+}
+const outsideTools = (root) => createProjectTools({ getProjectPath: () => root, readDocument })
+const withPrefix = (name, relative) => `@${name}${relative && relative !== '.' ? `/${relative}` : '/'}`
 const projectTools = createProjectTools({ getProjectPath: projectPath, readDocument })
 
 const posix = (value) => value.split(path.sep).join('/')
@@ -344,6 +380,8 @@ const TOOLS = [
         openDocuments: app?.open || [],
         // I documenti raggiungibili: quelli del progetto, più questi due elenchi (fuori dalla cartella del progetto).
         linkedDocuments: linkedDocuments(),
+        // Fuori dal progetto ma raggiungibili in sola lettura (read_document, list_documents, search_knowledge): cartelle di riferimento e altri progetti che condividono.
+        sharedWithThisProject: outsideSources().map((item) => ({ name: `@${item.name}`, kind: item.project ? 'project' : item.web ? 'saved web pages' : 'reference folder', path: item.path })),
         openDocumentsOutsideProject: (app?.open || []).filter((item) => item.path && !item.insideProject).map((item) => item.path),
         ...(app ? { sessionIsCurrent: app.isOpenInApp } : {}),
         name: settings.name || path.basename(project),
@@ -407,7 +445,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'folder relative to the project root (default ".")' },
+        path: { type: 'string', description: 'folder relative to the project root (default "."), or "@name" for a reference folder or another shared project (one folder at a time)' },
         recursive: { type: 'boolean', description: 'true by default: include everything below the folder. false: only the folder itself' },
         sort: { type: 'string', enum: ['name', 'date'], description: 'only with recursive=false: "date" lists the most recently modified first' },
         maxDepth: { type: 'integer', minimum: 1, maximum: 30, description: 'recursive: how many folder levels to descend (default 12)' },
@@ -416,15 +454,26 @@ const TOOLS = [
       },
       additionalProperties: false,
     },
-    run: (args) => (args.recursive === false || args.recursive === 'false'
-      ? projectTools.listDirectory(args.path || '.', { sort: args.sort === 'date' ? 'date' : 'name' })
-      : projectTree(args)),
+    run(args) {
+      // Una cartella di riferimento o un altro progetto (`@sigla`): si elenca una cartella alla volta.
+      const outside = outsideRoot(args.path)
+      if (outside) {
+        const result = outsideTools(outside.root).listDirectory(outside.relative || '.', { sort: args.sort === 'date' ? 'date' : 'name' })
+        return Promise.resolve(result).then((listing) => ({ ...listing, path: withPrefix(outside.name, listing.path) }))
+      }
+      return args.recursive === false || args.recursive === 'false'
+        ? projectTools.listDirectory(args.path || '.', { sort: args.sort === 'date' ? 'date' : 'name' })
+        : projectTree(args)
+    },
   },
   {
     name: 'read_document',
-    description: 'Reads a document as text (.md, .txt, .docx): a document of the project, a document linked to the project, or a document open in OpenWriter (see project_info). Long ones come in chunks: use `offset` with the `nextOffset` of the previous answer, or read just the lines you need with `startLine` / `endLine` (the line numbers of search_files). It returns what is saved on disk: edits still being reviewed in OpenWriter are not included.',
+    description: 'Reads a document as text (.md, .txt, .docx): a document of the project, a document linked to the project, a document open in OpenWriter (see project_info), or one of the reference folders and other shared projects ("@name/path", read-only: search_knowledge returns these paths). Long ones come in chunks: use `offset` with the `nextOffset` of the previous answer, or read just the lines you need with `startLine` / `endLine` (the line numbers of search_files). It returns what is saved on disk: edits still being reviewed in OpenWriter are not included.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'document: path relative to the project root, or the absolute path of a linked or open document (default: the document in front in OpenWriter)' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, description: 'maximum characters (default 20000, max 40000)' }, startLine: { type: 'integer', minimum: 1, description: 'read by lines instead: first line (the numbers search_files shows)' }, endLine: { type: 'integer', minimum: 1, description: 'with startLine: last line, inclusive (default: 50 lines from startLine)' } }, additionalProperties: false },
     run({ path: file, offset, limit, startLine, endLine }) {
+      // Un documento di una cartella di riferimento o di un altro progetto (`@sigla/…`): sola lettura, dentro quella cartella e non oltre.
+      const outside = outsideRoot(file)
+      if (outside) return Promise.resolve(outsideTools(outside.root).readFile(outside.relative, { offset, limit, startLine, endLine })).then((result) => ({ ...result, path: withPrefix(outside.name, result.path) }))
       const target = text(file).trim() ? authorizedDocument(file) : activeDocumentFile()
       if (!target) throw new Error('Missing parameter "path", and OpenWriter has no document in front (see project_info)')
       const project = projectPath()
@@ -461,6 +510,60 @@ const TOOLS = [
       let overrides = []
       try { overrides = JSON.parse(await bridgeCall('dirty_documents', {})) } catch { /* app chiusa o modifiche degli agenti spente: si cerca su disco */ }
       return projectTools.search({ overrides, pattern: args.pattern ?? args.query, regex: args.regex === undefined || args.regex === null || args.regex === '' ? undefined : isTrue(args.regex), caseSensitive: isTrue(args.caseSensitive), path: args.path, glob: args.glob, output: args.output || 'files', context: args.context, maxResults: args.maxResults })
+    },
+  },
+  {
+    name: 'search_knowledge',
+    description: 'Finds the PASSAGES of the documents that best deal with a subject, ranked by relevance, from the search index that OpenWriter keeps up to date. It covers the project and also what the user shares with it: the reference folders linked to the project and the user\'s OTHER PROJECTS (their paths start with "@name/", which read_document opens, read-only), so a subject may well be answered there and not in the project itself. Write a few significant words, not a sentence; accents and capitals do not matter and the last word also matches its beginnings. Each result gives file, line range and the path of its headings, plus the text around the match: read the lines with read_document startLine/endLine before relying on them. With OpenWriter open on this project it is the same search as the app\'s assistant, so it also finds passages by MEANING (synonyms, other words) when the project turned that on; without the app it matches words only (try other words or synonyms). It reflects the saved files, a few seconds behind. Use it to explore ("where do we talk about X?"); use search_files for an exact phrase, a regular expression, code files or every occurrence. Needs OpenWriter to have opened the project at least once.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'a few significant words to look for' }, path: { type: 'string', description: 'optional: folder or file relative to the project root, or "@name/…" for a reference folder or another project' }, scope: { type: 'string', enum: ['all', 'project', 'others'], description: '"all" (default): the project, its reference folders and the other shared projects; "project": the project only; "others": only the reference folders and the other projects' }, maxResults: { type: 'integer', minimum: 1, maximum: 50, description: 'maximum passages (default 10)' } }, required: ['query'], additionalProperties: false },
+    async run(args) {
+      // Con l'app aperta sullo stesso progetto la ricerca la fa l'app (ponte locale): è la stessa dell'assistente, quindi anche per significato se il
+      // progetto l'ha acceso. Se l'app non c'è, ha un'altra versione o ha aperto un altro progetto, si ripiega sull'indice letto direttamente.
+      try { return await bridgeCall('search_knowledge', args) } catch (error) {
+        if (!/does not seem to be running|project open in OpenWriter|No project is open|did not answer|Unknown tool|Unexpected answer|socket hang up/i.test(String(error.message))) throw error
+      }
+      const query = String(args.query ?? '').trim()
+      if (!query) throw new Error('Missing parameter "query"')
+      // Senza un progetto (l'agente non lavora dentro uno e l'app non ne ha aperto uno) la ricerca vale lo stesso, su tutti i progetti che condividono la loro conoscenza.
+      const project = currentProject()
+      const given = String(args.path || '').trim()
+      const asked = String(args.scope || '').toLowerCase()
+      const scope = asked === 'project' ? 'project' : (asked === 'others' || asked === 'references') ? 'others' : 'all'
+      const projectSource = project ? { key: projectKey(project), prefix: '' } : null
+      const otherSources = () => outsideSources().map((item) => ({ key: projectKey(item.path), name: item.name }))
+      let sources
+      let folder = ''
+      if (given.startsWith('@')) {
+        const outside = outsideRoot(given)
+        sources = [{ key: projectKey(outside.root), name: outside.name }]
+        folder = outside.relative
+      } else {
+        if (given && given !== '.') { if (!project) throw new Error('A path of the project needs a project: use "@name/…" or leave the path out'); folder = path.relative(project, projectPathInside(given)).split(path.sep).join('/') }
+        sources = folder ? [projectSource] : [...(scope === 'others' || !projectSource ? [] : [projectSource]), ...(scope === 'project' ? [] : otherSources())]
+      }
+      if (!sources.length) throw new Error('There are no reference folders or shared projects: use scope "project" or leave it out')
+      const file = path.join(dataDirectory, 'knowledge.db')
+      const unavailable = (reason) => `The search index is not available (${reason}). Use search_files.`
+      if (!fs.existsSync(file)) return unavailable('OpenWriter has not built it yet: open the project in OpenWriter')
+      let index
+      try { index = require('./knowledge-index.cjs').createKnowledgeIndex({ file, readOnly: true }) } catch (error) { return unavailable(error.message) }
+      try {
+        const found = index.search(sources.map((source) => source.key), query, { folder, limit: Number(args.maxResults) || 10 })
+        const names = new Map(sources.filter((source) => source.name).map((source) => [source.key, source.name]))
+        found.results = found.results.map((entry) => (names.has(entry.project) ? { ...entry, path: withPrefix(names.get(entry.project), entry.path).replace(/\/$/, '') } : entry))
+        const files = sources.reduce((total, source) => total + index.stats(source.key).files, 0)
+        return formatKnowledgeResults(query, found, { files }, 'read_document')
+      } finally { index.close() }
+    },
+  },
+  {
+    name: 'list_web_references',
+    description: 'Lists the web pages saved as REFERENCES of the project (the star of the OpenWriter browser, or save_web_reference): title, address, the Markdown copy (read it with read_document using the "file" path, "@web/…"), who saved it, when it was saved, last updated and last checked, and the age in days. Use it to see what is already saved and whether a copy may be out of date; refresh one with refresh_web_reference. Each copy also starts with a header (YAML) that records the same.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    run() {
+      const now = Date.now()
+      const days = (iso) => Math.max(0, Math.floor((now - Date.parse(iso)) / 86400000))
+      return webStore.list().map((entry) => ({ title: entry.title, url: entry.url, file: `@web/${entry.file}`, savedBy: entry.source, savedAt: entry.savedAt, updatedAt: entry.updatedAt, checkedAt: entry.checkedAt, ageDays: days(entry.updatedAt), daysSinceCheck: days(entry.checkedAt), copyExists: entry.exists }))
     },
   },
   {
@@ -641,9 +744,21 @@ const WRITE_TOOLS = [
   },
   {
     name: 'open_document',
-    description: 'Opens a document in a tab of the OpenWriter editor and brings it in front, so the user sees it. The path is relative to the project root, or the absolute path of a file OUTSIDE the project (.md, .txt, .docx, .pdf): opening it makes it part of the active workspace, so afterwards you can read it (read_open_document, read_document) and annotate it. Needs the OpenWriter app running with this project open.',
+    description: 'Opens a document in a tab of the OpenWriter editor and brings it in front, so the user sees it. The path is relative to the project root, or the absolute path of a file OUTSIDE the project (.md, .txt, .docx, .pdf): opening it makes it part of the active workspace, so afterwards you can read it (read_open_document, read_document) and annotate it. The instruction files for the assistant (.ow/context.md and the other .md files in the root of .ow) can be opened this way too, to edit them. Needs the OpenWriter app running with this project open.',
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'path relative to the project root, or absolute path of a document outside the project' } }, required: ['path'], additionalProperties: false },
     run: (args) => bridgeCall('open_document', args),
+  },
+  {
+    name: 'save_web_reference',
+    description: 'Saves a web page as a REFERENCE of the project when you find it important for the work (a source, documentation, an article the user will need): the app opens it in a background browser tab and stores a Markdown copy in .ow/web with a header (address, dates, saved by "agent"). From then on it is part of the project context: the OpenWriter assistant and you can read it (read_document "@web/…") and search it (search_knowledge); the user sees it in the "Web references" panel and can remove it. If the page is already saved it is refreshed. Do not save every page you read. Needs the OpenWriter app running with this project open.',
+    inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'full http(s) address of the page' } }, required: ['url'], additionalProperties: false },
+    run: (args) => bridgeCall('save_web_reference', args),
+  },
+  {
+    name: 'refresh_web_reference',
+    description: 'Checks whether a saved web page has changed (compared with the saved copy) and, unless check_only is true, updates the copy with the current content. Use list_web_references to see how old each copy is. Answers "up to date" or how many lines changed. Needs the OpenWriter app running with this project open.',
+    inputSchema: { type: 'object', properties: { reference: { type: 'string', description: 'id, "@web/…" file name, address or part of the title of the saved page' }, check_only: { type: 'boolean', description: 'true to only compare, without updating the copy (default false)' } }, required: ['reference'], additionalProperties: false },
+    run: (args) => bridgeCall('refresh_web_reference', args),
   },
   {
     name: 'ask_agent',

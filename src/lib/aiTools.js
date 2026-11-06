@@ -3,6 +3,8 @@ import { t } from '../i18n/index.js'
 import { replaceRangeWithMarkdown } from './editorInsert.js'
 import { trackEdit } from './pendingChangesExtension.js'
 import { pathKey } from './pathCompare.js'
+import { isPrivateHost } from './webAddress.js'
+import { describeSavedReference, refreshReference, saveFromUrl } from './webReferences.js'
 
 // Tools use a plain-text protocol shared by every provider (including the Codex and Claude CLIs):
 // the model answers with a <tool_call>{"name": …, "arguments": {…}}</tool_call> block, the app runs it
@@ -15,7 +17,8 @@ const optionSchema = { anyOf: [{ type: 'string' }, { type: 'object', properties:
 
 export const TOOL_DEFINITIONS = [
   { group: 'research', name: 'research', required: ['question'], description: 'Delegates an exploration of the project to a research assistant (another model) that searches and reads the files and returns a SHORT report with file paths and line numbers. Use it as soon as answering needs more than three or four searches or readings: which documents talk about something, where a topic is handled, inventories and comparisons ("list X and tell me which are missing from Y", code against documentation, a check across many files). For one simple lookup use search_files or read_file yourself. Give it the WHOLE question, comparison or final check included (it does not see this conversation), and say what the report must list. It only reads. Trust the paths and line numbers; verify with read_file startLine/endLine only the two or three points your answer depends on (anything marked not verified, or claims about what code does) and do not repeat its searches. If the report has gaps ("Not found", a place not searched), call research again with a narrower question instead of exploring yourself.', parameters: { question: 'what to find out, with every detail it needs', scope: 'optional: folder or files to restrict the search to' } },
-  { group: 'files', name: 'search_files', required: ['pattern'], description: 'Searches the text of the project files for a word, a phrase or a regular expression, without opening the files one by one. By default it returns only the LIST OF FILES that contain it, with the number of matches: then read just those. To judge a match use output=lines (long lines are shown around the match) with a little context, or read a few lines with read_file startLine/endLine: do not open whole files to check. output=count gives only the totals. Case-insensitive, literal unless regex=true. Searches .md, .markdown and .txt unless you give glob (e.g. "*.md, *.js"). Works in reference folders too (path "@name/…").', parameters: { pattern: 'the text to find, or the regular expression', regex: 'true for a regular expression (default: literal; a pattern with | or symbols such as \\s, \\w, .* is read as one automatically); false forces literal text', caseSensitive: 'true to distinguish capitals (default false)', path: 'optional: folder or file to search, relative to the project root (default: all)', glob: 'optional: file names, comma separated, e.g. "*.md, *.js" or "docs/**/*.md" (default: .md, .markdown, .txt)', output: '"files" (default), "lines" or "count"', context: 'with output=lines: lines of context around each match (0-5)', maxResults: 'maximum files or lines (default 50, at most 500)' } },
+  { group: 'files', name: 'search_files', required: ['pattern'], description: 'Searches the text of the project files for a word, a phrase or a regular expression, without opening the files one by one. By default it returns only the LIST OF FILES that contain it, with the number of matches: then read just those. To judge a match use output=lines (long lines are shown around the match) with a little context, or read a few lines with read_file startLine/endLine: do not open whole files to check. output=count gives only the totals. Case-insensitive, literal unless regex=true. Searches .md, .markdown and .txt unless you give glob (e.g. "*.md, *.js"). Works in reference folders too (path "@name/…"). To explore a subject by relevance, without the exact words, use search_knowledge.', parameters: { pattern: 'the text to find, or the regular expression', regex: 'true for a regular expression (default: literal; a pattern with | or symbols such as \\s, \\w, .* is read as one automatically); false forces literal text', caseSensitive: 'true to distinguish capitals (default false)', path: 'optional: folder or file to search, relative to the project root (default: all)', glob: 'optional: file names, comma separated, e.g. "*.md, *.js" or "docs/**/*.md" (default: .md, .markdown, .txt)', output: '"files" (default), "lines" or "count"', context: 'with output=lines: lines of context around each match (0-5)', maxResults: 'maximum files or lines (default 50, at most 500)' } },
+  { group: 'files', name: 'search_knowledge', required: ['query'], description: 'Finds the PASSAGES of the project documents (.md, .markdown, .txt) that best answer a question or deal with a subject, ranked by relevance, without knowing the exact words. Write a few significant words, not a sentence ("contratto penale ritardo", not "what happens if we are late?"); accents and capitals do not matter and the last word also matches its beginnings. Each result is a passage with file, line range and the path of its headings, plus the text around the match: read it with read_file startLine/endLine before relying on it. It does NOT understand synonyms: if nothing relevant comes back, try other words. It also searches what the user shares with this project: the reference folders linked to it, the web pages the user saved ("@web/…") and the user\'s OTHER PROJECTS (paths "@name/…", which read_file opens, read-only), so look there too when the project itself has little: the user wants one body of knowledge across projects. Use it to explore ("where do we talk about X?"); use search_files for an exact phrase, a regular expression, code files or every occurrence.', parameters: { query: 'a few significant words to look for', path: 'optional: folder or file to restrict the search to, relative to the project root, or "@name/…" for a reference folder or another project (default: everything shared)', scope: 'optional: "all" (default: this project, the reference folders and the other projects), "project" (this project only) or "others" (only the reference folders and the other projects)', maxResults: 'maximum passages (default 10, at most 50)' } },
   { group: 'files', name: 'list_directory', required: [], description: 'Lists the files and folders of a project directory (.ow excluded) with size and last modification. RECURSIVE by default: one call returns the whole hierarchy below the folder (indented), so do not list sub-folders one by one; recursive=false shows only that folder. The date of a file is when it was last saved on disk, not the unsaved changes of an open tab.', parameters: { path: 'optional: path relative to the project root (default: the root); "@name/…" lists a reference folder (read-only)', sort: 'optional: "name" (default, folders first) or "date" (most recent first; one folder only)', recursive: 'optional, default true: everything below the folder (up to 12 levels and 1000 entries); false: only the folder' } },
   { group: 'files', name: 'read_file', required: ['path'], description: 'Reads the text of a project file (.md, .txt, .docx, .pdf, …). Long files are read in chunks, or only the lines you need (startLine/endLine, the line numbers that search_files shows: to check a match read a few lines around it instead of the whole file). If the file is open in a tab it returns the CURRENT editor text, including unsaved changes (yours too).', parameters: { path: 'path relative to the project root, or "@name/file.md" for a file in a reference folder (read-only)', offset: 'optional: character to start from', limit: 'optional: maximum number of characters', startLine: 'optional: first line to read (from 1); instead of offset', endLine: 'optional, with startLine: last line, inclusive (default: 50 lines from startLine)' } },
   { group: 'files', name: 'list_versions', required: [], description: 'Lists the saved versions (history) of a project document, newest first, with id, date, kind (manual or automatic), label and size. Versions are archived before the assistant edits a document and at every save. Use it to see how a document changed or to find an earlier text.', parameters: { path: 'optional: document path relative to the project root (default: the active document)' } },
@@ -42,8 +45,10 @@ export const TOOL_DEFINITIONS = [
   { group: 'edit', name: 'insert_text', required: ['text'], description: 'Inserts text into the open document, in an undoable way.', parameters: { text: 'text to insert; may contain Markdown', position: 'optional (default: end): after | before | start | end', anchor: 'only for after/before: EXACT text next to which to insert, as shown by read_file (plain text or Markdown source); it must appear only once', path: 'optional: document (default: the active one)' } },
   { group: 'web', name: 'browser_tabs', required: [], description: 'Lists the browser tabs of the app (including those opened by the user) with their current number, address and title.', parameters: {} },
   { group: 'web', name: 'browser_read', required: [], description: 'Reads the CURRENT content of a browser tab (even if the user opened or moved it): text and links. It does not change page. A long page comes in chunks: continue with offset (given at the end of the previous result).', parameters: { tab: 'optional: tab number or id (default: the foreground one or the last used)', offset: 'optional: character to continue from, to keep reading the same page' } },
-  { group: 'web', name: 'web_open', required: ['url'], description: 'Opens an http(s) address in a browser tab and returns its text and links.', parameters: { url: 'full address', tab: 'optional: number or id of the tab to navigate (default: the foreground one)', new_tab: 'optional: true to open it in a new tab' } },
-  { group: 'web', name: 'web_search', required: ['query'], description: 'Searches the web (DuckDuckGo) in a browser tab. Returns titles, addresses and previews.', parameters: { query: 'text to search for', tab: 'optional: tab number or id', new_tab: 'optional: true to search in a new tab' } },
+  { group: 'web', name: 'web_open', required: ['url'], description: 'Opens an http(s) address in a browser tab and returns its text and links.', parameters: { url: 'full address', tab: 'optional: number or id of the tab to navigate (default: the foreground one)', new_tab: 'optional: true to use your own working tab (opened once, reused, and closed automatically when you finish your answer: never close it yourself)' } },
+  { group: 'web', name: 'save_web_reference', required: ['url'], description: 'Saves a web page as a REFERENCE of the project: a Markdown copy kept in the project (.ow/web, read it later as @web/…) that stays available in future conversations and can be searched with search_knowledge. Use it for pages that matter for the work (a source, documentation, an article the user will need again), not for every page you visit. The page is opened in a background browser tab and its main text is stored with a header (address, dates, who saved it). If it is already saved, it is refreshed instead.', parameters: { url: 'full http(s) address of the page' } },
+  { group: 'web', name: 'refresh_web_reference', required: ['reference'], description: 'Checks whether a saved web page has changed and, unless check_only is true, updates the saved copy with the current content. Each saved copy has a header (read it with read_file @web/…) and the list of saved pages shows when it was saved and last checked: use this when a copy may be out of date or the work depends on it being current. Answers "up to date" (only the check date is updated) or what changed.', parameters: { reference: 'id, @web/file name, address or part of the title of the saved page', check_only: 'true to only compare, without touching the saved copy (default false)' } },
+  { group: 'web', name: 'web_search', required: ['query'], description: 'Searches the web (DuckDuckGo) in a browser tab. Returns titles, addresses and previews.', parameters: { query: 'text to search for', tab: 'optional: tab number or id', new_tab: 'optional: true to use your own working tab (opened once, reused, and closed automatically when you finish your answer: never close it yourself)' } },
   { group: 'web', name: 'browser_navigate', required: ['action'], description: 'Moves through the history of a tab: back, forward or reload. Returns the resulting page.', parameters: { action: 'back | forward | reload', tab: 'optional: tab number or id' } },
   { group: 'web', name: 'browser_follow_link', required: ['link'], description: 'Follows a link of the page open in a tab, navigating in the same tab. Identify it by the number in the "Links" list of the last read, by its text (even partial) or by an address, also relative to the page.', parameters: { link: 'number, text or address of the link', tab: 'optional: tab number or id' } },
   { group: 'web', name: 'browser_history', required: [], description: 'Lists the pages YOU (the assistant) opened in the browser in this project, most recent first, with title, address and time. It does not include the pages the user visited. Use it to find again a page you already consulted.', parameters: { query: 'optional: only entries whose title or address contains this text', limit: 'optional: how many entries (default 30, max 100)' } },
@@ -63,7 +68,7 @@ export const TOOL_DEFINITIONS = [
 ]
 
 // Without a project folder (`enabled.loose`) the assistant works on the documents open in tabs only: no tool that browses, creates or moves files.
-const NEEDS_FOLDER = new Set(['list_directory', 'search_files', 'research', 'create_directory', 'create_file', 'move_file', 'delete_file', 'open_document', 'describe_image'])
+const NEEDS_FOLDER = new Set(['list_directory', 'search_files', 'search_knowledge', 'research', 'create_directory', 'create_file', 'move_file', 'delete_file', 'open_document', 'describe_image'])
 // create_project exists only without a project folder: it is how the assistant gets one.
 const ONLY_LOOSE = new Set(['create_project'])
 export const toolAvailable = (tool, enabled) => Boolean(enabled[tool.group]) && (enabled.loose ? !NEEDS_FOLDER.has(tool.name) : !ONLY_LOOSE.has(tool.name))
@@ -254,6 +259,7 @@ export function describeCall(name, args = {}) {
   switch (name) {
     case 'list_directory': return t('Listing folder {path}', { path: args.path || '/' })
     case 'search_files': return t('Searching for “{pattern}”', { pattern: String(args.pattern || '').slice(0, 60) })
+    case 'search_knowledge': return t('Searching for “{pattern}”', { pattern: String(args.query || '').slice(0, 60) })
     case 'research': return t('Asking the research assistant: “{question}”', { question: String(args.question || '').slice(0, 70) })
     case 'create_directory': return t('Creating folder {path}', { path: short(args.path) })
     case 'delete_file': return t('Moving {path} to the trash', { path: short(args.path) })
@@ -291,6 +297,8 @@ export function describeCall(name, args = {}) {
     case 'browser_follow_link': return t('Following link {link}', { link: short(args.link, 40) })
     case 'browser_navigate': return t('Browser: {action}', { action: args.action || 'navigate' })
     case 'web_open': return t('Opening {url}', { url: short(args.url) })
+    case 'save_web_reference': return t('Saving the page to the context: {url}', { url: short(args.url) })
+    case 'refresh_web_reference': return t('Checking the saved page: {page}', { page: short(args.reference) })
     case 'web_read': return t('Reading more of the page')
     default: return name
   }
@@ -306,17 +314,8 @@ export function relativeToProject(project, absolute) {
 }
 
 const isAbsolutePath = (value) => /^([A-Za-z]:[\\/]|\\\\|\/)/.test(String(value || ''))
-
-function isPrivateHost(hostname) {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
-  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || host === '::1') return true
-  const parts = host.split('.').map(Number)
-  if (parts.length === 4 && parts.every((part) => Number.isInteger(part))) {
-    const [a, b] = parts
-    return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
-  }
-  return false
-}
+// File di istruzioni per l'assistente: un .md direttamente nella radice di `.ow` (context.md e gli altri), senza `..`.
+const isInstructionFile = (relative) => /^\.ow\/[^/]+\.md$/i.test(relative) && !relative.includes('..')
 
 const SEARCH_SCRIPT = `(() => {
   const out = []
@@ -535,6 +534,12 @@ export function createToolRunner(context) {
       return api.searchFilesForAi({ pattern: text(args.pattern), regex: args.regex === undefined || args.regex === null || args.regex === '' ? undefined : flag(args.regex), caseSensitive: flag(args.caseSensitive), path: text(args.path).trim(), glob: text(args.glob).trim(), output: text(args.output).trim() || 'files', context: args.context, maxResults: args.maxResults, overrides: context.getDirtyDocuments?.() || [] })
     },
 
+    async search_knowledge(args) {
+      needFolder()
+      if (!text(args.query).trim()) throw new Error('Missing parameter "query"')
+      return api.searchKnowledgeForAi({ query: text(args.query), path: text(args.path).trim(), scope: text(args.scope).trim(), maxResults: args.maxResults })
+    },
+
     async list_directory(args) {
       needFolder()
       const sort = text(args.sort).toLowerCase() === 'date' ? 'date' : 'name'
@@ -550,7 +555,7 @@ export function createToolRunner(context) {
       // Documents outside the project folder linked to it (only listed at the project root): opened and edited where they are.
       const linkedLines = linked.length ? ['', 'Linked documents (outside the project folder, edited in place; open or read them with their full path):', ...linked.map((link) => `  ${link.path}${link.missing ? '  (file not found)' : link.modified ? `  (modified ${when(link.modified)})` : ''}`)] : []
       // Reference folders (outside the project, READ-ONLY; only listed at the project root): read them with the @name/ prefix.
-      const referenceLines = references.length ? ['', 'Reference folders (outside the project, READ-ONLY: list and read them with list_directory / read_file using the path @name/…; you cannot change them):', ...references.map((reference) => `  @${reference.name}/  (${reference.path}${reference.missing ? ' — folder not found: the user has to relink it' : ''})`)] : []
+      const referenceLines = references.length ? ['', 'Reference folders and the user\'s other projects (outside this project, READ-ONLY: list and read them with list_directory / read_file using the path @name/…; you cannot change them):', ...references.map((reference) => `  @${reference.name}/  (${reference.project ? 'another project of the user: ' : reference.web ? 'saved web pages, cached as Markdown: ' : ''}${reference.path}${reference.missing ? ' — folder not found: the user has to relink it' : ''})`)] : []
       if (!entries.length) return [`${path}: empty folder`, ...linkedLines, ...referenceLines].join('\n')
       const header = sort === 'date' ? `${path} (most recently modified first):` : `${path}:`
       const line = (entry, indent) => (entry.type === 'directory' ? `${indent}${entry.name}/  (${[entry.project ? 'sub-project: it has its own instructions, notes and history' : '', entry.modified ? `modified ${when(entry.modified)}` : ''].filter(Boolean).join('; ') || 'folder'})` : `${indent}${entry.name} (${entry.size ?? '?'} B${entry.modified ? `, modified ${when(entry.modified)}` : ''}${entry.described ? '; image with a saved description: view_image returns it' : ''})`)
@@ -905,7 +910,8 @@ export function createToolRunner(context) {
       const linkedPath = isAbsolutePath(given)
       const relative = linkedPath ? given : given.replace(/^\/+/, '')
       if (!relative) throw new Error('Missing parameter "path"')
-      if (!linkedPath && relative.split('/').some((part) => part === '..' || part === '.ow')) throw new Error('Path is outside the project or not accessible')
+      // `.ow` è chiusa, salvo i file di istruzioni per l'assistente nella sua radice (context.md e simili): devono potersi riaprire anche dopo la chiusura della scheda.
+      if (!linkedPath && !isInstructionFile(relative) && relative.split('/').some((part) => part === '..' || part === '.ow')) throw new Error('Path is outside the project or not accessible')
       let wasOpen = true
       try { context.getDocument(relative) } catch { wasOpen = false }
       await context.openFile?.(linkedPath ? relative : `${project}/${relative}`)
@@ -1018,6 +1024,16 @@ export function createToolRunner(context) {
       const where = `[Tab ${target.number} (${target.shortId})]`
       if (!results.length) return `${WEB_WARNING}\n${where} No readable results (the page may require a verification). Preview: ${sample}`
       return [WEB_WARNING, where, ...results.map((item, index) => `${index + 1}. ${item.title}\n   ${item.url}\n   ${item.snippet}`)].join('\n')
+    },
+
+    async save_web_reference(args) {
+      needFolder()
+      return describeSavedReference(await saveFromUrl({ api: context.api, getBrowser: context.getBrowser }, text(args.url), { source: 'assistant' }))
+    },
+
+    async refresh_web_reference(args) {
+      needFolder()
+      return describeSavedReference(await refreshReference({ api: context.api, getBrowser: context.getBrowser }, text(args.reference), { checkOnly: isTrue(args.check_only), source: 'assistant' }))
     },
 
     async web_open(args) {

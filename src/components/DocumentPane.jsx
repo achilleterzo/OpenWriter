@@ -334,7 +334,7 @@ function LiveDocumentPane({ tab, project, active, onOpenFull, onExtractImages, f
           <EditorContent editor={editor} className="document-editor mx-auto" />
         </div>
         {!sourceOpen && <ChangeMarkers editor={editor} containerRef={editorArea} onSelectNote={onNoteSelect} />}
-        {!sourceOpen && <SelectionToolbar editor={editor} containerRef={editorArea} request={linkRequest} documentPath={tab.filePath || null} onOpenLink={onOpenLink} onReplaceImage={pickImage} onViewImage={setViewedImage} onDiscuss={onDiscuss && ((text, options) => onDiscuss({ text, title: tab.title, filePath: tab.filePath || null }, options))} />}
+        {!sourceOpen && <SelectionToolbar editor={editor} containerRef={editorArea} request={linkRequest} documentPath={tab.filePath || null} project={project} onOpenLink={onOpenLink} onReplaceImage={pickImage} onViewImage={setViewedImage} onDiscuss={onDiscuss && ((text, options) => onDiscuss({ text, title: tab.title, filePath: tab.filePath || null }, options))} />}
         {viewedImage && <ImageViewer src={viewedImage.src} alt={viewedImage.alt} onClose={() => setViewedImage(null)} />}
       </div>
     </div>

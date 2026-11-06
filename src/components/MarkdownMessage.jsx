@@ -36,11 +36,29 @@ const components = {
   },
 }
 
+// Varianti: `onAccent` (testo su fondo colore d'accento: i link restano leggibili), `softBreaks` (gli a capo singoli si vedono, come nel testo scritto
+// dall'utente) e `inline` (nessun blocco: per le etichette dentro i pulsanti).
+const onAccentComponents = {
+  ...components,
+  a: ({ node: _node, href, children }) => <a href={href} target="_blank" rel="noreferrer noopener" className="text-white underline underline-offset-2 hover:opacity-80">{children}</a>,
+  strong: styled('strong', 'font-semibold'),
+  code({ node: _node, className, children, ...props }) {
+    const block = /language-/.test(className || '') || String(children).includes('\n')
+    return block ? <code className={`font-mono ${className || ''}`} {...props}>{children}</code> : <code className="rounded bg-black/25 px-1 py-0.5 font-mono text-[0.85em]" {...props}>{children}</code>
+  },
+}
+const withSoftBreaks = (base) => ({ ...base, p: styled('p', 'my-2 whitespace-pre-line first:mt-0 last:mb-0'), li: styled('li', 'pl-0.5 whitespace-pre-line') })
+const inlineComponents = (base) => ({ ...base, p: ({ node: _node, children }) => <span className="block">{children}</span> })
+
 // Il testo del modello viene reso come elementi React: l'HTML grezzo non viene interpretato.
-export default memo(function MarkdownMessage({ children }) {
+export default memo(function MarkdownMessage({ children, onAccent = false, softBreaks = false, inline = false }) {
+  let set = onAccent ? onAccentComponents : components
+  if (softBreaks) set = withSoftBreaks(set)
+  if (inline) set = inlineComponents(set)
+  const Wrapper = inline ? 'span' : 'div'
   return (
-    <div className="min-w-0 break-words">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{children}</ReactMarkdown>
-    </div>
+    <Wrapper className="block min-w-0 break-words">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={set}>{children}</ReactMarkdown>
+    </Wrapper>
   )
 })

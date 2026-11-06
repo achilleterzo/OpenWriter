@@ -13,13 +13,17 @@ import HistoryPanel from './components/HistoryPanel.jsx'
 import NotesPanel from './components/NotesPanel.jsx'
 import BookmarksPanel from './components/BookmarksPanel.jsx'
 import ProjectsPanel from './components/ProjectsPanel.jsx'
+import ProjectsHome from './components/ProjectsHome.jsx'
 import MemoryPanel from './components/MemoryPanel.jsx'
+import WebReferencesPanel from './components/WebReferencesPanel.jsx'
+import { WEB_REFERENCES_CHANGED } from './lib/webReferences.js'
 import AboutDialog from './components/AboutDialog.jsx'
 import { useDialogs } from './components/Dialogs.jsx'
 import { acceptAll, getPending, serializePending } from './lib/pendingChangesExtension.js'
 import OutlinePanel from './components/OutlinePanel.jsx'
 import AnchorsPanel from './components/AnchorsPanel.jsx'
 import ToastHost from './components/ToastHost.jsx'
+import IndexProgress from './components/IndexProgress.jsx'
 import { notify } from './lib/toasts.js'
 import PanelResizer from './components/PanelResizer.jsx'
 import SettingsScreen from './components/SettingsScreen.jsx'
@@ -91,7 +95,7 @@ function createTab(document = null, id = crypto.randomUUID()) {
 }
 
 // La scheda del browser non è un documento: non ha editor, file né bozze, e non viene salvata nella sessione.
-const createBrowserTab = () => ({ id: crypto.randomUUID(), kind: 'browser', title: t('Browser'), filePath: null, sourcePath: null, dirty: false })
+const createBrowserTab = (initialUrl) => ({ id: crypto.randomUUID(), kind: 'browser', title: t('Browser'), filePath: null, sourcePath: null, dirty: false, ...(initialUrl ? { initialUrl } : {}) })
 // Le schede del browser e delle immagini non hanno editor né file da salvare: non sono documenti.
 const createImageTab = (imagePath) => ({ id: crypto.randomUUID(), kind: 'image', title: baseName(imagePath), imagePath, filePath: null, sourcePath: null, dirty: false })
 const isDocument = (tab) => tab && tab.kind !== 'browser' && tab.kind !== 'image'
@@ -144,6 +148,14 @@ export default function App() {
   const [mainProject, setMainProject] = useState(null)
   const workspaceRoot = project || mainProject
   const [sideTab, setSideTab] = useState('files')
+  // Cambia quando una pagina web si aggiunge ai riferimenti del progetto o se ne toglie una (stellina del browser, pannello «Riferimenti web»).
+  const [webRefsVersion, setWebRefsVersion] = useState(0)
+  // Anche l'assistente o un agente (MCP) salvano e rinfrescano pagine: pannello e stellina si aggiornano.
+  useEffect(() => {
+    const refresh = () => setWebRefsVersion((value) => value + 1)
+    window.addEventListener(WEB_REFERENCES_CHANGED, refresh)
+    return () => window.removeEventListener(WEB_REFERENCES_CHANGED, refresh)
+  }, [])
   const [expandedPaths, setExpandedPaths] = useState(() => new Set())
   const [explorerRefresh, setExplorerRefresh] = useState(0)
   // Cambia quando le modifiche dell'assistente da rivedere vengono accettate o rifiutate: serve a ridisegnare il pulsante "Salva tutto".
@@ -193,6 +205,8 @@ export default function App() {
   const browserControllers = useRef(new Map())
   const lastDocumentId = useRef(null)
   const lastBrowserId = useRef(null)
+  // Schede del browser aperte dall'assistente/agenti: se ne riusa una sola e si chiudono a fine risposta. `previous`: la scheda che l'utente aveva davanti.
+  const agentBrowsers = useRef({ ids: new Set(), previous: null })
 
   // Le schede documento si montano (e costruiscono il loro editor) solo quando si guardano la prima volta, o se hanno modifiche da conservare: riaprire un progetto
   // con molte schede pesanti non le costruisce tutte insieme.
@@ -412,6 +426,20 @@ export default function App() {
   const openProject = useCallback((directory) => switchProject(() => electronAPI.openProject(directory)), [switchProject])
   openProjectRef.current = openProject
   // Scegliendo un progetto dal pannello Progetti si passa subito ai suoi file (se la scelta è annullata non cambia nulla).
+  // Con la scheda Progetti attiva l'area centrale mostra la Home (la rete dei progetti) al posto dei documenti e della chat, che restano montati.
+  const homeOpen = sideTab === 'projects'
+  // Dopo la prima visita la Home resta montata (nascosta quando non serve): ricerca, risultati e posizione nell'elenco restano com'erano al ritorno.
+  const [homeSeen, setHomeSeen] = useState(false)
+  useEffect(() => { if (homeOpen) setHomeSeen(true) }, [homeOpen])
+  // Dalla Home: un progetto si apre (se non lo è già) e si passa ai suoi file; un risultato di ricerca apre anche il documento.
+  const openFromHome = async (directory) => {
+    if (project && samePath(directory, project)) { setSideTab('files'); return true }
+    const chosen = await showFiles(openProject(directory))
+    return Boolean(chosen)
+  }
+  const openHomeResult = async (hit) => {
+    if (await openFromHome(hit.project)) openFileRef.current?.(hit.absolute)
+  }
   const showFiles = (picking) => picking.then((chosen) => { if (chosen) setSideTab('files'); return chosen })
   const createProject = useCallback((name) => switchProject(() => electronAPI.createProject(name)), [switchProject])
 
@@ -730,8 +758,9 @@ export default function App() {
     requestFind(replace) {
       setFindRequest((current) => ({ nonce: current.nonce + 1, replace }))
     },
-    openBrowser() {
-      const tab = createBrowserTab()
+    // Con un indirizzo (da «Riferimenti web») la scheda si apre su quella pagina; il pulsante «nuovo browser» chiama senza (e passa l'evento: non è un indirizzo).
+    openBrowser(url) {
+      const tab = createBrowserTab(typeof url === 'string' ? url : undefined)
       lastBrowserId.current = tab.id
       setTabs((current) => [...current, tab])
       setActiveId(tab.id)
@@ -877,16 +906,23 @@ export default function App() {
         if (!target) throw new Error(t('Browser tab "{reference}" not found: use browser_tabs to see the open ones', { reference }))
       } else if (!newTab) {
         target = list.find((item) => item.id === latest.current.activeId) || list.find((item) => item.id === lastBrowserId.current) || list[0] || null
+      } else {
+        // Una "nuova scheda" richiesta dall'agente riusa quella che ha già aperto, invece di accumularne.
+        target = list.find((item) => agentBrowsers.current.ids.has(item.id)) || null
       }
       let number = target ? list.indexOf(target) + 1 : 0
       if (!target) {
         if (!create && !newTab) throw new Error(t('No browser tab is open: the user can open one (globe icon) or you can with web_open or web_search, if web browsing is enabled'))
         target = createBrowserTab()
         number = list.length + 1
+        agentBrowsers.current.ids.add(target.id)
         setTabs((current) => [...current, target])
       }
       lastBrowserId.current = target.id
-      if (activate) setActiveId(target.id)
+      if (activate) {
+        if (agentBrowsers.current.ids.has(target.id) && agentBrowsers.current.previous === null) agentBrowsers.current.previous = latest.current.activeId
+        setActiveId(target.id)
+      }
       for (let attempt = 0; attempt < 200; attempt += 1) {
         const controller = browserControllers.current.get(target.id)
         if (controller) return { controller, id: target.id, shortId: target.id.slice(0, 6), number }
@@ -986,6 +1022,17 @@ export default function App() {
       if (!tab || tab.dirty) return false
       workspaceRef.current.closeTab(id)
       return true
+    },
+    // A fine risposta si chiudono le schede del browser aperte dall'agente (senza che lo chieda) e si torna alla scheda che l'utente aveva davanti.
+    async closeAgentBrowsers() {
+      const { ids, previous } = agentBrowsers.current
+      if (!ids.size) return
+      const closing = [...ids]
+      ids.clear()
+      agentBrowsers.current.previous = null
+      const wasActive = closing.includes(latest.current.activeId)
+      for (const id of closing) await workspaceRef.current.closeTab(id)
+      if (wasActive && previous && latest.current.tabs.some((tab) => tab.id === previous)) setActiveId(previous)
     },
     onFilesChanged: () => setExplorerRefresh((value) => value + 1),
     onMemoryChanged: () => setMemoryVersion((value) => value + 1),
@@ -1336,6 +1383,7 @@ export default function App() {
               ? <BookmarksPanel tab={contextTab} editor={editors[contextTab.id]} project={workspaceRoot} bookmarks={bookmarks} activeId={activeBookmarkId} onSelect={setActiveBookmarkId} onChanged={() => setBookmarksVersion((value) => value + 1)} onStatus={setStatus} onAskAi={(text, attachment) => { setAssistantOpen(true); setChatRequest({ id: Date.now(), text, attachment }) }} onOpenBookmark={(path, name) => openLink({ kind: 'file', path, fragment: name })} />
               : <p className="px-3 py-3 text-xs text-slate-500">{t('No document open.')}</p>)}
             {sideTab === 'memory' && <MemoryPanel project={workspaceRoot} memoryVersion={memoryVersion} activePath={contextTab?.filePath ? relativeToProject(project, contextTab.filePath) : null} onOpenFile={(relative) => openFromExplorer(`${project}/${relative}`)} onStatus={setStatus} />}
+            {sideTab === 'web' && <WebReferencesPanel project={workspaceRoot} version={webRefsVersion} onOpenUrl={(url) => workspace.openBrowser(url)} onOpenFile={(file) => openFromExplorer(file)} onChanged={() => setWebRefsVersion((value) => value + 1)} onStatus={setStatus} />}
             {sideTab === 'info' && <InfoPanel tab={contextTab} editor={editors[contextTab?.id]} project={workspaceRoot} historyVersion={historyVersion} openNotes={notes.filter((note) => note.status === 'open').length} bookmarkCount={bookmarks.length} />}
             {sideTab === 'history' && (
               <HistoryPanel tab={contextTab} editor={editors[contextTab?.id]} project={workspaceRoot} historyVersion={historyVersion} onChanged={() => setHistoryVersion((value) => value + 1)} onStatus={setStatus} />
@@ -1343,6 +1391,7 @@ export default function App() {
           </aside>
         )}
         <main className="flex min-w-0 flex-1 flex-col">
+          <div className={homeOpen ? 'hidden' : 'contents'}>
           <TabBar tabs={tabs} onPromote={workspace.promoteTab} unsavedCount={unsavedTabs(tabs).length} onSaveAll={saveAllTabs} activeId={activeTab?.id ?? null} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
             {!tabs.length && (
@@ -1357,11 +1406,13 @@ export default function App() {
             {tabs.map((tab) => (tab.kind === 'image'
               ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onStatus={setStatus} onInteract={workspace.promoteTab} onNavigate={workspace.changeImage} />
               : tab.kind === 'browser'
-              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} />
+              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} webRefsVersion={webRefsVersion} onWebRefsChanged={() => setWebRefsVersion((value) => value + 1)} />
               : (mountedTabs.current.has(tab.id) || tab.dirty || tab.pending)
               ? <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onOpenFull={() => workspace.openFull(tab.id)} onExtractImages={() => workspace.extractImages(tab.sourcePath)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />
               : null))}
           </section>
+          </div>
+          {(homeOpen || homeSeen) && <div className={homeOpen ? 'contents' : 'hidden'}><ProjectsHome project={project} visible={homeOpen} onOpenProject={openFromHome} onOpenResult={openHomeResult} /></div>}
           <ToastHost />
           {largeLoading && (
             <div role="status" aria-live="polite" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -1373,11 +1424,14 @@ export default function App() {
           )}
           <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-slate-800 bg-slate-950 px-3 py-1 text-xs text-slate-500">
             <span className="truncate" title={project || ''}>{project ? t('Project: {project}', { project }) : t('No project')}</span>
-            <span className="shrink-0">{status}</span>
+            <span className="flex shrink-0 items-center gap-4">
+              <IndexProgress project={project} />
+              <span>{status}</span>
+            </span>
           </footer>
         </main>
         {/* Sempre montato: chiudere il pannello non interrompe una richiesta in corso. */}
-        <aside style={{ width: widths.right }} className={assistantOpen ? 'relative flex min-w-0 shrink-0 flex-col overflow-hidden border-l border-slate-800 bg-slate-900/60' : 'hidden'}>
+        <aside style={{ width: widths.right }} className={assistantOpen && !homeOpen ? 'relative flex min-w-0 shrink-0 flex-col overflow-hidden border-l border-slate-800 bg-slate-900/60' : 'hidden'}>
           {assistantOpen && <PanelResizer side="right" label={t('Assistant width')} width={widths.right} min={PANELS.right.min} max={maxWidthFor('right', resizeContext('right'))} defaultWidth={PANELS.right.default} onChange={resizePanel('right')} onCommit={commitLayout} />}
           <AiChatPanel
             editor={editors[contextTab?.id]}
@@ -1410,7 +1464,7 @@ export default function App() {
         </div>
       )}
       {aboutOpen && <AboutDialog version={appVersion} release={updateRelease} checkOnOpen={aboutCheck} onCheck={() => checkForUpdate(false)} onClose={() => setAboutOpen(false)} />}
-      {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} onMoveProject={moveProject} version={appVersion} release={updateRelease} onCheckUpdate={() => checkForUpdate(false)} onChooseProject={chooseProject} onOpenFile={(file) => { setScreen('editor'); setSettingsVersion((value) => value + 1); openFromExplorer(file) }} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
+      {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} onMoveProject={moveProject} version={appVersion} release={updateRelease} onCheckUpdate={() => checkForUpdate(false)} onOpenFile={(file) => { setScreen('editor'); setSettingsVersion((value) => value + 1); openFromExplorer(file) }} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
     </ContextMenuContext.Provider>
   )
 }

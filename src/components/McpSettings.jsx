@@ -5,7 +5,7 @@ import { getPreference, setPreference } from '../lib/preferences.js'
 
 const electronAPI = window.electronAPI
 
-const TOOL_NAMES = 'project_info, read_project, get_context, list_skills, get_skill, list_documents, read_document, search_files, list_notes, list_bookmarks, list_memory'
+const TOOL_NAMES = 'project_info, read_project, get_context, list_skills, get_skill, list_documents, read_document, search_files, search_knowledge, list_notes, list_bookmarks, list_memory'
 const READ_EDITOR_TOOL = 'read_open_document'
 const WRITE_TOOL_NAMES = 'open_document, open_project, ask_agent, add_note, suggest_insertion, update_note, add_bookmark, update_bookmark, create_file, create_folder, replace_text, insert_text, replace_document'
 const EDIT_PREFERENCE = 'openwriter.mcpEdit'

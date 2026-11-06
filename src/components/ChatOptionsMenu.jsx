@@ -25,17 +25,18 @@ export default function ChatOptionsMenu({ children }) {
   }, [open])
 
   return (
-    <div ref={root} className="relative shrink-0">
+    // Alto quanto la sola tendina del modello (senza la label sopra): il pulsante, più alto, vi si centra e sporge in modo uguale sopra e sotto.
+    <div ref={root} className="relative flex h-[26px] shrink-0 items-center">
       <button
         type="button"
         aria-label={t('Chat options')}
         title={t('Chat options')}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className={`rounded border border-slate-700 px-1.5 py-1 text-slate-300 outline-none transition hover:text-slate-50 focus:border-accent-400 ${open ? 'bg-slate-700' : 'bg-slate-800'}`}
+        className={`rounded-md p-2 outline-none transition hover:text-accent-400 focus-visible:text-accent-400 ${open ? 'text-accent-400' : 'text-slate-400'}`}
         onClick={() => setOpen((current) => !current)}
       >
-        <MoreHorizontal size={14} />
+        <MoreHorizontal size={22} />
       </button>
       {open && (
         <div role="dialog" aria-label={t('Chat options')} className="absolute bottom-full right-0 z-30 mb-1 grid w-64 max-w-[calc(100vw-2rem)] gap-3 rounded-md border border-slate-700 bg-slate-950 p-3 text-xs text-slate-400 shadow-lg">

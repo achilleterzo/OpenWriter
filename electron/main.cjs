@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, nativeImage, net, protocol, safeStorage, screen, session, shell, webContents } = require('electron')
 const { pathToFileURL } = require('node:url')
+const { Worker } = require('node:worker_threads')
 const fs = require('node:fs/promises')
 const fsSync = require('node:fs')
 const path = require('node:path')
@@ -26,6 +27,7 @@ const { createFontsStore } = require('./fonts.cjs')
 const { parsePdf, MARKER } = require('./pdf-import.cjs')
 const { createBrowserHistory } = require('./browser-history.cjs')
 const { createReferencesStore } = require('./project-references.cjs')
+const { createWebReferencesStore, webFolderOf } = require('./web-references.cjs')
 const projectPack = require('./project-pack.cjs')
 const { createBookmarksStore } = require('./bookmarks-store.cjs')
 const { embedImages } = require('./markdown-embed.cjs')
@@ -33,6 +35,12 @@ const { extractImages } = require('./markdown-extract.cjs')
 const fileClipboard = require('./file-clipboard.cjs')
 const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-links.cjs')
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
+const { createKnowledgeService, formatKnowledgeResults } = require('./knowledge-service.cjs')
+const { createSemanticPack } = require('./semantic-pack.cjs')
+const { createGpuContext } = require('./gpu-context.cjs')
+const { outsideFolders: outsideFoldersOf } = require('./shared-knowledge.cjs')
+const { affinityEdges, uniformEdges, collectVectors } = require('./project-graph.cjs')
+const { mergeSearches, cleanTerms } = require('./search-merge.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
 const MAX_SKILL_FILE_BYTES = MAX_SKILL_CHARS * 4
 const images = require('./images.cjs')
@@ -88,6 +96,7 @@ const bookmarksStore = createBookmarksStore({ getProjectPath: storePath, getMain
 const linksStore = createLinksStore({ getProjectPath: () => projectPath })
 // Cartelle di riferimento (fuori dal progetto, solo lettura per l'assistente).
 const referencesStore = createReferencesStore({ getProjectPath: () => projectPath })
+const webStore = createWebReferencesStore({ getProjectPath: () => projectPath })
 const skillsStore = createSkillsStore({ getGlobalDirectory: () => path.join(app.getPath('userData'), 'skills') })
 const projectTools = createProjectTools({ getProjectPath: () => projectPath, readDocument: (filePath) => readDocument(filePath) })
 const aiRequests = new Map()
@@ -132,6 +141,136 @@ const documentExtensions = ['.md', '.markdown', '.mdown', '.docx', '.pdf']
 // Quel che l'albero dei file mostra: i documenti e le immagini (che si aprono in una scheda di visualizzazione).
 const listedExtensions = [...documentExtensions, ...IMAGE_EXTENSIONS]
 const hiddenDirectories = new Set(['node_modules', 'dist', 'out'])
+
+// I pacchetti della ricerca per significato (semantic-pack.cjs): non sono nell'installer, si scaricano quando l'utente lo chiede (Impostazioni → Modelli locali) e
+// vivono nei dati dell'app. Ce n'è uno per dispositivo: 'cpu' (modello a 8 bit, WebAssembly in un thread di Node, circa 150 MB) e 'gpu' (modello fp16 su WebGPU
+// in una finestra nascosta, circa 280 MB). I vettori di ciascuno stanno a parte nell'indice, quindi passare dall'uno all'altro calcola solo ciò che manca.
+function packageRoot(name) {
+  let directory = path.dirname(require.resolve(name))
+  while (!(fsSync.existsSync(path.join(directory, 'package.json')) && JSON.parse(fsSync.readFileSync(path.join(directory, 'package.json'), 'utf8')).name === name)) {
+    const parent = path.dirname(directory)
+    if (parent === directory) throw new Error(`Package ${name} not found`)
+    directory = parent
+  }
+  return directory
+}
+const semanticDirectory = path.join(app.getPath('userData'), 'semantic')
+const semanticFetch = (url, init) => net.fetch(url, init)
+const semanticPacks = {
+  cpu: createSemanticPack({ directory: semanticDirectory, kind: 'cpu', fetchImpl: semanticFetch, commonSource: packageRoot('onnxruntime-common') }),
+  gpu: createSemanticPack({ directory: semanticDirectory, kind: 'gpu', fetchImpl: semanticFetch }),
+}
+// Il contesto WebGPU (gpu-context.cjs): una finestra nascosta che nasce alla prima richiesta. Il tokenizzatore lo serve dai file dell'app.
+const gpuContext = createGpuContext({
+  BrowserWindow,
+  ipcMain,
+  packDirectory: () => semanticPacks.gpu.directory,
+  tokenizersFile: () => path.join(__dirname, '..', 'node_modules', '@huggingface', 'tokenizers', 'dist', 'tokenizers.mjs'),
+})
+// Ultima descrizione della scheda video (probe) e ultimo guasto della GPU in questa sessione: con un guasto si ripiega sulla CPU finché l'utente non riprova.
+let gpuInfo = null
+let gpuFailure = null
+
+// Indice di ricerca per rilevanza (knowledge-index.cjs): derivato dai file, in un thread a parte. Un errore qui non deve mai impedire di lavorare.
+const knowledge = createKnowledgeService({
+  file: path.join(app.getPath('userData'), 'knowledge.db'),
+  hiddenDirectories: [...hiddenDirectories],
+  createWorker: (workerData) => new Worker(path.join(__dirname, 'knowledge-worker.cjs'), { workerData }),
+  gpuEmbed: (texts, kind) => gpuContext.embed(texts, kind),
+  gpuRelease: () => gpuContext.release(),
+  onSemanticError: (event) => {
+    console.error(`Ricerca per significato (${event.device}):`, event.error)
+    // La scheda video non risponde o non regge il modello: si torna alla CPU (i suoi vettori sono già nell'indice) e l'interfaccia dice perché.
+    if (event.device === 'gpu') { gpuFailure = event.error; configureSemantic() }
+  },
+})
+// L'indice è attivo per il progetto aperto salvo che le sue impostazioni lo spengano (options.searchIndex); la ricerca per significato solo se il
+// modello è installato e abilitato in Impostazioni → Modelli locali. Il progetto non sceglie: se non vuole entrarci spegne l'indice.
+let knowledgeOn = true
+// Modelli locali (Impostazioni): l'utente può spegnere il modello per tutti i progetti, anche se installato, e scegliere il dispositivo.
+const EMBEDDINGS_PREFERENCE = 'openwriter.localModels.embeddings'
+const DEVICE_PREFERENCE = 'openwriter.localModels.device'
+const semanticAllowed = () => loadPreferences()[EMBEDDINGS_PREFERENCE] !== 'off'
+const wantedDevice = () => (loadPreferences()[DEVICE_PREFERENCE] === 'gpu' ? 'gpu' : 'cpu')
+// Il dispositivo che calcola davvero: la GPU se scelta, installata e senza guasti; altrimenti la CPU se il suo modello c'è; altrimenti nessuno.
+function activeDevice() {
+  if (wantedDevice() === 'gpu' && semanticPacks.gpu.ready && !gpuFailure) return 'gpu'
+  return semanticPacks.cpu.ready ? 'cpu' : null
+}
+// La ricerca per significato non dipende dal progetto aperto: ogni progetto con l'indice acceso ha i suoi vettori e la ricerca li usa tutti. `semanticAvailable`:
+// c'è un modello installato e abilitato, quindi ogni ricerca può essere per parole e per significato.
+const semanticAvailable = () => Boolean(semanticAllowed() && activeDevice())
+// I testi da vettorizzare: il progetto aperto, le sue cartelle di riferimento, le pagine web salvate e gli altri progetti che condividono la conoscenza (con l'indice acceso).
+const semanticTargets = () => {
+  if (!projectPath || !knowledgeOn || !semanticAvailable()) return []
+  return [projectPath, ...outsideFolders().map((item) => item.path)]
+}
+// `purge`: identificativi dei modelli di cui buttare i vettori (si è tolto il loro pacchetto).
+// L'ultimo elenco di progetti configurato per i vettori: se ne cambia uno (un progetto aggiunto, che condivide da poco…) si riconfigura.
+let semanticSignature = ''
+function configureSemantic({ purge = [] } = {}) {
+  if (!knowledge.available) return Promise.resolve(false)
+  const projects = semanticTargets()
+  semanticSignature = projects.map((item) => knowledge.key(item)).sort().join('|')
+  const device = projects.length ? activeDevice() : null
+  return knowledge.semanticConfigure({ device, model: device ? semanticPacks[device].id : '', directory: device === 'cpu' ? semanticPacks.cpu.directory : null, projects, purge })
+    .catch((error) => { console.error('Ricerca per significato non configurata:', error.message); return false })
+}
+function startKnowledge() {
+  if (!projectPath) return
+  try { knowledgeOn = projectFile.searchIndexEnabled() } catch { knowledgeOn = true }
+  if (!knowledgeOn) { configureSemantic(); return }
+  knowledge.sync(projectPath).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
+  // Le cartelle di riferimento del progetto (collegate dall'utente, quindi con il suo consenso) si indicizzano a parte: una sola volta anche se più progetti le usano.
+  for (const reference of referenceFolders()) knowledge.sync(reference.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
+  // Gli altri progetti che condividono la loro conoscenza: si riallineano all'apertura (non più spesso di ogni due minuti), senza sorvegliarli.
+  for (const other of outsideFolders().filter((item) => item.project || (item.web && item.name !== 'web'))) {
+    const key = knowledge.key(other.path)
+    if (Date.now() - (sharedSynced.get(key) || 0) < 120000) continue
+    sharedSynced.set(key, Date.now())
+    knowledge.sync(other.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
+  }
+  watchReferences()
+  configureSemantic()
+}
+const sharedSynced = new Map()
+// Tutto ciò che sta fuori dal progetto e si cerca insieme ad esso (`@sigla/…`, sempre in sola lettura): le cartelle di riferimento, le pagine web salvate (`@web`), gli altri progetti che
+// condividono la loro conoscenza (vedi shared-knowledge.cjs; chi ha spento l'indice o la condivisione non c'è) e le loro pagine web (`@nome-web`).
+const outsideFolders = () => {
+  try {
+    return projectPath ? outsideFoldersOf({ current: projectPath, references: referencesStore.list(), projects: projectsStore.list(), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(), webFolderOf }) : []
+  } catch { return [] }
+}
+// Le cartelle di riferimento collegate e le pagine web salvate del progetto (`.ow/web`, automatica: `@web`).
+const referenceFolders = () => {
+  try {
+    if (!projectPath) return []
+    const list = referencesStore.list().filter((item) => !item.missing)
+    const web = webFolderOf(projectPath)
+    return web && !list.some((item) => item.name.toLowerCase() === 'web') ? [...list, { name: 'web', path: web, web: true }] : list
+  } catch { return [] }
+}
+// Chi cambia una cartella di riferimento (di solito un altro programma) la tiene aggiornata nell'indice, come per il progetto.
+let referenceWatchers = []
+function stopReferenceWatch() {
+  for (const watcher of referenceWatchers) { try { watcher.close() } catch { /* già chiuso */ } }
+  referenceWatchers = []
+}
+function watchReferences() {
+  stopReferenceWatch()
+  if (!knowledgeOn) return
+  for (const reference of referenceFolders()) {
+    try {
+      const watcher = fsSync.watch(reference.path, { recursive: true }, (_event, name) => {
+        const parts = name ? String(name).split(/[\\/]/) : []
+        if (parts.some((part) => CLIPBOARD_IGNORED.has(part))) return
+        knowledge.changed(reference.path, name ? [parts.join('/')] : null)
+      })
+      watcher.on('error', () => { try { watcher.close() } catch { /* già chiuso */ } })
+      referenceWatchers.push(watcher)
+    } catch { /* senza sorveglianza resta la scansione all'apertura del progetto */ }
+  }
+}
 
 async function readDocument(filePath) {
   const extension = path.extname(filePath).toLowerCase()
@@ -280,6 +419,7 @@ function initializeProject() {
   if (projectPath) {
     try { createProjectFile({ getProjectPath: mainDirectory }).initialize() } catch (error) { console.error('Inizializzazione .ow del progetto main non riuscita:', error.message) }
   }
+  startKnowledge()
 }
 
 async function setProject(directory) {
@@ -544,11 +684,9 @@ const convertibleExtensions = ['.docx', '.pdf']
 async function listDirectory(directory) {
   const resolved = resolveInProject(directory)
   const entries = await fs.readdir(resolved, { withFileTypes: true })
-  const visible = entries
-    .filter((entry) => !entry.name.startsWith('.'))
-    .filter((entry) => entry.isDirectory()
-      ? !hiddenDirectories.has(entry.name)
-      : listedExtensions.includes(path.extname(entry.name).toLowerCase()))
+  // L'albero mostra tutti i file (non nascosti), non solo quelli che si aprono: `openable` dice se OpenWriter può aprirli (documenti e immagini); gli altri
+  // compaiono con un punto esclamativo, così una cartella con soli file di codice non sembra vuota.
+  const visible = entries.filter((entry) => !entry.name.startsWith('.') && (!entry.isDirectory() || !hiddenDirectories.has(entry.name)))
   // Un DOCX/PDF che ha già il suo Markdown (stesso nome) non sta più in lista: compare sotto il Markdown, come originale in sola lettura.
   const stem = (entry) => path.basename(entry.name, path.extname(entry.name)).toLowerCase()
   const isMarkdown = (entry) => !entry.isDirectory() && path.extname(entry.name).toLowerCase() === '.md'
@@ -556,14 +694,27 @@ async function listDirectory(directory) {
   const originalOf = (entry) => !entry.isDirectory() && convertibleExtensions.includes(path.extname(entry.name).toLowerCase()) && markdownNames.has(stem(entry))
   const originals = new Map()
   for (const entry of visible.filter(originalOf)) originals.set(stem(entry), [...(originals.get(stem(entry)) || []), { name: entry.name, path: path.join(directory, entry.name) }])
-  return visible
-    .filter((entry) => !originalOf(entry))
+  // Cosa c'è in una cartella: 'empty' (davvero niente: non si apre), 'hidden' (ci sono solo elementi nascosti: «Solo file nascosti», così non sembra vuota e non la si
+  // cancella per errore) oppure null (ha qualcosa da mostrare).
+  const emptiness = async (name) => {
+    try {
+      const inner = await fs.readdir(path.join(resolved, name), { withFileTypes: true })
+      if (!inner.length) return 'empty'
+      const shows = inner.some((item) => !item.name.startsWith('.') && (!item.isDirectory() || !hiddenDirectories.has(item.name)))
+      return shows ? null : 'hidden'
+    } catch { return null }
+  }
+  const shown = visible.filter((entry) => !originalOf(entry))
+  const states = new Map(await Promise.all(shown.filter((entry) => entry.isDirectory()).map(async (entry) => [entry.name, await emptiness(entry.name)])))
+  return shown
     // Una cartella con una `.ow` propria è un sotto-progetto: l'explorer la distingue dalle altre.
     .map((entry) => ({
       name: entry.name,
       path: path.join(directory, entry.name),
       isDirectory: entry.isDirectory(),
       isProject: entry.isDirectory() && fsSync.existsSync(path.join(resolved, entry.name, projectFile.directoryName)),
+      ...(entry.isDirectory() && states.get(entry.name) ? { emptiness: states.get(entry.name) } : {}),
+      ...(!entry.isDirectory() ? { openable: listedExtensions.includes(path.extname(entry.name).toLowerCase()) } : {}),
       ...(isMarkdown(entry) && originals.has(stem(entry)) ? { originals: originals.get(stem(entry)) } : {}),
     }))
     .sort((left, right) => Number(right.isDirectory) - Number(left.isDirectory) || left.name.localeCompare(right.name, 'it', { sensitivity: 'base' }))
@@ -790,7 +941,9 @@ ipcMain.handle('projects:save-settings', (_event, { directory, settings } = {}) 
   const { target, file } = projectFileFor(directory)
   file.initialize()
   const saved = file.saveSettings(settings)
-  if (projectPath && samePath(projectPath, target)) applySpellcheck()
+  if (projectPath && samePath(projectPath, target)) { applySpellcheck(); applyKnowledgeChoice(target, saved.options.searchIndex) } else if (!saved.options.searchIndex) knowledge.clear(target).catch(() => {})
+  // Chi condivide o smette di condividere cambia ciò che gli altri progetti vedono (e quali vettori calcolare).
+  if (projectPath && !samePath(projectPath, target)) configureSemantic()
   return saved
 })
 // Icona di un progetto (anche non aperto): un'immagine in `.ow`, ridimensionata; qui si legge, si sceglie e si toglie.
@@ -926,6 +1079,7 @@ ipcMain.handle('project:context-chain', (_event, filePath) => projectFile.getCon
 ipcMain.handle('project:save-settings', (_event, settings) => {
   const saved = projectFile.saveSettings(settings)
   applySpellcheck()
+  applyKnowledgeChoice(projectPath, saved.options.searchIndex)
   return saved
 })
 // Chat in streaming: gli eventi (testo, ragionamento, stato) arrivano al renderer man mano, e la richiesta si può interrompere.
@@ -957,9 +1111,281 @@ ipcMain.handle('tools:search-files', async (_event, args = {}) => {
   if (prefix && result.results) result.results = result.results.map((entry) => ({ ...entry, path: withPrefix(prefix, entry.path) }))
   return formatSearch(result)
 })
+// Acceso o spento dalle impostazioni del progetto: spento, l'indice del progetto si svuota (si ricostruisce riaccendendolo).
+function applyKnowledgeChoice(directory, enabled) {
+  if (!directory) return
+  const isOpen = projectPath && samePath(projectPath, directory)
+  if (isOpen) knowledgeOn = enabled !== false
+  if (enabled === false) { knowledge.clear(directory).catch(() => {}); if (isOpen) { stopReferenceWatch(); configureSemantic() } }
+  else if (isOpen) startKnowledge()
+}
+// Ricerca per significato: stato dei pacchetti (scaricati o no), dispositivo scelto e in uso, scheda video e avanzamento dei vettori per il progetto aperto.
+// `pack` è il pacchetto del dispositivo in uso (o di quello scelto, se nessuno è installato): è ciò che mostrano le impostazioni del progetto.
+async function semanticStatus(directory) {
+  const target = directory ? path.resolve(String(directory)) : projectPath
+  const isOpen = Boolean(projectPath && target && samePath(projectPath, target))
+  const enabled = isOpen ? knowledgeOn : Boolean(target && createProjectFile({ getProjectPath: () => target }).searchIndexEnabled())
+  const wanted = wantedDevice()
+  const using = activeDevice()
+  const result = {
+    pack: semanticPacks[using || wanted].status(),
+    packs: { cpu: semanticPacks.cpu.status(), gpu: semanticPacks.gpu.status() },
+    device: wanted,
+    activeDevice: using,
+    gpu: { info: gpuInfo, failure: gpuFailure },
+    enabled,
+    allowed: semanticAllowed(),
+    progress: null,
+  }
+  const targets = isOpen ? semanticTargets() : []
+  if (targets.length && knowledge.available) {
+    try { result.progress = await knowledge.semanticStatus(targets) } catch (error) { result.progress = { error: error.message } }
+  }
+  return result
+}
+ipcMain.handle('semantic:status', (_event, directory) => semanticStatus(directory))
+// Interruttore globale del modello (Impostazioni → Modelli locali): spento, nessun progetto lo usa e i calcoli si fermano.
+ipcMain.handle('semantic:set-enabled', async (_event, enabled) => {
+  setPreferenceValue(EMBEDDINGS_PREFERENCE, enabled ? 'on' : 'off')
+  await configureSemantic()
+  return semanticStatus()
+})
+// Dispositivo del calcolo: 'cpu' o 'gpu' (se la scheda video non è supportata o manca il pacchetto, si usa la CPU finché non lo è). Scegliere di nuovo la GPU cancella l'ultimo guasto.
+ipcMain.handle('semantic:set-device', async (_event, device) => {
+  setPreferenceValue(DEVICE_PREFERENCE, device === 'gpu' ? 'gpu' : 'cpu')
+  gpuFailure = null
+  await configureSemantic()
+  return semanticStatus()
+})
+// Chiede a WebGPU quale scheda userebbe (senza caricare il modello): l'interfaccia lo usa per dire se la GPU è supportata.
+ipcMain.handle('semantic:probe-gpu', async () => {
+  try { gpuInfo = await gpuContext.probe() } catch (error) { gpuInfo = { webgpu: false, reason: error.message } }
+  return semanticStatus()
+})
+// Avanzamento dell'indice per la barra in fondo alla finestra: scansione dei file e vettori ancora da calcolare per il progetto aperto.
+ipcMain.handle('knowledge:activity', async () => {
+  const result = { scanning: knowledge.available && knowledge.syncing, vectors: null }
+  const targets = semanticTargets()
+  if (targets.length && knowledge.available) {
+    try {
+      const status = await knowledge.semanticStatus(targets)
+      if (!status.error && status.total > status.embedded) result.vectors = { embedded: status.embedded, total: status.total }
+    } catch { /* senza stato non c'è barra */ }
+  }
+  return result
+})
+const packKind = (device) => (device === 'gpu' ? 'gpu' : device === 'cpu' ? 'cpu' : wantedDevice())
+// Scarica un pacchetto (qualche minuto): l'interfaccia ne segue l'avanzamento chiedendo lo stato. Niente parte da solo: è l'utente a chiederlo.
+ipcMain.handle('semantic:install', async (_event, directory, device) => {
+  const kind = packKind(device)
+  await semanticPacks[kind].install()
+  if (kind === 'gpu') gpuFailure = null
+  await configureSemantic()
+  return semanticStatus(directory)
+})
+// Toglie un pacchetto e i vettori di quel modello (quelli dell'altro dispositivo restano).
+ipcMain.handle('semantic:remove', async (_event, directory, device) => {
+  const kind = packKind(device)
+  semanticPacks[kind].remove()
+  if (kind === 'gpu') gpuContext.release()
+  await configureSemantic({ purge: [semanticPacks[kind].id] })
+  return semanticStatus(directory)
+})
+// Stato dell'indice di un progetto (aperto o no) e ricostruzione dai file.
+async function knowledgeStatus(directory) {
+  const target = directory ? path.resolve(String(directory)) : projectPath
+  if (!target) return { enabled: false, available: false, files: 0, chunks: 0, updatedAt: null }
+  const enabled = projectPath && samePath(projectPath, target) ? knowledgeOn : createProjectFile({ getProjectPath: () => target }).searchIndexEnabled()
+  if (!knowledge.available) return { enabled, available: false, error: knowledge.error, files: 0, chunks: 0, updatedAt: null }
+  try { return { enabled, available: true, ...(await knowledge.stats(target)) } } catch (error) { return { enabled, available: false, error: error.message, files: 0, chunks: 0, updatedAt: null } }
+}
+ipcMain.handle('project:knowledge-status', (_event, directory) => knowledgeStatus(directory))
+ipcMain.handle('project:knowledge-rebuild', async (_event, directory) => {
+  const target = directory ? path.resolve(String(directory)) : projectPath
+  if (!target) throw new Error(t('No project open'))
+  if (!knowledge.available) throw new Error(knowledge.error || 'The search index is not available')
+  await knowledge.rebuild(target)
+  // Un progetto aggiunto da poco può non essere ancora tra quelli di cui calcolare i vettori: senza, ricostruito l'indice non avrebbe mai il suo significato.
+  await configureSemantic()
+  return knowledgeStatus(target)
+})
+// Ricerca per rilevanza sull'indice (knowledge-index.cjs): passaggi con file e righe. Non vale per le cartelle di riferimento.
+// Cosa sta fuori da un progetto e si cerca insieme ad esso: le cartelle di riferimento collegate e gli altri progetti che condividono. Per il progetto aperto sono quelle in uso;
+// per un altro progetto (un agente esterno che lavora altrove) si leggono i suoi riferimenti. Senza progetto: tutti i progetti che condividono.
+// `everything` (la ricerca della Home, che è dell'utente e non di un assistente): tutti i progetti con l'indice acceso, anche quelli che non condividono la loro conoscenza. Condividere
+// decide solo cosa vedono gli ALTRI progetti e i loro assistenti; le informazioni, nel proprio indice, ci sono comunque.
+function outsideFor(base, { everything = false } = {}) {
+  if (base && projectPath && samePath(base, projectPath)) return outsideFolders()
+  let references = []
+  try { references = base ? createReferencesStore({ getProjectPath: () => base }).list() : [] } catch { references = [] }
+  try {
+    return outsideFoldersOf({ current: base, references, projects: projectsStore.list(), isShared: (directory) => { const file = createProjectFile({ getProjectPath: () => directory }); return everything ? file.searchIndexEnabled() : file.sharedKnowledgeEnabled() }, webFolderOf })
+  } catch { return [] }
+}
+// Ricerca per rilevanza (e per significato, se c'è il modello) nel progetto, nei suoi riferimenti e negli altri progetti. Non dipende dal progetto aperto: `project` (un agente
+// esterno) indica da quale progetto si cerca; senza, si usa quello aperto, e senza nessuno si cerca in tutti i progetti che condividono la loro conoscenza.
+async function runKnowledgeSearch(args = {}, { project: asked = null, home = false } = {}) {
+  const known = (directory) => Boolean((projectPath && samePath(directory, projectPath)) || projectsStore.list().some((item) => samePath(item.path, directory)))
+  // `home`: la ricerca della Home non parte da nessun progetto, anche se uno è aperto: cerca in tutti quelli che condividono la conoscenza.
+  const base = home ? null : asked && known(path.resolve(String(asked))) ? path.resolve(String(asked)) : (asked ? null : projectPath)
+  const query = String(args.query || '').trim()
+  if (!query) throw new Error('Missing parameter "query"')
+  if (!knowledge.available) throw new Error('The search index is not available: use search_files')
+  if (base) {
+    const on = projectPath && samePath(base, projectPath) ? knowledgeOn : createProjectFile({ getProjectPath: () => base }).searchIndexEnabled()
+    if (!on) throw new Error('The search index is turned off for this project: use search_files')
+  } else if (!asked && !projectPath && !home) throw new Error(t('No project open'))
+  const given = String(args.path || '').trim().replace(/\\/g, '/')
+  // `others` (o il vecchio `references`): tutto ciò che sta fuori dal progetto, cioè gli altri progetti e le cartelle di riferimento.
+  const wanted = String(args.scope || '').toLowerCase()
+  const scope = wanted === 'project' ? 'project' : (wanted === 'others' || wanted === 'references') ? 'others' : 'all'
+  const outside = outsideFor(base, { everything: home })
+  const sourceOf = (item) => ({ key: knowledge.key(item.path), prefix: `@${item.name}`, item })
+  let sources
+  let folder = ''
+  if (given.startsWith('@')) {
+    const [name, ...rest] = given.slice(1).split('/')
+    const found = outside.find((item) => item.name.toLowerCase() === name.toLowerCase())
+    if (!found) throw new Error(`Reference folder or project "@${name}" not found: the root listing shows the available ones`)
+    sources = [sourceOf(found)]
+    folder = rest.filter(Boolean).join('/')
+  } else {
+    if (given && given !== '.' && given !== '/') {
+      if (!base) throw new Error('A path of the project needs a project: use "@name/…" or leave the path out')
+      if (projectPath && samePath(base, projectPath)) folder = path.relative(projectPath, resolveInProject(path.join(projectPath, given))).split(path.sep).join('/')
+      else {
+        const clean = path.posix.normalize(given).replace(/^\/+/, '')
+        if (clean.startsWith('..')) throw new Error('The path is outside the project')
+        folder = clean === '.' ? '' : clean
+      }
+    }
+    const projectSource = base ? { key: knowledge.key(base), prefix: '', item: null } : null
+    // Un percorso del progetto restringe la ricerca al progetto.
+    sources = folder ? [projectSource] : [...(scope === 'others' || !projectSource ? [] : [projectSource]), ...(scope === 'project' ? [] : outside.map(sourceOf))]
+  }
+  if (!sources.length) throw new Error('There are no other projects or reference folders to search: use scope "project" or leave it out')
+  const [found, ...stats] = await Promise.all([
+    knowledge.search(sources.map((source) => source.key), query, { folder, limit: Number(args.maxResults) || 10, semantic: semanticAvailable(), includeWeak: args.includeWeak === true }),
+    ...sources.map((source) => knowledge.stats(source.key)),
+  ])
+  const prefixes = new Map(sources.map((source) => [source.key, source.prefix]))
+  const bySource = new Map(sources.map((source) => [source.key, source]))
+  found.results = found.results.map((entry) => ({ ...entry, source: bySource.get(entry.project), path: withPrefix(prefixes.get(entry.project) ?? '', entry.path), relative: entry.path }))
+  return { query, found, files: stats.reduce((total, item) => total + item.files, 0), outside }
+}
+async function searchKnowledgeTool(args = {}, readTool = 'read_file', context = {}) {
+  const { query, found, files } = await runKnowledgeSearch(args, context)
+  return formatKnowledgeResults(query, { ...found, results: found.results.map(({ source: _source, relative: _relative, ...entry }) => entry) }, { files }, readTool)
+}
+// Ricerca della Home: gli stessi passaggi che vedrebbe l'assistente, ma strutturati (con il progetto di ogni passaggio e il file da aprire).
+async function searchProjectsForHome(args = {}) {
+  const maxResults = Math.min(30, Math.max(1, Number(args.maxResults) || 20))
+  const query = String(args.query || '').trim()
+  // `terms`: sinonimi e termini affini chiesti dall'interfaccia al modello linguistico; ognuno si cerca a parte (parole e significato) e i risultati si uniscono.
+  const terms = cleanTerms(args.terms, query)
+  // `includeWeak`: anche i passaggi che il filtro di pertinenza scarta ("meno pertinenti"), con `weak: true`, ordinati per pertinenza.
+  const includeWeak = args.includeWeak === true
+  const base = await runKnowledgeSearch({ query, maxResults, includeWeak }, { home: true })
+  const { found, files, outside } = base
+  // Le pagine web salvate di un progetto (`@nome-web`) appartengono a quel progetto.
+  const ownerOf = (item) => (item.web ? outside.find((other) => other.project && (item.name === `${other.name}-web` || item.name.startsWith(`${other.name}-web-`))) || null : item)
+  const shape = (entries) => entries.flatMap((entry) => {
+    const item = entry.source?.item
+    const owner = item ? ownerOf(item) : null
+    if (!item || !owner) return []
+    return [{
+      project: owner.path, projectName: owner.name, file: entry.relative, absolute: path.join(item.path, entry.relative),
+      display: entry.path, heading: entry.heading || '', startLine: entry.startLine, endLine: entry.endLine, snippet: String(entry.snippet || '').replace(/\s+/g, ' ').trim(),
+      // Perché compare: 'words' (contiene le parole), 'meaning' (solo per significato) o 'both'.
+      via: entry.via || 'words',
+      // Pertinenza 0-1 (da quanto il passaggio si stacca dagli altri per questa domanda) e punteggio z; assenti senza ricerca per significato.
+      ...(entry.relevance !== undefined ? { relevance: Math.round(entry.relevance * 100) / 100 } : {}),
+      ...(entry.z !== undefined ? { z: Math.round(entry.z * 10) / 10 } : {}),
+      ...(entry.weak ? { weak: true } : {}),
+    }]
+  })
+  let results = shape(found.results)
+  let weakCount = found.weakCount || 0
+  if (terms.length) {
+    const extra = await Promise.all(terms.map(async (term) => {
+      try {
+        const { found: termFound } = await runKnowledgeSearch({ query: term, maxResults: 10, includeWeak }, { home: true })
+        weakCount += termFound.weakCount || 0
+        return { term, original: false, results: shape(termFound.results) }
+      } catch { return { term, original: false, results: [] } }
+    }))
+    results = mergeSearches([{ term: query, original: true, results }, ...extra], { limit: maxResults + 10 })
+  }
+  // `partial`: nessun passaggio contiene tutte le parole (si mostrano quelli che ne hanno qualcuna).
+  return { query, terms, mode: found.mode, partial: found.mode === 'or' || Boolean(found.partial), weakCount, files, results }
+}
+ipcMain.handle('projects:search', (_event, args) => searchProjectsForHome(args))
+
+// Dati del grafo della Home: ogni progetto (con le sue opzioni) e le connessioni per affinità. I vettori medi si ricalcolano solo se l'indice del progetto è cambiato.
+const centroidCache = new Map() // chiave → { signature, vector }
+ipcMain.handle('projects:graph', async () => {
+  const list = projectsStore.list().filter((item) => item && item.path)
+  const device = semanticAllowed() ? activeDevice() : null
+  const model = device ? semanticPacks[device].id : ''
+  const nodes = []
+  for (const item of list) {
+    const base = { path: item.path, name: item.name, missing: Boolean(item.missing), openedAt: item.openedAt || null }
+    if (item.missing) { nodes.push({ ...base, indexed: false, shared: false, files: 0, chunks: 0, updatedAt: null }); continue }
+    let file = null
+    try { file = createProjectFile({ getProjectPath: () => item.path }) } catch { file = null }
+    const indexed = Boolean(file?.searchIndexEnabled())
+    const shared = Boolean(file?.sharedKnowledgeEnabled())
+    let stats = { files: 0, chunks: 0, updatedAt: null }
+    if (indexed && knowledge.available) { try { stats = await knowledge.stats(item.path) } catch { /* senza statistiche il progetto resta senza linee */ } }
+    nodes.push({ ...base, indexed, shared, files: stats.files, chunks: stats.chunks, updatedAt: stats.updatedAt })
+  }
+  // Un progetto che condivide e ha l'indice acceso ma nessun passaggio (appena aggiunto): si indicizza (non più spesso di ogni due minuti), senza aspettare l'apertura.
+  for (const node of nodes) {
+    if (!node.shared || !node.indexed || node.chunks > 0 || !knowledge.available) continue
+    const key = knowledge.key(node.path)
+    if (Date.now() - (sharedSynced.get(key) || 0) < 120000) continue
+    sharedSynced.set(key, Date.now())
+    knowledge.sync(node.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
+  }
+  // I vettori si calcolano per i progetti dell'elenco corrente: se è cambiato dall'ultima configurazione, si riconfigura.
+  if (knowledge.available && semanticAvailable()) {
+    const wanted = semanticTargets().map((item) => knowledge.key(item)).sort().join('|')
+    if (wanted && wanted !== semanticSignature) await configureSemantic()
+  }
+  const sharing = nodes.filter((node) => node.shared && node.chunks > 0)
+  let vectors = new Map()
+  let pending = new Set()
+  if (model && knowledge.available && sharing.length > 1) {
+    try {
+      ({ vectors, pending } = await collectVectors({
+        nodes: sharing, model, cache: centroidCache, key: (directory) => knowledge.key(directory),
+        centroids: (paths) => knowledge.centroids(paths),
+        status: async (directory) => { try { return await knowledge.semanticStatus([directory]) } catch { return null } },
+      }))
+    } catch (error) { console.error('Vettori medi dei progetti non calcolati:', error.message) }
+  }
+  for (const node of nodes) node.pendingVectors = pending.has(node.path)
+  let edges = []
+  let approximate = false
+  if (vectors.size > 1) edges = affinityEdges(sharing.filter((node) => vectors.has(node.path)).map((node) => ({ id: node.path, vector: vectors.get(node.path) })))
+  else if (sharing.length > 1) { edges = uniformEdges(sharing.map((node) => node.path)); approximate = true }
+  // `busy`: l'indice sta ancora lavorando (scansione o vettori): l'interfaccia riguarda il grafo finché non ha finito.
+  const busy = pending.size > 0 || (knowledge.available && knowledge.syncing)
+  return { nodes, edges, approximate, busy, semantic: vectors.size > 1 }
+})
+ipcMain.handle('tools:search-knowledge', (_event, args) => searchKnowledgeTool(args))
 // Gli strumenti di lettura valgono anche per le cartelle di riferimento: un percorso `@sigla/…` si legge dentro quella cartella (e solo lì).
+// `@sigla/…` → la radice: un riferimento, oppure un altro progetto che condivide la sua conoscenza.
+function outsideRoot(given) {
+  try { return referencesStore.resolve(given) } catch (error) {
+    const [name, ...rest] = String(given || '').slice(1).replace(/\\/g, '/').split('/')
+    const outside = outsideFolders().find((item) => item.name.toLowerCase() === name.toLowerCase())
+    if (!outside) throw error
+    return { name: outside.name, root: outside.path, relative: rest.filter(Boolean).join('/') }
+  }
+}
 function toolsFor(given) {
-  const reference = projectPath ? referencesStore.resolve(given) : null
+  const reference = projectPath ? outsideRoot(given) : null
   if (!reference) return { tools: projectTools, relative: given, prefix: '' }
   return { tools: createProjectTools({ getProjectPath: () => reference.root, readDocument: (filePath) => readDocument(filePath) }), relative: reference.relative, prefix: `@${reference.name}` }
 }
@@ -976,7 +1402,7 @@ ipcMain.handle('tools:list-directory', async (_event, relativePath, options = {}
       try { if (fsSync.existsSync(imageDescriptionFile(result.path === '.' ? entry.name : `${result.path}/${entry.name}`))) entry.described = true } catch { /* nome non valido */ }
     }
   }
-  if (!prefix && result.path === '.') { result.linked = linksStore.list(); result.references = referencesStore.list() }
+  if (!prefix && result.path === '.') { result.linked = linksStore.list(); const linked = referencesStore.list(); result.references = [...linked, ...outsideFolders().filter((item) => !linked.some((reference) => reference.name === item.name)).map((item) => ({ name: item.name, path: item.path, ...(item.project ? { project: true } : {}), ...(item.web ? { web: true } : {}) }))] }
   return result
 })
 ipcMain.handle('tools:read-file', async (_event, { path: relativePath, offset, limit, startLine, endLine } = {}) => {
@@ -1025,6 +1451,37 @@ ipcMain.handle('browser:set-color-scheme', async (_event, { contentsId, dark } =
     console.warn('Tema della pagina non applicato:', error.message)
     return false
   }
+})
+// Navigazioni comandate dall'assistente o da un agente: mentre durano, la scheda non può raggiungere la rete locale o privata, né aprendo l'indirizzo né seguendo un
+// reindirizzamento, né con un nome che il DNS risolve in un indirizzo privato (vedi private-address.mjs). Le pagine che l'utente apre da sé non sono toccate.
+const guardedBrowsers = new Set()
+const guardedSessions = new WeakSet()
+const privateAddress = () => import(pathToFileURL(path.join(__dirname, 'private-address.mjs')).href)
+async function isPublicDestination(rawUrl) {
+  const { isPrivateHost, isPrivateAddress } = await privateAddress()
+  let url
+  try { url = new URL(rawUrl) } catch { return false }
+  if (!/^https?:$/.test(url.protocol) || isPrivateHost(url.hostname)) return false
+  const host = url.hostname.replace(/^\[|\]$/g, '')
+  if (isPrivateAddress(host)) return false
+  try {
+    const found = await require('node:dns').promises.lookup(host, { all: true })
+    return found.every((entry) => !isPrivateAddress(entry.address))
+  } catch { return true } // non si risolve: la pagina non si caricherebbe comunque
+}
+function guardSession(contents) {
+  if (guardedSessions.has(contents.session)) return
+  guardedSessions.add(contents.session)
+  contents.session.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
+    if (!guardedBrowsers.has(details.webContentsId) || !['mainFrame', 'subFrame'].includes(details.resourceType)) { callback({}); return }
+    isPublicDestination(details.url).then((allowed) => callback({ cancel: !allowed }), () => callback({ cancel: true }))
+  })
+}
+ipcMain.handle('browser:guard-agent', (_event, { contentsId, on } = {}) => {
+  const contents = webContents.fromId(Number(contentsId))
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) return false
+  if (on) { guardSession(contents); guardedBrowsers.add(contents.id) } else guardedBrowsers.delete(contents.id)
+  return true
 })
 // Schermata della scheda del browser, a piena risoluzione, salvata come PNG in <progetto>/screenshots/. Restituisce il percorso del file.
 ipcMain.handle('browser:save-screenshot', async (_event, { contentsId, title } = {}) => {
@@ -1164,6 +1621,27 @@ ipcMain.handle('tools:create-project', async (_event, { name, documents } = {}) 
   return { path: target, links: writeLinksTo(target, linked) }
 })
 ipcMain.handle('references:list', () => (projectPath ? referencesStore.list() : []))
+// Riferimenti web (la stellina del browser): pagine salvate con una copia in Markdown in `.ow/web` (vedi web-references.cjs). Salvare o togliere una pagina riallinea
+// subito la ricerca: la cartella `.ow/web` è la cartella di riferimento automatica `@web`.
+async function webReferencesChanged() {
+  watchReferences()
+  if (!knowledgeOn || !projectPath) return
+  const folder = webStore.folder()
+  if (webFolderOf(projectPath)) knowledge.sync(folder).catch(() => {}); else knowledge.clear(folder).catch(() => {})
+  configureSemantic()
+}
+ipcMain.handle('webrefs:list', () => (projectPath ? webStore.list() : []))
+ipcMain.handle('webrefs:find', (_event, url) => (projectPath ? webStore.find(String(url || '')) : null))
+ipcMain.handle('webrefs:save', async (_event, page = {}) => {
+  const entry = webStore.save({ url: String(page.url || ''), title: String(page.title || ''), markdown: String(page.markdown || ''), siteName: String(page.siteName || ''), source: String(page.source || 'user'), checkOnly: page.checkOnly === true })
+  await webReferencesChanged()
+  return entry
+})
+ipcMain.handle('webrefs:remove', async (_event, id) => {
+  const list = webStore.remove(String(id || ''))
+  await webReferencesChanged()
+  return list
+})
 // Aggiunge una cartella di riferimento: si sceglie col dialogo (o, per il trascinamento, si passa il percorso).
 ipcMain.handle('references:add', async (_event, directory) => {
   if (!projectPath) throw new Error(t('No project open'))
@@ -1173,7 +1651,9 @@ ipcMain.handle('references:add', async (_event, directory) => {
     if (result.canceled || !result.filePaths[0]) return null
     chosen = result.filePaths[0]
   }
-  return referencesStore.add(chosen)
+  const added = referencesStore.add(chosen)
+  startKnowledge()
+  return added
 })
 // Ricollega un riferimento (di solito perché la cartella è stata spostata o rinominata): si sceglie la nuova posizione, la sigla non cambia.
 ipcMain.handle('references:update', async (_event, name) => {
@@ -1185,9 +1665,19 @@ ipcMain.handle('references:update', async (_event, name) => {
     properties: ['openDirectory'],
   })
   if (result.canceled || !result.filePaths[0]) return null
-  return referencesStore.update(reference.name, result.filePaths[0])
+  const updated = referencesStore.update(reference.name, result.filePaths[0])
+  knowledge.clear(reference.path).catch(() => {})
+  startKnowledge()
+  return updated
 })
-ipcMain.handle('references:remove', (_event, name) => referencesStore.remove(String(name)))
+ipcMain.handle('references:remove', (_event, name) => {
+  const reference = referencesStore.get(String(name))
+  const remaining = referencesStore.remove(String(name))
+  // Le voci della cartella escono dall'indice (se un altro progetto la usa ancora, si rifanno alla sua prossima apertura).
+  if (reference) knowledge.clear(reference.path).catch(() => {})
+  watchReferences()
+  return remaining
+})
 ipcMain.handle('references:reveal', async (_event, name) => {
   const reference = referencesStore.get(String(name))
   if (!reference || !fsSync.existsSync(reference.path)) throw new Error(t('Folder not found'))
@@ -1419,6 +1909,28 @@ ipcMain.handle('workspace:file-info', async (_event, target) => {
 })
 ipcMain.handle('workspace:reveal-path', (_event, target) => { shell.showItemInFolder(resolveInProject(target)) })
 ipcMain.handle('workspace:list-directory', (_event, directory) => listDirectory(directory))
+// Tutti i documenti Markdown del progetto (percorsi assoluti), per proporli mentre si scrive un collegamento.
+const MAX_LINKABLE_DOCUMENTS = 5000
+ipcMain.handle('workspace:list-documents', async () => {
+  if (!projectPath) return []
+  const found = []
+  const walk = async (directory) => {
+    let entries
+    try { entries = await fs.readdir(directory, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      if (found.length >= MAX_LINKABLE_DOCUMENTS) return
+      if (entry.name.startsWith('.')) continue
+      const full = path.join(directory, entry.name)
+      if (entry.isDirectory()) {
+        if (!hiddenDirectories.has(entry.name)) await walk(full)
+      } else if (['.md', '.markdown', '.mdown'].includes(path.extname(entry.name).toLowerCase())) {
+        found.push(full)
+      }
+    }
+  }
+  await walk(projectPath)
+  return found
+})
 // Le immagini incorporate nel testo (data:, per esempio quelle di un PDF o di un DOCX aperto) diventano file nella cartella images/ accanto al documento:
 // il Markdown resta leggibile e le immagini seguono il documento. Il nome deriva dal contenuto, quindi salvare più volte non crea doppioni.
 const EMBEDDED_DESTINATION = /^data:image\/(png|jpe?g|gif|webp|bmp);base64,([A-Za-z0-9+/=]+)$/
@@ -1611,12 +2123,13 @@ function flushPreferences() {
 }
 
 ipcMain.on('preferences:load', (event) => { event.returnValue = loadPreferences() })
-ipcMain.on('preferences:set', (_event, key, value) => {
+function setPreferenceValue(key, value) {
   if (typeof key !== 'string' || !/^openwriter\.[A-Za-z0-9.]{1,60}$/.test(key) || typeof value !== 'string' || value.length > 20000) return
   loadPreferences()[key] = value
   clearTimeout(preferencesTimer)
   preferencesTimer = setTimeout(flushPreferences, 200)
-})
+}
+ipcMain.on('preferences:set', (_event, key, value) => setPreferenceValue(key, value))
 app.on('before-quit', flushPreferences)
 
 // Appunti di file con il sistema: copia/taglia dall'albero e incolla nel file manager o in altri programmi, e viceversa (vedi file-clipboard.cjs).
@@ -1690,6 +2203,7 @@ function stopWorkspaceWatch() {
   clearTimeout(annotationsWatchTimer)
   try { workspaceWatcher?.close() } catch { /* già chiuso */ }
   workspaceWatcher = null
+  stopReferenceWatch()
 }
 ipcMain.handle('workspace:watch', () => {
   stopWorkspaceWatch()
@@ -1705,10 +2219,13 @@ ipcMain.handle('workspace:watch', () => {
         return
       }
       if (parts.some((part) => CLIPBOARD_IGNORED.has(part))) return
+      // Senza nome del file il sistema non dice cosa è cambiato: riscansione completa. Altrimenti si aggiorna solo quel percorso.
+      if (knowledgeOn) knowledge.changed(projectPath, name ? [parts.join('/')] : null)
       clearTimeout(workspaceWatchTimer)
       workspaceWatchTimer = setTimeout(() => mainWindow?.webContents.send('workspace:changed'), 400)
     })
     workspaceWatcher.on('error', () => stopWorkspaceWatch())
+    watchReferences()
     return true
   } catch {
     // La sorveglianza non è disponibile (es. cartella di rete): resta il pulsante "Aggiorna".
@@ -1716,6 +2233,7 @@ ipcMain.handle('workspace:watch', () => {
   }
 })
 app.on('will-quit', stopWorkspaceWatch)
+app.on('will-quit', () => { knowledge.close().catch(() => {}); gpuContext.close().catch(() => {}) })
 
 // Ponte per il server MCP (vedi mcp-bridge.cjs): gli agenti esterni modificano i documenti aperti nell'editor, con le modifiche "da rivedere".
 // L'utente lo spegne dalle impostazioni (Agenti (MCP)): preferenza openwriter.mcpEdit = "off".
@@ -1724,6 +2242,8 @@ const mcpBridge = createMcpBridge({
   getWindow: () => mainWindow,
   getProjectPath: () => projectPath,
   isEnabled: () => loadPreferences()['openwriter.mcpEdit'] !== 'off',
+  // Con l'app aperta la ricerca per conoscenza di un agente esterno passa da qui: stessa ricerca dell'assistente, quindi anche per significato (se acceso).
+  localTools: { search_knowledge: (args, context) => searchKnowledgeTool(args, 'read_document', { project: context?.project }) },
 })
 ipcMain.on('mcp:response', (_event, id, payload) => mcpBridge.answer(id, payload))
 

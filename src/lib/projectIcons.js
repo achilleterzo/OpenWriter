@@ -79,6 +79,27 @@ export function invalidateProjectIcon(directory) {
   listeners.forEach((listener) => listener())
 }
 
+// Per chi disegna le icone fuori da React (il grafo della Home): avvisa quando l'icona di un progetto è cambiata (scelta o tolta). Restituisce come smettere di ascoltare.
+export function onProjectIconsChanged(listener) {
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
+
+// L'icona di un progetto fuori da un componente (data URL o null), con la stessa cache di `useProjectIcon`.
+export async function loadProjectIcon(directory) {
+  const key = keyOf(directory)
+  if (cache.has(key)) return cache.get(key)
+  if (!directory || !electronAPI?.getProjectIcon) return null
+  try {
+    const icon = (await electronAPI.getProjectIcon(directory)) || null
+    cache.set(key, icon)
+    return icon
+  } catch {
+    cache.set(key, null)
+    return null
+  }
+}
+
 export function useProjectIcon(directory) {
   const key = keyOf(directory)
   // Cambia a ogni invalidazione e a ogni lettura finita: serve a rifare il rendering e, con la cache svuotata, a rileggere l'icona.

@@ -4,9 +4,9 @@ A quick way to check that the reference pages still match the source tree.
 
 ## Source tree
 
-- `electron/`: `ai-providers`, `atomic-write`, `bookmarks-store`, `browser-history`, `chat-store`, `document-images`, `file-clipboard`, `fonts`, `i18n`, `images`, `main`, `markdown-embed`, `markdown-images`, `markdown-plain`, `markdown-tokens`, `mcp-bridge`, `mcp-http`, `mcp-server`, `memory-store`, `menu`, `notes-store`, `path-compare`, `pdf-import`, `preload`, `project-file`, `project-icon`, `project-links`, `project-owner`, `project-pack`, `project-references`, `project-search`, `project-tools`, `projects`, `skills-store`, `updates`.
+- `electron/`: `ai-providers`, `atomic-write`, `bookmarks-store`, `browser-history`, `chat-store`, `document-images`, `file-clipboard`, `fonts`, `i18n`, `images`, `knowledge-index`, `knowledge-service`, `knowledge-sync`, `knowledge-worker`, `main`, `markdown-embed`, `markdown-images`, `markdown-plain`, `markdown-tokens`, `gpu-context`, `private-address`, `mcp-bridge`, `mcp-http`, `mcp-server`, `memory-store`, `menu`, `notes-store`, `path-compare`, `pdf-import`, `preload`, `project-file`, `project-graph`, `project-icon`, `project-links`, `project-owner`, `project-pack`, `project-references`, `project-search`, `project-tools`, `projects`, `semantic-embedder`, `semantic-embedder-worker`, `search-merge`, `semantic-pack`, `shared-knowledge`, `web-references`, `skills-store`, `updates`.
 - `src/`: `App.jsx`, `appearance.js`, `main.jsx`, `styles.css`, `hooks/useDocumentFileCommands.js`, `i18n/index.js` (and the five locale files), and the helpers in `src/lib/`.
-- `src/lib/`: `aiOptions`, `aiTools`, `alertExtension`, `anchoring`, `annotationExtension`, `bookmarkExtension`, `bookmarkLinks`, `chatAttachments`, `documentStats`, `editorInsert`, `embeddedImages`, `fonts`, `footnoteExtensions`, `imageExtension`, `imagePaths`, `inlineDiff`, `keepSelectionExtension`, `layout`, `lineDiff`, `listItemExtension`, `markdownSyntax`, `markExtensions`, `mathExtensions`, `mcpRequests`, `pathCompare`, `pendingChangesExtension`, `preferences`, `projectIcons`, `quickActions`, `rawMarkdownExtensions`, `readerMode`, `researchAgent`, `searchExtension`, `selectionText`, `skills`, `smartDashesExtension`, `textAlignExtension`, `updateSchedule`.
+- `src/lib/`: `aiOptions`, `aiTools`, `alertExtension`, `anchoring`, `annotationExtension`, `bookmarkExtension`, `bookmarkLinks`, `chatAttachments`, `documentStats`, `editorInsert`, `embeddedImages`, `fonts`, `footnoteExtensions`, `graphLayout`, `graphRenderer`, `imageExtension`, `imagePaths`, `inlineDiff`, `keepSelectionExtension`, `layout`, `lineDiff`, `listItemExtension`, `markdownSyntax`, `markExtensions`, `mathExtensions`, `mcpRequests`, `pathCompare`, `pendingChangesExtension`, `preferences`, `projectIcons`, `queryExpansion`, `quickActions`, `rawMarkdownExtensions`, `readerMode`, `researchAgent`, `searchExtension`, `selectionText`, `skills`, `smartDashesExtension`, `synonymCache`, `textAlignExtension`, `updateSchedule`.
 - `src/components/`: one page per component, listed in [components.md](components.md).
 
 ## Not documented
@@ -32,6 +32,6 @@ The pages were read against the source again after the latest changes, so they n
 ## Checks
 
 - Every page has an H1 equal to the module path and a `Source:` line linking the physical file. The number of `../` steps must match the depth of the page in `docs/reference/`: `../../../` from `electron/` and `src/`, `../../../../` from `src/lib/` and `src/i18n/`, `../../../../../` from `src/components/pages/` and `src/i18n/locales/`.
-- Every page listed in `docs/INDEX.md` exists, and every existing page is listed there.
-- `docs/reference/src/lib/lib.md` and `docs/reference/src/components/components.md` list the same pages as `docs/INDEX.md`.
+- Every page listed in `docs/README.md` exists, and every existing page is listed there.
+- `docs/reference/src/lib/lib.md` and `docs/reference/src/components/components.md` list the same pages as `docs/README.md`.
 
