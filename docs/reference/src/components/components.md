@@ -33,6 +33,7 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [PanelResizer.jsx](pages/PanelResizer.jsx.md) — Draggable separator between panels
 - [ParameterSlider.jsx](pages/ParameterSlider.jsx.md) — Numeric model parameter slider with default state and info tips
 - [ProjectIcon.jsx](pages/ProjectIcon.jsx.md) — Project icon image and round avatar
+- [FirstRunModelsDialog.jsx](pages/FirstRunModelsDialog.jsx.md) — First-run window to choose and download the local model
 - [ProjectSettings.jsx](pages/ProjectSettings.jsx.md) — Project settings: name, icon, context, languages, skills
 - [ProjectSettingsDialog.jsx](pages/ProjectSettingsDialog.jsx.md) — Window holding the settings of a project
 - [ProjectsPanel.jsx](pages/ProjectsPanel.jsx.md) — Projects view with avatars and context menu
@@ -42,6 +43,7 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [QuickActionsSettings.jsx](pages/QuickActionsSettings.jsx.md) — Settings section for the chat quick actions
 - [Segmented.jsx](pages/Segmented.jsx.md) — Group of buttons for a single choice
 - [SelectionToolbar.jsx](pages/SelectionToolbar.jsx.md) — Floating bar of the selection: marks, links, images
+- [SettingsActions.jsx](pages/SettingsActions.jsx.md) — Actions of a settings section shown at the right of the settings header
 - [SettingsScreen.jsx](pages/SettingsScreen.jsx.md) — Settings window with its sections
 - [SkillsManager.jsx](pages/SkillsManager.jsx.md) — Writing skills manager: library, editor, generation
 - [SourceEditor.jsx](pages/SourceEditor.jsx.md) — Markdown source view with line numbers

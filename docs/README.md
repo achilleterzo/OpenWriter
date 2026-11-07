@@ -244,6 +244,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [pendingChangesExtension.js.md](reference/src/lib/pendingChangesExtension.js.md) ([pendingChangesExtension.js](../src/lib/pendingChangesExtension.js)) — Assistant edits marked for review
     - [preferences.js.md](reference/src/lib/preferences.js.md) ([preferences.js](../src/lib/preferences.js)) — Interface preferences in the app data
     - [projectIcons.js.md](reference/src/lib/projectIcons.js.md) ([projectIcons.js](../src/lib/projectIcons.js)) — Project icons: reading, caching, choosing
+    - [animatedIcon.js.md](reference/src/lib/animatedIcon.js.md) ([animatedIcon.js](../src/lib/animatedIcon.js)) — Decodes animated GIF/WebP icons of the Home graph and picks the frame by time
     - [graphLayout.js.md](reference/src/lib/graphLayout.js.md) ([graphLayout.js](../src/lib/graphLayout.js)) — Physics of the Home network of projects
     - [graphRenderer.js.md](reference/src/lib/graphRenderer.js.md) ([graphRenderer.js](../src/lib/graphRenderer.js)) — WebGL2 drawing of the Home network
     - [queryExpansion.js.md](reference/src/lib/queryExpansion.js.md) ([queryExpansion.js](../src/lib/queryExpansion.js)) — Synonyms of a search asked to the language model

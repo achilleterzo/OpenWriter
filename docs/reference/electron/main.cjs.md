@@ -40,3 +40,7 @@ Other responsibilities:
 **Web references**: `webStore` (see [web-references.cjs](web-references.cjs.md)); `referenceFolders()` adds `.ow/web` as the automatic reference folder `@web` (indexed, watched, vectorized and read like the others), `outsideFolders()` also the pages of the shared projects (`@<project>-web`); IPC `webrefs:list`, `webrefs:find`, `webrefs:save`, `webrefs:remove` (`webReferencesChanged` re-aligns the index at once).
 
 Rebuilding the index of a project (`project:knowledge-rebuild`) also reconfigures the projects whose vectors are computed, so a project added after the others is not left without meaning; `projects:graph` does the same when the list changed (`semanticSignature`).
+
+`projects:graph` also gives each node `parent`: the closest (innermost) project of the list whose folder contains it, or `null`. Sub-projects are drawn as satellites and the affinity synapses from or to them are dropped.
+
+`projects:search` (Home) always adds the local synonyms (`localSynonyms`: for each significant word of the question, the closest words of the texts) to the AI terms passed by the interface, unless `local: false`; the answer carries `localTerms`. They need the search by meaning active and the vocabulary already embedded; otherwise there are none.

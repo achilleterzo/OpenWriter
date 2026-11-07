@@ -15,3 +15,6 @@ Full-screen settings window: a vertical navigation (horizontal on narrow screens
 - **About**: [AboutSettings.jsx](AboutSettings.jsx.md).
 
 The section can be chosen when the window opens. Escape closes it, and so does a click on the backdrop, but only when press and release both happen there (dragging a selection out of the panel must not close it).
+The settings window is larger too (up to 6xl wide and 900 px high, within the window): several tabs hold a lot of data.
+
+The header has, at the right, the place for the actions of the current section ([SettingsActions.jsx](SettingsActions.jsx.md)): the project tab puts "Save settings" there.

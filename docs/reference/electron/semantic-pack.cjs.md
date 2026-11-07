@@ -17,3 +17,5 @@ Contents (`FILES`): the multilingual embedding model `Xenova/multilingual-e5-sma
   - `ready`, `status()` returns `{ state: 'missing' | 'installing' | 'ready', received, total, file, totalBytes, error }`; `directory`; `remove()` (refused while installing).
 
 Tests: [tests/semantic-pack.test.cjs](../../../tests/semantic-pack.test.cjs).
+
+The copy of `onnxruntime-common` into the pack is done file by file (`copyTree`, with `readdirSync` and `copyFileSync`), not with `fs.cpSync`: in the installed app the package lives inside `app.asar`, and `cpSync` cannot read a folder from an asar (it failed with ENOENT "node_modules\onnxruntime-common not found in …app.asar").

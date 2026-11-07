@@ -9,3 +9,9 @@ The network of the projects: one bubble with the project icon for each project, 
 The project names are labels (`.graph-label` in `styles.css`) that follow the theme of the app although the network has a fixed dark background: light with dark text in the light theme, dark with light text in the dark theme (`--label-bg`, `--label-fg`, `--label-border`, which `.home-dark` does not redeclare), so the contrast stays high. The open project has a bold name and an accent border; a project without index has a softer text.
 
 The icons follow the changes of the project icon: when the user picks or removes one (project settings), the network listens (`onProjectIconsChanged` in [projectIcons.js](../../lib/projectIcons.js.md)) and rebuilds its icon atlas, also while the Home is hidden. Overlapping reloads (two icons changed in a row) apply only the latest one; a removed icon goes back to the initial.
+
+**Labels and satellites.** Project names show only under the pointer (or with keyboard focus): the other labels stay hidden. A project inside the folder of another project of the list (`parent`, from `projects:graph`) is a smaller satellite that orbits its parent, tied to it by a short dashed thread in the accent colour; it has no affinity synapses of its own. Bubble size and relief come from the project's weight (`weightOf`: indexed files on a logarithmic scale).
+
+**Animated icons.** A project icon that is a GIF or animated WebP moves in the graph: its frames are decoded ([animatedIcon.js](../../lib/animatedIcon.js.md)) and the frame is chosen by time in the draw loop, uploading only the changed cells. Not with "reduce motion" (the first frame stays). Without `ImageDecoder` the image stays in the page, invisible, and its current frame is copied about 12 times a second.
+
+**Right click.** A right click on a bubble calls `onContext(path, x, y)` (the browser menu never shows over the graph); on the background nothing happens.

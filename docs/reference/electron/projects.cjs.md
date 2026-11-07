@@ -9,3 +9,5 @@ Persistent list of known working directories (projects), stored by the main proc
 - `replace(from, to)`: a project has been moved: the entry changes path and keeps its place in the list.
 - `list()`: entries with folder-name display, `openedAt`, and a `missing` flag when the folder no longer exists (moved or deleted); missing entries stay in the list until removed there.
 
+
+The name of each project in the list is the one chosen in the project settings (`name` in `.ow/project.json`, trimmed) when there is one; otherwise the folder name (`customName(directory)` reads it; an unreadable file or an empty name falls back to the folder). It is the name the projects list, the Home graph and its results show.

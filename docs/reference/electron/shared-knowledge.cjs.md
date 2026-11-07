@@ -15,3 +15,5 @@ In `main.cjs`: `sharedFolders()` and `outsideFolders()` (references plus other p
 The search of the Home does not use the sharing filter: `outsideFor(null, { everything: true })` in [main.cjs](main.cjs.md) passes `searchIndexEnabled` instead of `sharedKnowledgeEnabled` as `isShared`, so every project with an index is searched (sharing keeps limiting what the assistant of another project sees).
 
 The alias `web` is reserved (it is the open project's saved pages): no other project takes it, it gets `web-2` and so on.
+
+The alias of another project (`@alias/…`) comes from its name (the one chosen in the project settings when there is one, as the projects list gives it; otherwise the folder name), cleaned of characters that would confuse a path (spaces become `-`).
