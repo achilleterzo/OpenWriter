@@ -33,6 +33,7 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [PanelResizer.jsx](pages/PanelResizer.jsx.md) — Draggable separator between panels
 - [ParameterSlider.jsx](pages/ParameterSlider.jsx.md) — Numeric model parameter slider with default state and info tips
 - [ProjectIcon.jsx](pages/ProjectIcon.jsx.md) — Project icon image and round avatar
+- [AssociationSettings.jsx](pages/AssociationSettings.jsx.md) — Settings section to associate Markdown files and add the folder entry of the file manager
 - [FirstRunModelsDialog.jsx](pages/FirstRunModelsDialog.jsx.md) — First-run window to choose and download the local model
 - [ProjectSettings.jsx](pages/ProjectSettings.jsx.md) — Project settings: name, icon, context, languages, skills
 - [ProjectSettingsDialog.jsx](pages/ProjectSettingsDialog.jsx.md) — Window holding the settings of a project

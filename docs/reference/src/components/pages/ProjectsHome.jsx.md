@@ -31,3 +31,7 @@ The "Show less relevant too" action is styled as a link (accent colour, underlin
 **Project menu.** Right click on a bubble of the graph opens the same kind of menu as the projects list: Open (if it is not the open project), Project settings…, Move…, Show in the file manager. The settings open in the same window as in the list ([ProjectSettingsDialog.jsx](ProjectSettingsDialog.jsx.md)), drawn outside the dark graph area so it follows the app theme; after a change or a move the graph is reloaded. [App.jsx](../../App.jsx.md) passes `onMove`, `onOpenFile` and `onSettingsChanged`.
 
 **Synonyms.** With the synonyms switch on, the first search already includes the synonyms found in the user's own texts (shown as "Also searched in your texts"). If the AI is on, its request starts at the same time as the first search, whatever the local synonyms are, and its terms are added in a second search ("Also searched"). With the AI off only the local ones are used, and the message says so.
+
+The Refresh button reloads the graph and asks the main process to rescan the files of every project with the index on, opened or not (`getProjectGraph({ refresh: true })`); the graph keeps updating while the index works.
+
+`projectsVersion` (from [App.jsx](../../App.jsx.md)) changes when the projects list changes next to the Home; the Home then reloads the graph, so a project removed from the list disappears from the graph without reopening the Home.

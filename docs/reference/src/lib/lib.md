@@ -35,6 +35,7 @@ Non-React helpers used by the editor and the assistant.
 - [readerMode.js](readerMode.js.md) — Article extraction, reading view, and save as Markdown
 - [webAddress.js](webAddress.js.md) — Which web addresses the assistant and agents may open
 - [animatedIcon.js](animatedIcon.js.md) — Decodes animated GIF/WebP icons of the Home graph and picks the frame by time
+- [svgIcon.js](svgIcon.js.md) — Gives SVG project icons an explicit size so the graph frames them like the list
 - [graphLayout.js](graphLayout.js.md) — Physics of the Home network of projects
 - [graphRenderer.js](graphRenderer.js.md) — WebGL2 drawing of the Home network
 - [queryExpansion.js](queryExpansion.js.md) — Synonyms of a search asked to the language model

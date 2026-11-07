@@ -9,3 +9,5 @@ The rest of the props go to [ProjectSettings.jsx](ProjectSettings.jsx.md), which
 The window is wider and taller (up to 4xl wide and 860 px high, within the window) so that more data is in view.
 
 The window has a footer outside the scrolling body (hidden when empty) that provides the place for the actions of the settings ([SettingsActions.jsx](SettingsActions.jsx.md)): the "Save settings" button sits there, at the right, so the scrollbar stays in the body and never runs past the footer.
+
+"Save settings" closes the window once the settings are saved (`onSaved` of [ProjectSettings.jsx](ProjectSettings.jsx.md) is the window's `onClose`). In the general settings window the Project tab stays open after saving.

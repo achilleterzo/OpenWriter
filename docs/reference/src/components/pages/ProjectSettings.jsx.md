@@ -30,3 +30,5 @@ If no name has been chosen, the name field starts filled with the folder name. A
 The "Save settings" button (on the right, after the "Saved" confirmation or any error) sits in a footer that stays at the bottom of the scrolling area (`sticky`), so it is always in view however long the settings are.
 
 Where the save button goes: inside the general settings window it is at the right of the window header ([SettingsActions.jsx](SettingsActions.jsx.md)); in the window of a single project, which has no such header, it stays in the footer of the window, outside the scrolling area (so the scrollbar stays in the body).
+
+`onSaved` is called after a successful save; whoever hosts the settings can close them (the single-project window does).

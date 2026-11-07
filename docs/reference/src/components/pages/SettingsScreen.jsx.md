@@ -18,3 +18,5 @@ The section can be chosen when the window opens. Escape closes it, and so does a
 The settings window is larger too (up to 6xl wide and 900 px high, within the window): several tabs hold a lot of data.
 
 The header has, at the right, the place for the actions of the current section ([SettingsActions.jsx](SettingsActions.jsx.md)): the project tab puts "Save settings" there.
+
+New section "Associations" ([AssociationSettings.jsx](AssociationSettings.jsx.md)).

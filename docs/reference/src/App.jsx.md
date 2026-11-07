@@ -16,3 +16,5 @@ Root component and workspace state holder: tabs, active document, project, side 
 - Updates: the check can run at startup and then on a schedule chosen in the settings ([updateSchedule.js](lib/updateSchedule.js.md)), and a known release is reported by the update button of the rail.
 - Layout: left side panel and assistant panel widths are clamped and committed to `lib/layout.js`, with a status bar showing the project, the progress of the search index ([IndexProgress.jsx](components/pages/IndexProgress.jsx.md)) and the last status message.
 
+
+**Home as a mode.** The projects Home (network and search) is a mode of the central area (`homeMode`), not of the side panel: choosing the Projects tab enters it and choosing any other tab leaves it, while collapsing the side panel does not change it, so the Home stays full screen with the panel closed, just as a document stays with the file panel collapsed. Choosing Projects again reopens the panel with the list. The mode is not saved between runs: after a restart the central area shows the document (a collapsed panel is restored as collapsed).

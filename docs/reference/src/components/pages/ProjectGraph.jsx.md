@@ -15,3 +15,5 @@ The icons follow the changes of the project icon: when the user picks or removes
 **Animated icons.** A project icon that is a GIF or animated WebP moves in the graph: its frames are decoded ([animatedIcon.js](../../lib/animatedIcon.js.md)) and the frame is chosen by time in the draw loop, uploading only the changed cells. Not with "reduce motion" (the first frame stays). Without `ImageDecoder` the image stays in the page, invisible, and its current frame is copied about 12 times a second.
 
 **Right click.** A right click on a bubble calls `onContext(path, x, y)` (the browser menu never shows over the graph); on the background nothing happens.
+
+SVG icons are given an explicit size before loading ([svgIcon.js](../../lib/svgIcon.js.md)), so the graph frames them exactly like the avatar of the list.
