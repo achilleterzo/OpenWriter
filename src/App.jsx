@@ -18,6 +18,7 @@ import MemoryPanel from './components/MemoryPanel.jsx'
 import WebReferencesPanel from './components/WebReferencesPanel.jsx'
 import { WEB_REFERENCES_CHANGED } from './lib/webReferences.js'
 import AboutDialog from './components/AboutDialog.jsx'
+import FirstRunModelsDialog from './components/FirstRunModelsDialog.jsx'
 import { useDialogs } from './components/Dialogs.jsx'
 import { acceptAll, getPending, serializePending } from './lib/pendingChangesExtension.js'
 import OutlinePanel from './components/OutlinePanel.jsx'
@@ -176,6 +177,9 @@ export default function App() {
   const setNoteView = (value) => { setNoteViewState(value); setPreference('openwriter.noteView', value) }
   const [noteSearch, setNoteSearch] = useState('')
   const [aboutOpen, setAboutOpen] = useState(false)
+  // Prima configurazione dei modelli locali: una sola volta, e solo se nessun pacchetto è già scaricato (chi li ha già non viene disturbato).
+  const [modelsIntroOpen, setModelsIntroOpen] = useState(false)
+  const closeModelsIntro = () => { setModelsIntroOpen(false); setPreference('openwriter.localModelsIntro', 'done') }
   const [aboutCheck, setAboutCheck] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [updateRelease, setUpdateRelease] = useState(null)
@@ -1331,6 +1335,17 @@ export default function App() {
     return electronAPI.onExternalDocument(open)
   }, [ready])
 
+  useEffect(() => {
+    if (!ready || !electronAPI?.getSemanticStatus || getPreference('openwriter.localModelsIntro')) return undefined
+    let cancelled = false
+    electronAPI.getSemanticStatus().then((status) => {
+      if (cancelled) return
+      if (status?.packs?.cpu?.state === 'ready' || status?.packs?.gpu?.state === 'ready' || status?.allowed === false) setPreference('openwriter.localModelsIntro', 'done')
+      else setModelsIntroOpen(true)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [ready])
+
   const openDocuments = useMemo(() => tabs.filter(isLive).map((item) => ({ id: item.id, title: item.title })), [tabs])
 
   // Caricamento (avvio o cambio di progetto): una schermata che lo dice, non una pagina vuota. La rotellina gira sul compositore, anche quando il resto è occupato.
@@ -1372,7 +1387,7 @@ export default function App() {
             <h2 className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{sideTabs.find((item) => item.id === sideTab)?.label}</h2>
             {sideTab === 'projects' && <ProjectsPanel project={project} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onOpen={(directory) => showFiles(openProject(directory))} onChoose={() => showFiles(chooseProject())} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
             {sideTab === 'files' && (
-              <FileExplorer project={project} activePath={activeTab?.kind === 'image' ? activeTab.imagePath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />
+              <FileExplorer project={project} activePath={activeTab?.kind === 'image' ? activeTab.imagePath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} settingsVersion={settingsVersion} />
             )}
             {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} onJump={rememberPlace} />}
             {sideTab === 'anchors' && <AnchorsPanel editor={editors[contextTab?.id]} onJump={rememberPlace} />}
@@ -1412,7 +1427,7 @@ export default function App() {
               : null))}
           </section>
           </div>
-          {(homeOpen || homeSeen) && <div className={homeOpen ? 'contents' : 'hidden'}><ProjectsHome project={project} visible={homeOpen} onOpenProject={openFromHome} onOpenResult={openHomeResult} /></div>}
+          {(homeOpen || homeSeen) && <div className={homeOpen ? 'contents' : 'hidden'}><ProjectsHome project={project} visible={homeOpen} onOpenProject={openFromHome} onOpenResult={openHomeResult} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} /></div>}
           <ToastHost />
           {largeLoading && (
             <div role="status" aria-live="polite" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -1463,6 +1478,7 @@ export default function App() {
           <button type="button" aria-label={t('Dismiss')} className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-50" onClick={() => setUpdateNoticeVisible(false)}>×</button>
         </div>
       )}
+      {modelsIntroOpen && <FirstRunModelsDialog onClose={closeModelsIntro} />}
       {aboutOpen && <AboutDialog version={appVersion} release={updateRelease} checkOnOpen={aboutCheck} onCheck={() => checkForUpdate(false)} onClose={() => setAboutOpen(false)} />}
       {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} onMoveProject={moveProject} version={appVersion} release={updateRelease} onCheckUpdate={() => checkForUpdate(false)} onOpenFile={(file) => { setScreen('editor'); setSettingsVersion((value) => value + 1); openFromExplorer(file) }} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
     </ContextMenuContext.Provider>
