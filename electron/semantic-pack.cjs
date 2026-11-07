@@ -53,6 +53,18 @@ const sha256File = (file) => new Promise((resolve, reject) => {
   fs.createReadStream(file).on('data', (chunk) => hash.update(chunk)).on('error', reject).on('end', () => resolve(hash.digest('hex')))
 })
 
+// Copia una cartella file per file. Nell'app installata il pacchetto sta dentro app.asar: fs.cpSync non sa leggerlo (ENOENT), mentre readdirSync e
+// copyFileSync, che Electron adatta agli asar, sì.
+function copyTree(from, to) {
+  fs.mkdirSync(to, { recursive: true })
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    const source = path.join(from, entry.name)
+    const target = path.join(to, entry.name)
+    if (entry.isDirectory()) copyTree(source, target)
+    else fs.copyFileSync(source, target)
+  }
+}
+
 /**
  * `directory`: dove vive il pacchetto (nei dati dell'app); `fetchImpl`: `net.fetch` di Electron in produzione (segue proxy e certificati del
  * sistema), un finto nei test; `commonSource`: la cartella del pacchetto npm onnxruntime-common che l'app porta con sé (il runtime lo importa).
@@ -125,7 +137,7 @@ function createSemanticPack({ directory, kind = 'cpu', fetchImpl = globalThis.fe
     // Ciò che non è nel manifest (file di una versione precedente del pacchetto) si toglie: non deve restare a occupare spazio.
     const expected = new Set([...files.map((file) => file.name), 'node_modules', 'ready.json'])
     for (const entry of fs.readdirSync(root)) { if (!expected.has(entry)) fs.rmSync(path.join(root, entry), { recursive: true, force: true }) }
-    if (spec.common && commonSource) fs.cpSync(commonSource, path.join(root, 'node_modules', COMMON_PACKAGE), { recursive: true, dereference: true, force: true })
+    if (spec.common && commonSource) copyTree(commonSource, path.join(root, 'node_modules', COMMON_PACKAGE))
     fs.writeFileSync(readyFile(), JSON.stringify({ id: spec.id, installedAt: Date.now(), files: files.map(({ name, size }) => ({ name, size })) }))
   }
 
