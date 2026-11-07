@@ -1263,7 +1263,6 @@
   "Synonyms with AI: off": "Synonymes avec l'IA : désactivés",
   "Asking the AI for synonyms…": "Demande de synonymes à l'IA…",
   "Searching the synonyms…": "Recherche des synonymes…",
-  "Synonyms need the AI assistant: turn it on in the settings.": "Les synonymes nécessitent l'assistant IA : activez-le dans les réglages.",
   "Synonyms not available: {message}": "Synonymes indisponibles : {message}",
   "The AI found no synonyms for this search.": "L'IA n'a trouvé aucun synonyme pour cette recherche.",
   "Also searched:": "Aussi recherché :",
@@ -1275,7 +1274,12 @@
   "Less relevant": "Peu pertinent",
   "Below the relevance threshold: shown because you asked for it": "Sous le seuil de pertinence : affiché parce que vous l'avez demandé",
   "Less relevant passages are shown too, ordered by relevance.": "Les passages moins pertinents sont aussi affichés, par ordre de pertinence.",
-  "Nothing relevant found. Only projects with a search index are searched.": "Rien de pertinent trouvé. Seuls les projets dont l'index de recherche est activé sont recherchés.",
   "Not shared": "Non partagé",
-  "This project does not share its knowledge with the others: its passages appear only in your own searches": "Ce projet ne partage pas ses connaissances avec les autres : ses passages n'apparaissent que dans vos propres recherches"
+  "This project does not share its knowledge with the others: its passages appear only in your own searches": "Ce projet ne partage pas ses connaissances avec les autres : ses passages n'apparaissent que dans vos propres recherches",
+  "Set up search by meaning": "Configurer la recherche par sens",
+  "OpenWriter can find passages by meaning, not only by words, with a model that runs on this computer. No text leaves it. Choose what to use and download it now, or do it later in Settings → Local models.": "OpenWriter peut trouver des passages par sens, et pas seulement par mots, avec un modèle qui tourne sur cet ordinateur. Aucun texte n’en sort. Choisissez quoi utiliser et téléchargez-le maintenant, ou plus tard dans Réglages → Modèles locaux.",
+  "Done": "Terminé",
+  "No relevant results": "Aucun résultat",
+  "Also searched in your texts:": "Aussi cherché dans vos textes :",
+  "The AI assistant is off: only the synonyms found in your texts are used. Turn it on in the settings for more.": "L'assistant IA est désactivé : seuls les synonymes trouvés dans vos textes sont utilisés. Activez-le dans les réglages pour en avoir plus."
 }

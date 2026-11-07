@@ -1263,7 +1263,6 @@
   "Synonyms with AI: off": "Sinonimi con IA: spenti",
   "Asking the AI for synonyms…": "Chiedo i sinonimi all'IA…",
   "Searching the synonyms…": "Cerco i sinonimi…",
-  "Synonyms need the AI assistant: turn it on in the settings.": "I sinonimi richiedono l'assistente IA: attivalo nelle impostazioni.",
   "Synonyms not available: {message}": "Sinonimi non disponibili: {message}",
   "The AI found no synonyms for this search.": "L'IA non ha trovato sinonimi per questa ricerca.",
   "Also searched:": "Cercato anche:",
@@ -1275,7 +1274,12 @@
   "Less relevant": "Poco pertinente",
   "Below the relevance threshold: shown because you asked for it": "Sotto la soglia di pertinenza: mostrato perché lo hai chiesto",
   "Less relevant passages are shown too, ordered by relevance.": "Sono mostrati anche i passaggi meno pertinenti, in ordine di pertinenza.",
-  "Nothing relevant found. Only projects with a search index are searched.": "Nessun risultato pertinente. Si cercano solo i progetti con l'indice di ricerca acceso.",
   "Not shared": "Non condiviso",
-  "This project does not share its knowledge with the others: its passages appear only in your own searches": "Questo progetto non condivide la conoscenza con gli altri: i suoi passaggi compaiono solo nelle tue ricerche"
+  "This project does not share its knowledge with the others: its passages appear only in your own searches": "Questo progetto non condivide la conoscenza con gli altri: i suoi passaggi compaiono solo nelle tue ricerche",
+  "Set up search by meaning": "Configura la ricerca per significato",
+  "OpenWriter can find passages by meaning, not only by words, with a model that runs on this computer. No text leaves it. Choose what to use and download it now, or do it later in Settings → Local models.": "OpenWriter può trovare i passaggi per significato, non solo per parole, con un modello che gira su questo computer. Nessun testo ne esce. Scegli cosa usare e scaricalo ora, oppure fallo più tardi in Impostazioni → Modelli locali.",
+  "Done": "Fatto",
+  "No relevant results": "Nessun risultato",
+  "Also searched in your texts:": "Cercato anche nei tuoi testi:",
+  "The AI assistant is off: only the synonyms found in your texts are used. Turn it on in the settings for more.": "L'assistente IA è spento: si usano solo i sinonimi trovati nei tuoi testi. Accendilo nelle impostazioni per averne di più."
 }
