@@ -106,9 +106,8 @@ void main() {
   vec2 flat2 = clamp(local, vec2(-1.0), vec2(1.0));
   float z = sqrt(max(0.0, 1.0 - min(dot(flat2, flat2), 1.0)));
   vec3 normal = normalize(vec3(flat2, z));
-  // Come una lente: l'icona è leggermente ingrandita al centro e si incurva verso il bordo.
-  vec2 lens = local * mix(1.0, 0.86 + 0.14 * z, depth);
-  vec2 uv = lens * 0.5 + 0.5;
+  // L'icona si vede intera e non ingrandita, come nell'avatar dell'elenco: il rilievo viene solo dalla luce, mai da una deformazione dell'immagine.
+  vec2 uv = local * 0.5 + 0.5;
   float column = mod(cell, atlasGrid.x);
   float row = floor(cell / atlasGrid.x);
   vec2 atlasUv = (vec2(column, row) + clamp(uv, 0.0, 1.0)) / atlasGrid;
@@ -121,7 +120,8 @@ void main() {
   face = face * mix(1.0, 0.50 + 0.66 * diffuse, depth)
        + vec3(1.0) * specular * (0.10 + 0.42 * depth)
        + accent * rimLight * 0.22 * depth;
-  float ring = smoothstep(0.86, 0.9, r) * body;
+  // Bordo sottile (circa il 3% del raggio, come nell'avatar dell'elenco): uno più largo copriva i margini dell'icona.
+  float ring = smoothstep(0.95, 0.975, r) * body;
   float lit = moodOut.x;
   vec3 rim = mix(border, accent, lit);
   vec3 rgb = mix(face, rim, ring);
@@ -259,6 +259,9 @@ function buildAtlas(entries) {
   return { canvas, rows }
 }
 
+// Il carattere dell'interfaccia (quello del documento), per le iniziali dei progetti senza icona.
+const interfaceFont = () => { try { return getComputedStyle(document.body).fontFamily || 'system-ui, sans-serif' } catch { return 'system-ui, sans-serif' } }
+
 // Disegna una cella dell'atlante: l'icona ritagliata al quadrato centrale o, senza immagine, un tondo sfumato con l'iniziale.
 function drawCell(context, x, y, entry) {
   if (entry.image) {
@@ -278,11 +281,17 @@ function drawCell(context, x, y, entry) {
     gradient.addColorStop(1, `hsl(${(hue + 40) % 360} 16% 17%)`)
     context.fillStyle = gradient
     context.fillRect(x, y, CELL, CELL)
+    // L'iniziale è centrata come nell'avatar dell'elenco (ProjectIcon.jsx): stesso carattere dell'interfaccia, stessa proporzione (0,4 del lato) e centro
+    // dell'area del carattere (ascendente e discendente del font) al centro, come fa CSS con `items-center`.
     context.fillStyle = 'rgba(235,235,230,0.92)'
-    context.font = `600 ${Math.round(CELL * 0.46)}px system-ui, sans-serif`
+    context.font = `600 ${Math.round(CELL * 0.4)}px ${interfaceFont()}`
     context.textAlign = 'center'
-    context.textBaseline = 'middle'
-    context.fillText(entry.initial || '?', x + CELL / 2, y + CELL / 2 + 4)
+    context.textBaseline = 'alphabetic'
+    const letter = entry.initial || '?'
+    const metrics = context.measureText(letter)
+    const ascent = metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent
+    const descent = metrics.fontBoundingBoxDescent ?? 0
+    context.fillText(letter, x + CELL / 2, y + CELL / 2 + (ascent - descent) / 2)
   }
 }
 

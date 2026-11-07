@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createGraphSim } from '../lib/graphLayout.js'
 import { createGraphRenderer, cssColor, webglAvailable } from '../lib/graphRenderer.js'
 import { loadProjectIcon, onProjectIconsChanged } from '../lib/projectIcons.js'
+import { sizedSvgUrl } from '../lib/svgIcon.js'
 import { decodeAnimatedIcon, disposeAnimatedIcon, frameAt } from '../lib/animatedIcon.js'
 import { ProjectAvatar } from './ProjectIcon.jsx'
 import { t, tp } from '../i18n/index.js'
@@ -82,6 +83,8 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
     const entries = visible.map((node) => ({ image: null, initial: Array.from(String(node.name || '?').trim())[0]?.toUpperCase() || '?', hue: hashOf(node.name) % 360 }))
     renderer.setIcons(entries)
     let iconsCancelled = false
+    // Il carattere dell'interfaccia potrebbe non essere ancora caricato quando si disegnano le iniziali: a font pronto l'atlante si rifà.
+    document.fonts?.ready?.then(() => { if (!iconsCancelled) renderer.setIcons(entries) }).catch(() => {})
     // Rilegge le icone (quelle già note vengono dalla cache) e rifà l'atlante. `always`: anche se nessun progetto ha un'immagine (un'icona tolta torna all'iniziale).
     // Più riletture possono sovrapporsi (due icone cambiate di seguito): conta solo l'ultima, altrimenti una più lenta riscriverebbe un'immagine vecchia.
     let iconRun = 0
@@ -95,7 +98,7 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
       const run = ++iconRun
       const images = await Promise.all(visible.map(async (node) => {
         const url = await loadProjectIcon(node.path)
-        return url ? { image: await loadImage(url), url, animated: /^data:image\/(gif|webp)/i.test(url) } : { image: null, url: null, animated: false }
+        return url ? { image: await loadImage(await sizedSvgUrl(url)), url, animated: /^data:image\/(gif|webp)/i.test(url) } : { image: null, url: null, animated: false }
       }))
       if (iconsCancelled || run !== iconRun) return
       for (const entry of entries) { disposeAnimatedIcon(entry.anim); entry.anim = null; entry.shown = null }
