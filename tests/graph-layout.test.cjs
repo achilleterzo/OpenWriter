@@ -84,3 +84,67 @@ test('createGraphSim: un sotto-progetto è un satellite che gira intorno al padr
   loose.settle(60, bounds)
   assert.ok(loose.nodes.every((node) => !node.parent && Number.isFinite(node.x)))
 })
+
+test('createGraphSim: la massa (dati e connessioni) dà volume: i corpi pesanti stanno al centro e si muovono poco, i leggeri si dispongono in profondità e vengono trascinati', async () => {
+  const { createGraphSim } = await load()
+  const sim = createGraphSim({ seed: 9, wander: false })
+  const items = [{ id: 'pesante', r: 40, data: 1 }, ...Array.from({ length: 8 }, (_, k) => ({ id: `leggero${k}`, r: 24, data: 0 }))]
+  const links = items.slice(1).map((item) => ({ a: 'pesante', b: item.id, weight: 0.8 }))
+  sim.setGraph(items, links, bounds)
+  const heavy = sim.get('pesante')
+  const light = sim.get('leggero0')
+  assert.ok(heavy.mass > light.mass && heavy.inertia > light.inertia, 'più dati e più connessioni, più massa')
+  assert.ok(heavy.zSpread < light.zSpread, 'il corpo pesante resta vicino al piano centrale')
+  const start = { x: heavy.x, y: heavy.y }
+  const lightStart = { x: light.x, y: light.y, z: light.z }
+  sim.settle(600, bounds)
+  const moved = (node, from) => Math.hypot(node.x - from.x, node.y - from.y)
+  assert.ok(Math.abs(heavy.z) < 80, `il pesante sta vicino a z = 0 (${heavy.z})`)
+  const depths = sim.nodes.filter((node) => node.id !== 'pesante').map((node) => Math.abs(node.z))
+  assert.ok(depths.some((depth) => depth > 40), 'i leggeri hanno profondità: la rete ha volume')
+  assert.ok(Number.isFinite(moved(light, lightStart)) && moved(heavy, start) < 400, 'la simulazione resta stabile')
+})
+
+test('createGraphSim: una bolla con posizione ricordata parte da lì, anche un satellite, e senza deriva resta ferma', async () => {
+  const { createGraphSim } = await load()
+  const sim = createGraphSim({ seed: 2, wander: false })
+  const items = [
+    { id: 'padre', r: 44, at: { x: 100, y: -50, z: 20 } },
+    { id: 'figlio', r: 16, parent: 'padre', at: { x: 100, y: 10, z: 20 } },
+    { id: 'libero', r: 30, at: { x: -200, y: 120, z: -40 } },
+  ]
+  sim.setGraph(items, [], bounds)
+  assert.deepEqual([sim.get('padre').x, sim.get('padre').y, sim.get('padre').z], [100, -50, 20])
+  assert.deepEqual([sim.get('figlio').x, sim.get('figlio').y], [100, 10], 'il satellite non viene rimesso in orbita')
+  assert.ok(sim.get('padre').placed && sim.get('figlio').placed)
+  const angle = sim.get('figlio').angle
+  assert.ok(Math.abs(angle - Math.PI / 2) < 1e-9, 'l\'angolo di partenza è quello in cui si trova')
+  const before = sim.nodes.map((node) => [node.x, node.y, node.z])
+  for (let k = 0; k < 120; k += 1) sim.step(1 / 60, bounds)
+  const moved = sim.nodes.reduce((total, node, index) => total + Math.hypot(node.x - before[index][0], node.y - before[index][1]), 0)
+  assert.ok(sim.get('figlio').angle === angle, 'senza deriva i satelliti non girano')
+  assert.ok(Number.isFinite(moved))
+})
+
+test('createGraphSim: orbit fa girare i satelliti intorno al padre anche a rete ferma, senza muovere gli altri', async () => {
+  const { createGraphSim } = await load()
+  const sim = createGraphSim({ seed: 4, wander: false })
+  sim.setGraph([
+    { id: 'padre', r: 44, at: { x: 0, y: 0, z: 10 } },
+    { id: 'a', r: 16, parent: 'padre', at: { x: 80, y: 0, z: 10 } },
+    { id: 'nipote', r: 10, parent: 'a', at: { x: 110, y: 0, z: 10 } },
+    { id: 'libero', r: 30, at: { x: -300, y: 100, z: 0 } },
+  ], [], bounds)
+  const parent = sim.get('padre')
+  const satellite = sim.get('a')
+  const grandchild = sim.get('nipote')
+  const start = { x: satellite.x, y: satellite.y }
+  const free = { x: sim.get('libero').x, y: sim.get('libero').y }
+  for (let k = 0; k < 90; k += 1) sim.orbit(1 / 60)
+  assert.ok(Math.hypot(satellite.x - start.x, satellite.y - start.y) > 5, 'il satellite gira')
+  assert.ok(Math.abs(Math.hypot(satellite.x - parent.x, satellite.y - parent.y) - satellite.orbit) < 1e-6, 'resta sulla sua orbita')
+  assert.ok(Math.abs(Math.hypot(grandchild.x - satellite.x, grandchild.y - satellite.y) - grandchild.orbit) < 1e-6, 'il nipote orbita intorno al satellite che si muove')
+  assert.equal(satellite.z, parent.z)
+  assert.deepEqual([sim.get('libero').x, sim.get('libero').y], [free.x, free.y], 'le altre bolle non si muovono')
+  assert.deepEqual([parent.x, parent.y], [0, 0])
+})
