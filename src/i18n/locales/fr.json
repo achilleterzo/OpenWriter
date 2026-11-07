@@ -1305,5 +1305,6 @@
   "Windows does not let an app make itself the default: after associating, choose OpenWriter for .md in the default apps settings.": "Windows ne permet pas à une application de se définir par défaut : après l'association, choisissez OpenWriter pour .md dans les réglages des applications par défaut.",
   "Folders": "Dossiers",
   "Right-click a folder and open it as an OpenWriter project directly.": "Faites un clic droit sur un dossier et ouvrez-le directement comme projet OpenWriter.",
-  "Not available on macOS: the system does not let an app add an entry to the Finder menu.": "Non disponible sur macOS : le système ne permet pas à une application d'ajouter une entrée au menu du Finder."
+  "Not available on macOS: the system does not let an app add an entry to the Finder menu.": "Non disponible sur macOS : le système ne permet pas à une application d'ajouter une entrée au menu du Finder.",
+  "Recalculate the layout": "Recalculer la disposition"
 }
