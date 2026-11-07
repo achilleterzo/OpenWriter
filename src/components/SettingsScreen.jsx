@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Bot, Cpu, FolderCog, Info, Palette, Plug, Settings2, SlidersHorizontal, Wand2, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Cpu, FileSymlink, FolderCog, Info, Palette, Plug, Settings2, SlidersHorizontal, Wand2, Zap } from 'lucide-react'
 import AboutSettings from './AboutSettings.jsx'
+import AssociationSettings from './AssociationSettings.jsx'
 import AiProviderSettings from './AiProviderSettings.jsx'
 import AppearanceSettings from './AppearanceSettings.jsx'
 import GeneralSettings from './GeneralSettings.jsx'
@@ -17,6 +18,7 @@ const sections = [
   { id: 'general', label: t('General'), icon: SlidersHorizontal },
   { id: 'project', label: t('Project'), icon: FolderCog },
   { id: 'appearance', label: t('Appearance'), icon: Palette },
+  { id: 'associations', label: t('Associations'), icon: FileSymlink },
   { id: 'ai', label: 'AI', icon: Bot },
   { id: 'models', label: t('Local models'), icon: Cpu },
   { id: 'actions', label: t('Quick actions'), icon: Zap },
@@ -85,6 +87,7 @@ export default function SettingsScreen({ initialSection = 'general', project, on
             {section === 'general' && <GeneralSettings />}
             {section === 'project' && <ProjectSettings project={project} onEditContext={onOpenFile} onMove={onMoveProject} />}
             {section === 'appearance' && <AppearanceSettings />}
+            {section === 'associations' && <AssociationSettings />}
             {section === 'ai' && <AiProviderSettings />}
             {section === 'models' && <LocalModelsSettings />}
             {section === 'actions' && <QuickActionsSettings project={project} />}
