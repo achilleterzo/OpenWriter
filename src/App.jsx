@@ -19,6 +19,7 @@ import WebReferencesPanel from './components/WebReferencesPanel.jsx'
 import { WEB_REFERENCES_CHANGED } from './lib/webReferences.js'
 import AboutDialog from './components/AboutDialog.jsx'
 import FirstRunModelsDialog from './components/FirstRunModelsDialog.jsx'
+import { SettingsActionsContext } from './components/SettingsActions.jsx'
 import { useDialogs } from './components/Dialogs.jsx'
 import { acceptAll, getPending, serializePending } from './lib/pendingChangesExtension.js'
 import OutlinePanel from './components/OutlinePanel.jsx'
@@ -148,7 +149,19 @@ export default function App() {
   // Progetto "main" (nei dati dell'app): area di lavoro dell'assistente quando nessun progetto è aperto.
   const [mainProject, setMainProject] = useState(null)
   const workspaceRoot = project || mainProject
-  const [sideTab, setSideTab] = useState('files')
+  const [sideTab, setSideTabState] = useState('files')
+  // La Home (rete dei progetti e ricerca) è un modo dell'area centrale, non del pannello: resta anche con il pannello laterale chiuso (come il documento resta
+  // con il pannello dei file chiuso). Si entra scegliendo la scheda Progetti e se ne esce scegliendo un'altra scheda; chiudere il pannello non la cambia.
+  const [homeMode, setHomeMode] = useState(false)
+  // Il posto a destra del titolo del pannello laterale per le azioni del pannello (SettingsActions.jsx).
+  const [sideActions, setSideActions] = useState(null)
+  const sideTabRef = useRef('files')
+  const setSideTab = useCallback((value) => {
+    const next = typeof value === 'function' ? value(sideTabRef.current) : value
+    sideTabRef.current = next
+    setSideTabState(next)
+    if (next) setHomeMode(next === 'projects')
+  }, [])
   // Cambia quando una pagina web si aggiunge ai riferimenti del progetto o se ne toglie una (stellina del browser, pannello «Riferimenti web»).
   const [webRefsVersion, setWebRefsVersion] = useState(0)
   // Anche l'assistente o un agente (MCP) salvano e rinfrescano pagine: pannello e stellina si aggiornano.
@@ -193,6 +206,8 @@ export default function App() {
   const [largeLoading, setLargeLoading] = useState(null)
   const [conversationId, setConversationId] = useState(null)
   const [settingsVersion, setSettingsVersion] = useState(0)
+  // Cambia quando l'elenco dei progetti cambia (tolto, spostato, rinominato): la Home ricarica il grafo.
+  const [projectsVersion, setProjectsVersion] = useState(0)
   const [notes, setNotes] = useState([])
   const [notesVersion, setNotesVersion] = useState(0)
   // Segnalibri del documento di contesto (ancore con nome: link `file#nome`, punti da far notare all'assistente).
@@ -431,7 +446,9 @@ export default function App() {
   openProjectRef.current = openProject
   // Scegliendo un progetto dal pannello Progetti si passa subito ai suoi file (se la scelta è annullata non cambia nulla).
   // Con la scheda Progetti attiva l'area centrale mostra la Home (la rete dei progetti) al posto dei documenti e della chat, che restano montati.
-  const homeOpen = sideTab === 'projects'
+  const homeOpen = homeMode
+  // Con la Home aperta il documento non si vede: il menu ne disattiva modifica, ricerca, salvataggio e stampa.
+  useEffect(() => { electronAPI?.setHomeOpen?.(homeOpen) }, [homeOpen])
   // Dopo la prima visita la Home resta montata (nascosta quando non serve): ricerca, risultati e posizione nell'elenco restano com'erano al ritorno.
   const [homeSeen, setHomeSeen] = useState(false)
   useEffect(() => { if (homeOpen) setHomeSeen(true) }, [homeOpen])
@@ -1332,7 +1349,12 @@ export default function App() {
     if (!ready || !electronAPI?.onExternalDocument) return undefined
     const open = (document) => workspaceRef.current.openLoaded(document)
     electronAPI.takeExternalDocuments().then((list) => list.forEach(open)).catch((error) => console.error(error))
-    return electronAPI.onExternalDocument(open)
+    // Cartelle passate all'app (voce «Apri come progetto OpenWriter»): si apre il progetto e si passa ai suoi file.
+    const openFolder = (directory) => showFiles(openProject(directory))
+    electronAPI.takeExternalProjects?.().then((list) => list.forEach(openFolder)).catch((error) => console.error(error))
+    const stopProjects = electronAPI.onExternalProject?.(openFolder)
+    const stopDocuments = electronAPI.onExternalDocument(open)
+    return () => { stopDocuments?.(); stopProjects?.() }
   }, [ready])
 
   useEffect(() => {
@@ -1384,8 +1406,12 @@ export default function App() {
         {sideTab && (
           <aside style={{ width: widths.left }} className="relative flex shrink-0 flex-col border-r border-slate-800 bg-slate-900/60">
             <PanelResizer side="left" label={t('Side panel width')} width={widths.left} min={PANELS.left.min} max={maxWidthFor('left', resizeContext('left'))} defaultWidth={PANELS.left.default} onChange={resizePanel('left')} onCommit={commitLayout} />
-            <h2 className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{sideTabs.find((item) => item.id === sideTab)?.label}</h2>
-            {sideTab === 'projects' && <ProjectsPanel project={project} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onOpen={(directory) => showFiles(openProject(directory))} onChoose={() => showFiles(chooseProject())} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
+            <div className="flex items-center justify-between gap-2 pb-1 pr-3">
+              <h2 className="min-w-0 truncate px-3 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{sideTabs.find((item) => item.id === sideTab)?.label}</h2>
+              {/* Le azioni del pannello (per ora «Apri cartella» dei progetti) stanno a destra del titolo: vedi SettingsActions.jsx. */}
+              <div ref={setSideActions} className="flex shrink-0 items-center gap-1.5 pt-2 empty:hidden" />
+            </div>
+            {sideTab === 'projects' && <SettingsActionsContext.Provider value={sideActions}><ProjectsPanel project={project} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onOpen={(directory) => showFiles(openProject(directory))} onChoose={() => showFiles(chooseProject())} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} onListChanged={() => setProjectsVersion((value) => value + 1)} /></SettingsActionsContext.Provider>}
             {sideTab === 'files' && (
               <FileExplorer project={project} activePath={activeTab?.kind === 'image' ? activeTab.imagePath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} settingsVersion={settingsVersion} />
             )}
@@ -1427,7 +1453,7 @@ export default function App() {
               : null))}
           </section>
           </div>
-          {(homeOpen || homeSeen) && <div className={homeOpen ? 'contents' : 'hidden'}><ProjectsHome project={project} visible={homeOpen} onOpenProject={openFromHome} onOpenResult={openHomeResult} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} /></div>}
+          {(homeOpen || homeSeen) && <div className={homeOpen ? 'contents' : 'hidden'}><ProjectsHome project={project} visible={homeOpen} projectsVersion={projectsVersion} onOpenProject={openFromHome} onOpenResult={openHomeResult} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} /></div>}
           <ToastHost />
           {largeLoading && (
             <div role="status" aria-live="polite" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">

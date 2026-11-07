@@ -84,7 +84,7 @@ function ProjectIconField({ directory, name, onChanged, onError }) {
 }
 
 // `embedded`: dentro una finestra che ha già il suo riquadro (e scorre da sola): niente bordo e sfondo propri.
-export default function ProjectSettings({ project, projectPath = null, onChanged, onEditContext, onMove, embedded = false }) {
+export default function ProjectSettings({ project, projectPath = null, onChanged, onEditContext, onMove, onSaved, embedded = false }) {
   const [form, setForm] = useState(null)
   const [spellcheck, setSpellcheck] = useState({ available: [], global: [] })
   // Livello della temperatura generale del provider attivo: è quello che il progetto eredita finché non ne sceglie uno.
@@ -126,6 +126,8 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
       setInfo(result)
       setSaved(true)
       setError('')
+      // `onSaved`: chi ospita le impostazioni può chiuderle dopo il salvataggio (la finestra del singolo progetto lo fa).
+      onSaved?.()
     } catch (reason) {
       setError(reason.message)
     }

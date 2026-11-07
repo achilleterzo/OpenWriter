@@ -65,7 +65,7 @@ function Relevance({ value, z }) {
  * La Home dei progetti: la rete dei progetti (bolle con le icone, sinapsi tra quelli affini) e, sopra, una ricerca per significato come la farebbe un agente.
  * I risultati compaiono in un pannello sovrapposto; le bolle con risultati si illuminano. `onOpenProject(percorso)`, `onOpenResult(passaggio)`.
  */
-export default function ProjectsHome({ project, visible = true, onOpenProject, onOpenResult, onMove, onOpenFile, onSettingsChanged }) {
+export default function ProjectsHome({ project, visible = true, projectsVersion = 0, onOpenProject, onOpenResult, onMove, onOpenFile, onSettingsChanged }) {
   // Tasto destro su una bolla: menu del progetto (apri, impostazioni, sposta, mostra nel file manager). Le impostazioni si aprono nella stessa finestra della lista dei progetti.
   const openMenu = useContext(ContextMenuContext)
   const [settingsFor, setSettingsFor] = useState(null)
@@ -121,12 +121,12 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
     setWidth(next)
   }
 
-  // `silent`: riletture in secondo piano (ritorno alla Home, indice che lavora): niente rotellina sul pulsante.
-  const load = useCallback(async ({ silent = false } = {}) => {
+  // `silent`: riletture in secondo piano (ritorno alla Home, indice che lavora): niente rotellina sul pulsante. `refresh`: il pulsante Aggiorna, che riallinea anche l'indice dei progetti mai aperti.
+  const load = useCallback(async ({ silent = false, refresh = false } = {}) => {
     if (!silent) setLoading(true)
     setError('')
     try {
-      const next = await electronAPI.getProjectGraph()
+      const next = await electronAPI.getProjectGraph(refresh ? { refresh: true } : undefined)
       // Se nulla è cambiato si tiene il grafo di prima: la rete non si ricompone e le bolle restano dove sono.
       setGraph((current) => (current && JSON.stringify(current) === JSON.stringify(next) ? current : next))
     } catch (reason) { setError(reason.message) } finally { setLoading(false) }
@@ -136,6 +136,8 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
   // calcolare), si riguarda ogni pochi secondi: un progetto appena aggiunto si collega da solo quando i suoi vettori sono pronti.
   const busy = Boolean(graph?.busy)
   useEffect(() => { if (visible) load({ silent: true }) }, [visible, load])
+  // L'elenco dei progetti è cambiato accanto alla Home (uno tolto, spostato, rinominato): il grafo si ricarica subito.
+  useEffect(() => { if (projectsVersion) load({ silent: true }) }, [projectsVersion, load])
   useEffect(() => {
     if (!visible || !busy) return undefined
     const timer = setInterval(() => load({ silent: true }), 5000)
@@ -282,7 +284,7 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
           <button type="button" aria-pressed={synonyms} aria-label={t('Synonyms with AI')} title={synonyms ? (researchModel ? t('Synonyms with AI: on, with the research model {model} (it only sees the searched words)', { model: researchModel.model }) : t('Synonyms with AI: on (the AI model only sees the searched words)')) : t('Synonyms with AI: off')} className={`shrink-0 transition ${synonyms ? 'text-accent-400' : 'text-slate-500 hover:text-slate-200'}`} onClick={toggleSynonyms}><Sparkles size={15} /></button>
           {query && <button type="button" aria-label={t('Clear')} title={t('Clear')} className="shrink-0 text-slate-500 transition hover:text-slate-100" onClick={() => { setQuery(''); input.current?.focus() }}><X size={14} /></button>}
         </label>
-        <button type="button" aria-label={t('Refresh')} title={t('Refresh')} disabled={loading} className="pointer-events-auto rounded-lg border border-slate-700 bg-slate-900/90 p-2.5 text-slate-400 shadow-lg backdrop-blur transition hover:text-accent-400 disabled:opacity-50" onClick={() => { memory.done = null; load(); setRerun((value) => value + 1) }}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /></button>
+        <button type="button" aria-label={t('Refresh')} title={t('Refresh')} disabled={loading} className="pointer-events-auto rounded-lg border border-slate-700 bg-slate-900/90 p-2.5 text-slate-400 shadow-lg backdrop-blur transition hover:text-accent-400 disabled:opacity-50" onClick={() => { memory.done = null; load({ refresh: true }); setRerun((value) => value + 1) }}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /></button>
       </div>
 
       {/* Solo il grafo ha i colori fissi (sfondo grigio scuro, `.home-dark`); ricerca e risultati seguono il tema dell'app. */}

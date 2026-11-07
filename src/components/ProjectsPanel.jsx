@@ -3,6 +3,7 @@ import { FolderOpen, Settings, X } from 'lucide-react'
 import { ContextMenuContext } from './ContextMenu.jsx'
 import { ProjectAvatar } from './ProjectIcon.jsx'
 import ProjectSettingsDialog from './ProjectSettingsDialog.jsx'
+import { SettingsHeaderActions } from './SettingsActions.jsx'
 import { formatDateTime, t } from '../i18n/index.js'
 import { samePath } from '../lib/pathCompare.js'
 
@@ -12,7 +13,7 @@ const revealLabel = /Win/.test(navigator.platform) ? t('Show in File Explorer') 
 const buttonClass = 'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs transition'
 
 /** Home: elenco dei progetti conosciuti e apertura di una cartella (se è nuova, diventa un progetto). */
-export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onChoose, onSettingsChanged }) {
+export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onChoose, onSettingsChanged, onListChanged }) {
   const [projects, setProjects] = useState([])
   const [error, setError] = useState('')
   const [settingsFor, setSettingsFor] = useState(null)
@@ -30,12 +31,13 @@ export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onC
     try { await action() } catch (reason) { setError(reason.message) }
   }
 
-  const remove = (item) => run(async () => setProjects(await electronAPI.removeProject(item.path)))
+  // `onListChanged`: l'elenco è cambiato (tolto, spostato, rinominato): la Home, che sta accanto, ricarica il grafo.
+  const remove = (item) => run(async () => { setProjects(await electronAPI.removeProject(item.path)); onListChanged?.() })
 
   const sameProject = (item) => project && samePath(item.path, project)
 
   const moveProject = (item) => run(async () => {
-    if (await onMove(item.path)) await refresh()
+    if (await onMove(item.path)) { await refresh(); onListChanged?.() }
   })
 
   // Menu contestuale di un progetto: aprire, impostazioni, spostare, mostrare nel file manager, togliere dall'elenco.
@@ -58,9 +60,10 @@ export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onC
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap gap-1.5 px-3 pb-2">
+      {/* «Apri cartella» sta a destra del titolo del pannello (vedi SettingsActions.jsx). */}
+      <SettingsHeaderActions>
         <button type="button" className={`${buttonClass} bg-accent-600 text-white hover:bg-accent-500`} onClick={() => run(onChoose)}><FolderOpen size={14} /> {t('Open folder')}</button>
-      </div>
+      </SettingsHeaderActions>
 
       {error && <p className="px-3 pb-2 text-xs text-rose-400">{error}</p>}
 
@@ -100,7 +103,7 @@ export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onC
           title={settingsFor.name}
           path={settingsFor.path}
           onClose={() => setSettingsFor(null)}
-          onMove={onMove ? async (directory) => { const moved = await onMove(directory); if (moved) { setSettingsFor(null); await refresh() } return moved } : undefined} onEditContext={project && samePath(settingsFor.path, project) ? (file) => { setSettingsFor(null); onOpenFile(file) } : undefined} onChanged={() => { refresh(); if (project && samePath(settingsFor.path, project)) onSettingsChanged?.() }}
+          onMove={onMove ? async (directory) => { const moved = await onMove(directory); if (moved) { setSettingsFor(null); await refresh(); onListChanged?.() } return moved } : undefined} onEditContext={project && samePath(settingsFor.path, project) ? (file) => { setSettingsFor(null); onOpenFile(file) } : undefined} onChanged={() => { refresh(); onListChanged?.(); if (project && samePath(settingsFor.path, project)) onSettingsChanged?.() }}
         />
       )}
     </div>

@@ -27,7 +27,7 @@ export default function ProjectSettingsDialog({ title, path, label, onClose, ...
         </div>
         <SettingsActionsContext.Provider value={footer}>
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <ProjectSettings project projectPath={path} embedded {...settingsProps} />
+            <ProjectSettings project projectPath={path} embedded onSaved={onClose} {...settingsProps} />
           </div>
         </SettingsActionsContext.Provider>
         <div ref={setFooter} className="flex shrink-0 items-center justify-end gap-3 border-t border-slate-800 px-5 py-3 empty:hidden" />
