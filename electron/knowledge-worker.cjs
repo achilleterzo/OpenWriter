@@ -18,6 +18,8 @@ const index = createKnowledgeIndex({ file: workerData.file })
  * riferisce al processo principale, che può passare a un altro dispositivo: la ricerca per parole continua sempre a funzionare.
  */
 const BATCH = { cpu: 8, gpu: 32 }
+const SYNONYM_Z = 3.5 // quanto una parola deve staccarsi dalle altre per contare come sinonimo
+const MAX_WORDS = 12000 // parole del vocabolario che si vettorizzano al massimo (le più frequenti)
 const semantic = { device: null, model: '', directory: null, projects: [], embedder: null, running: false, again: false, error: null, generation: 0 }
 
 // Il dispositivo GPU vive nel processo principale: le richieste partono come { call, op: 'gpu-embed' } e tornano come { call, result | error }.
@@ -67,6 +69,18 @@ async function embedPending() {
       const generation = semantic.generation
       try {
         const embedder = await ensureEmbedder()
+        // Il vocabolario (le parole dei testi) si vettorizza dopo i frammenti, un gruppo alla volta: serve ai sinonimi locali della Home.
+        const wordsAfter = async () => {
+          const size = (BATCH[semantic.device] || 8) * 4
+          while (semantic.device && semantic.generation === generation && index.wordCount(semantic.model) < MAX_WORDS) {
+            const model = semantic.model
+            const words = index.pendingWords(model, size)
+            if (!words.length) break
+            const vectors = await embedder.embed(words, 'query')
+            if (semantic.generation !== generation || semantic.model !== model) { semantic.again = true; break }
+            index.storeWordVectors(model, words.map((word, position) => ({ word, vector: vectors[position] })))
+          }
+        }
         for (;;) {
           if (!semantic.device || !semantic.projects.length) break
           const model = semantic.model
@@ -77,6 +91,7 @@ async function embedPending() {
           if (semantic.generation !== generation || semantic.model !== model) { semantic.again = true; break }
           index.storeEmbeddings(model, batch.map((item, position) => ({ hash: item.hash, vector: vectors[position] })))
         }
+        if (semantic.device && semantic.projects.length && semantic.generation === generation) await wordsAfter()
       } catch (error) {
         // Il vecchio dispositivo chiuso sotto i piedi dalla riconfigurazione non è un guasto: si riparte con quello nuovo, senza toccarlo.
         if (semantic.generation !== generation) { semantic.again = true; continue }
@@ -88,6 +103,7 @@ async function embedPending() {
     } while (semantic.again)
     if (!failed) {
       index.pruneEmbeddings()
+      index.pruneWords()
       semantic.error = null
     }
   } finally {
@@ -111,6 +127,19 @@ const operations = {
       try { [queryVector] = (await (await ensureEmbedder()).embed([query], 'query')) } catch (error) { reportError(error); await dropEmbedder().catch(() => {}) }
     }
     return index.search(project, query, { ...options, queryVector, model: semantic.model })
+  },
+  // Sinonimi dai testi: per ogni parola cercata, le parole del vocabolario più vicine per significato (senza quelle della stessa radice). Senza modello attivo, [].
+  synonyms: async ({ words = [] }) => {
+    const list = [...new Set(words.map((word) => String(word)))].slice(0, 8)
+    if (!list.length || !semantic.device || !index.wordCount(semantic.model)) return []
+    const model = semantic.model
+    let vectors
+    try { vectors = await (await ensureEmbedder()).embed(list, 'query') } catch (error) { reportError(error); await dropEmbedder().catch(() => {}); return [] }
+    const sameRoot = (left, right) => { let k = 0; while (k < left.length && k < right.length && left[k] === right[k]) k += 1; return k >= Math.min(5, Math.min(left.length, right.length)) }
+    return list.map((word, position) => ({
+      word,
+      near: index.nearestWords(model, vectors[position], { count: 8, exclude: list }).filter((item) => item.z >= SYNONYM_Z && !sameRoot(word, item.word)).slice(0, 3),
+    }))
   },
   stats: ({ project }) => index.stats(project),
   centroids: ({ projects = [] }) => index.projectCentroids(projects, semantic.model),
