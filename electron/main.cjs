@@ -10,6 +10,8 @@ const { createAiProviders } = require('./ai-providers.cjs')
 const { createProjectFile } = require('./project-file.cjs')
 const { cleanTemperature } = require('./temperature.cjs')
 const { createProjectsStore } = require('./projects.cjs')
+const { execFile } = require('node:child_process')
+const { createSystemIntegration } = require('./system-integration.cjs')
 const { createChatStore } = require('./chat-store.cjs')
 const { createMemoryStore } = require('./memory-store.cjs')
 const { createMcpBridge } = require('./mcp-bridge.cjs')
@@ -202,9 +204,11 @@ function activeDevice() {
 // c'è un modello installato e abilitato, quindi ogni ricerca può essere per parole e per significato.
 const semanticAvailable = () => Boolean(semanticAllowed() && activeDevice())
 // I testi da vettorizzare: il progetto aperto, le sue cartelle di riferimento, le pagine web salvate e gli altri progetti che condividono la conoscenza (con l'indice acceso).
+// Anche tutti gli altri progetti dell'elenco con l'indice acceso, aperti o no, condividano o no: la ricerca della Home è dell'utente e li cerca tutti.
 const semanticTargets = () => {
-  if (!projectPath || !knowledgeOn || !semanticAvailable()) return []
-  return [projectPath, ...outsideFolders().map((item) => item.path)]
+  if (!semanticAvailable()) return []
+  const open = projectPath && knowledgeOn ? [projectPath, ...outsideFolders().map((item) => item.path)] : []
+  return [...open, ...indexedProjects()]
 }
 // `purge`: identificativi dei modelli di cui buttare i vettori (si è tolto il loro pacchetto).
 // L'ultimo elenco di progetti configurato per i vettori: se ne cambia uno (un progetto aggiunto, che condivide da poco…) si riconfigura.
@@ -216,6 +220,28 @@ function configureSemantic({ purge = [] } = {}) {
   const device = projects.length ? activeDevice() : null
   return knowledge.semanticConfigure({ device, model: device ? semanticPacks[device].id : '', directory: device === 'cpu' ? semanticPacks.cpu.directory : null, projects, purge })
     .catch((error) => { console.error('Ricerca per significato non configurata:', error.message); return false })
+}
+// I progetti dell'elenco (esistenti) con l'indice di ricerca acceso, aperti o no.
+function indexedProjects() {
+  try {
+    return projectsStore.list().filter((item) => !item.missing && item.path).filter((item) => {
+      try { return createProjectFile({ getProjectPath: () => item.path }).searchIndexEnabled() } catch { return false }
+    }).map((item) => item.path)
+  } catch { return [] }
+}
+// Riallinea l'indice di questi progetti ai loro file, senza aprirli: legge solo i file nuovi o cambiati. Non più spesso di `every` ms per progetto, salvo `force`.
+// → quanti se ne sono avviati.
+function syncProjects(directories, { force = false, every = 600000 } = {}) {
+  if (!knowledge.available) return 0
+  let started = 0
+  for (const directory of directories) {
+    const key = knowledge.key(directory)
+    if (!force && Date.now() - (sharedSynced.get(key) || 0) < every) continue
+    sharedSynced.set(key, Date.now())
+    started += 1
+    knowledge.sync(directory).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
+  }
+  return started
 }
 function startKnowledge() {
   if (!projectPath) return
@@ -231,6 +257,8 @@ function startKnowledge() {
     sharedSynced.set(key, Date.now())
     knowledge.sync(other.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
   }
+  // Tutti gli altri progetti dell'elenco, anche mai aperti in questa sessione: si aggiornano in secondo piano (non più spesso di ogni dieci minuti).
+  syncProjects(indexedProjects().filter((directory) => !samePath(directory, projectPath)))
   watchReferences()
   configureSemantic()
 }
@@ -1339,7 +1367,7 @@ ipcMain.handle('projects:search', (_event, args) => searchProjectsForHome(args))
 
 // Dati del grafo della Home: ogni progetto (con le sue opzioni) e le connessioni per affinità. I vettori medi si ricalcolano solo se l'indice del progetto è cambiato.
 const centroidCache = new Map() // chiave → { signature, vector }
-ipcMain.handle('projects:graph', async () => {
+ipcMain.handle('projects:graph', async (_event, options = {}) => {
   const list = projectsStore.list().filter((item) => item && item.path)
   const device = semanticAllowed() ? activeDevice() : null
   const model = device ? semanticPacks[device].id : ''
@@ -1356,13 +1384,12 @@ ipcMain.handle('projects:graph', async () => {
     nodes.push({ ...base, indexed, shared, files: stats.files, chunks: stats.chunks, updatedAt: stats.updatedAt })
   }
   // Un progetto che condivide e ha l'indice acceso ma nessun passaggio (appena aggiunto): si indicizza (non più spesso di ogni due minuti), senza aspettare l'apertura.
-  for (const node of nodes) {
-    if (!node.shared || !node.indexed || node.chunks > 0 || !knowledge.available) continue
-    const key = knowledge.key(node.path)
-    if (Date.now() - (sharedSynced.get(key) || 0) < 120000) continue
-    sharedSynced.set(key, Date.now())
-    knowledge.sync(node.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
-  }
+  // `options.refresh` (il pulsante Aggiorna della Home): tutti i progetti con l'indice acceso si riallineano ai file, aperti o no. Altrimenti solo quelli senza ancora
+  // alcun passaggio (appena aggiunti) ogni due minuti e gli altri ogni dieci.
+  const force = options?.refresh === true
+  const live = nodes.filter((node) => node.indexed && !node.missing)
+  syncProjects(live.filter((node) => node.chunks === 0).map((node) => node.path), { force, every: 120000 })
+  syncProjects(live.filter((node) => node.chunks > 0).map((node) => node.path), { force })
   // I vettori si calcolano per i progetti dell'elenco corrente: se è cambiato dall'ultima configurazione, si riconfigura.
   if (knowledge.available && semanticAvailable()) {
     const wanted = semanticTargets().map((item) => knowledge.key(item)).sort().join('|')
@@ -2094,12 +2121,19 @@ function loadLanguage() {
 
 // Modalità di visualizzazione dei documenti (la sceglie l'interfaccia): serve al menu Visualizza per mostrare la voce attiva.
 let viewMode = 'endless'
+// La Home dei progetti è aperta: il menu disattiva le voci che agiscono sul documento (che non si vede).
+let homeOpen = false
+ipcMain.on('home:changed', (_event, open) => {
+  if (Boolean(open) === homeOpen) return
+  homeOpen = Boolean(open)
+  buildMenu()
+})
 
 function buildMenu() {
   createApplicationMenu((command) => {
     if (['settings', 'open-project', 'about', 'check-updates', 'view-endless', 'view-pages'].includes(command)) mainWindow?.webContents.send('app:command', command)
     else mainWindow?.webContents.send('document:command', command)
-  }, { view: viewMode })
+  }, { view: viewMode, home: homeOpen })
 }
 
 ipcMain.on('view:changed', (_event, mode) => {
@@ -2337,6 +2371,19 @@ const MARKDOWN_PATTERN = /\.(md|markdown|mdown)$/i
 const pendingExternalDocuments = []
 let externalDocumentsReady = false
 
+// Cartelle passate all'app (la voce «Apri come progetto OpenWriter» del file manager, o la riga di comando): si aprono come progetto.
+const folderArguments = (argv) => argv.slice(app.isPackaged ? 1 : 2).filter((argument) => {
+  if (argument.startsWith('-') || MARKDOWN_PATTERN.test(argument)) return false
+  try { return fsSync.statSync(argument).isDirectory() } catch { return false }
+})
+const pendingExternalProjects = []
+function openExternalProject(directory) {
+  const resolved = path.resolve(directory)
+  if (externalDocumentsReady && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('project:external', resolved)
+  else pendingExternalProjects.push(resolved)
+}
+ipcMain.handle('project:take-external', () => pendingExternalProjects.splice(0))
+
 const markdownArguments = (argv) => argv.slice(app.isPackaged ? 1 : 2).filter((argument) => !argument.startsWith('-') && MARKDOWN_PATTERN.test(argument) && fsSync.existsSync(argument))
 
 async function openExternalDocument(filePath) {
@@ -2354,6 +2401,23 @@ ipcMain.handle('document:take-external', () => {
   return pendingExternalDocuments.splice(0)
 })
 
+// Integrazione con il sistema (Impostazioni → Associazioni): file Markdown associati all'app e voce «Apri come progetto OpenWriter» nel file manager, per piattaforma
+// (vedi system-integration.cjs). Solo nella versione installata.
+const systemIntegration = createSystemIntegration({
+  platform: process.platform,
+  exePath: process.execPath,
+  packaged: app.isPackaged,
+  label: () => t('Open as OpenWriter project'),
+  run: (file, args) => new Promise((resolve) => {
+    execFile(file, args, { windowsHide: true, timeout: 15000 }, (error, stdout) => resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, stdout: String(stdout || '') }))
+  }),
+})
+ipcMain.handle('integration:status', () => systemIntegration.status())
+ipcMain.handle('integration:set-markdown', (_event, on) => systemIntegration.setMarkdown(on === true))
+ipcMain.handle('integration:set-folder-menu', (_event, on) => systemIntegration.setFolderMenu(on === true))
+// Windows non permette di imporre l'app predefinita: si apre la pagina delle App predefinite, dove l'utente sceglie.
+ipcMain.handle('integration:open-default-apps', () => (process.platform === 'win32' ? shell.openExternal('ms-settings:defaultapps').then(() => true, () => false) : false))
+
 if (app.isPackaged && !app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -2363,6 +2427,7 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
       mainWindow.focus()
     }
     for (const filePath of markdownArguments(argv)) openExternalDocument(filePath)
+    for (const directory of folderArguments(argv)) openExternalProject(directory)
   })
 }
 
@@ -2370,6 +2435,7 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
 app.on('open-file', (event, filePath) => {
   event.preventDefault()
   if (MARKDOWN_PATTERN.test(filePath)) openExternalDocument(filePath)
+  else { try { if (fsSync.statSync(filePath).isDirectory()) openExternalProject(filePath) } catch { /* non esiste */ } }
 })
 
 app.whenReady().then(async () => {
@@ -2388,6 +2454,7 @@ app.whenReady().then(async () => {
   buildMenu()
   mcpBridge.start()
   for (const filePath of markdownArguments(process.argv)) openExternalDocument(filePath)
+  for (const directory of folderArguments(process.argv)) openExternalProject(directory)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
