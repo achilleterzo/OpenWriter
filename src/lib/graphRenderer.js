@@ -6,7 +6,9 @@
  */
 const CELL = 128 // lato di una cella dell'atlante, in pixel
 const COLUMNS = 8
-const SEGMENTS = 28 // tratti di ogni sinapsi
+// Ogni sinapsi si disegna a pezzi (PIECES), ognuno con la sua profondità: così passa davanti alle bolle che ha davanti e dietro a quelle che ha dietro (vedi `draw`).
+const PIECES = 12
+const PIECE_SEGMENTS = 4 // tratti di ogni pezzo
 
 const BACKDROP_VERTEX = `#version 300 es
 void main() {
@@ -140,6 +142,7 @@ precision highp float;
 layout(location = 0) in vec4 ends;    // a (x, y), b (x, y)
 layout(location = 1) in vec4 style;   // peso, curva, fase, evidenziata
 layout(location = 2) in vec2 reach;   // quanto si vede la sinapsi all'estremo a e all'estremo b (1 sempre; in una ricerca 0 per chi è escluso)
+layout(location = 3) in vec2 range;   // il tratto della curva che questo pezzo disegna: da t0 a t1 (0-1)
 uniform vec2 resolution;
 uniform vec2 pan;
 uniform float zoom;
@@ -150,7 +153,7 @@ out vec2 reachOut;
 out float lengthOut;
 void main() {
   int id = gl_VertexID;
-  float t = float(id / 2) / float(${SEGMENTS});
+  float t = mix(range.x, range.y, float(id / 2) / float(${PIECE_SEGMENTS}));
   float side = float(id % 2) * 2.0 - 1.0;
   vec2 a = ends.xy;
   vec2 b = ends.zw;
@@ -329,15 +332,11 @@ export function createGraphRenderer(canvas) {
   const edgeVao = gl.createVertexArray()
   gl.bindVertexArray(edgeVao)
   gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuffer)
-  gl.enableVertexAttribArray(0)
-  gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 40, 0)
-  gl.vertexAttribDivisor(0, 1)
-  gl.enableVertexAttribArray(1)
-  gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 40, 16)
-  gl.vertexAttribDivisor(1, 1)
-  gl.enableVertexAttribArray(2)
-  gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 40, 32)
-  gl.vertexAttribDivisor(2, 1)
+  // I puntatori degli attributi si impostano a ogni tratto di `draw` (partono dal primo elemento del tratto).
+  for (const location of [0, 1, 2, 3]) {
+    gl.enableVertexAttribArray(location)
+    gl.vertexAttribDivisor(location, 1)
+  }
   gl.bindVertexArray(null)
 
   const texture = gl.createTexture()
@@ -411,14 +410,49 @@ export function createGraphRenderer(canvas) {
     gl.enable(gl.BLEND)
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
 
-    if (frame.edges.length) {
-      if (edgeData.length < frame.edges.length * 10) edgeData = new Float32Array(frame.edges.length * 10 * 2)
-      frame.edges.forEach((edge, index) => {
-        const o = index * 10
+    // Profondità: le sinapsi e le bolle si disegnano insieme, dalle più lontane alle più vicine (algoritmo del pittore). Una sinapsi è a pezzi, ognuno alla sua
+    // profondità, così passa sopra una bolla che ha dietro e sotto una che ha davanti. Una bolla conta dalla sua superficie più vicina (z − r): i pezzi che
+    // la raggiungono dal suo stesso centro restano dietro di lei.
+    const EDGE_FLOATS = 12
+    const NODE_FLOATS = 8
+    const items = []
+    frame.edges.forEach((edge, index) => {
+      const startZ = edge.az || 0
+      const endZ = edge.bz || 0
+      for (let piece = 0; piece < PIECES; piece += 1) items.push({ kind: 1, source: index, piece, z: startZ + (endZ - startZ) * ((piece + 0.5) / PIECES) })
+    })
+    frame.nodes.forEach((node, index) => items.push({ kind: 0, source: index, z: (node.z || 0) - node.r }))
+    // I pareggi: la sinapsi prima della bolla (arriva al suo centro e vi finisce dietro).
+    items.sort((x, y) => (y.z - x.z) || (y.kind - x.kind))
+
+    if (edgeData.length < items.length * EDGE_FLOATS) edgeData = new Float32Array(items.length * EDGE_FLOATS * 2)
+    if (nodeData.length < frame.nodes.length * NODE_FLOATS) nodeData = new Float32Array(frame.nodes.length * NODE_FLOATS * 2)
+    let edgeCount = 0
+    let nodeCount = 0
+    const runs = []
+    for (const item of items) {
+      if (item.kind === 1) {
+        const edge = frame.edges[item.source]
+        const o = edgeCount * EDGE_FLOATS
         edgeData[o] = edge.ax; edgeData[o + 1] = edge.ay; edgeData[o + 2] = edge.bx; edgeData[o + 3] = edge.by
         edgeData[o + 4] = edge.weight; edgeData[o + 5] = edge.curve; edgeData[o + 6] = edge.phase; edgeData[o + 7] = edge.lit
         edgeData[o + 8] = edge.reachA; edgeData[o + 9] = edge.reachB
-      })
+        edgeData[o + 10] = item.piece / PIECES; edgeData[o + 11] = (item.piece + 1) / PIECES
+        const last = runs[runs.length - 1]
+        if (last && last.kind === 1) last.count += 1; else runs.push({ kind: 1, start: edgeCount, count: 1 })
+        edgeCount += 1
+      } else {
+        const node = frame.nodes[item.source]
+        const o = nodeCount * NODE_FLOATS
+        nodeData[o] = node.x; nodeData[o + 1] = node.y; nodeData[o + 2] = node.r; nodeData[o + 3] = node.cell
+        nodeData[o + 4] = node.lit; nodeData[o + 5] = node.dim; nodeData[o + 6] = node.free ? 1 : 0; nodeData[o + 7] = node.weight || 0
+        const last = runs[runs.length - 1]
+        if (last && last.kind === 0) last.count += 1; else runs.push({ kind: 0, start: nodeCount, count: 1 })
+        nodeCount += 1
+      }
+    }
+
+    if (edgeCount) {
       gl.useProgram(edgeProgram)
       gl.uniform2f(edgeUniform.resolution, size.width, size.height)
       gl.uniform2f(edgeUniform.pan, frame.pan[0], frame.pan[1])
@@ -426,19 +460,10 @@ export function createGraphRenderer(canvas) {
       gl.uniform3fv(edgeUniform.accent, frame.colors.accent)
       gl.uniform1f(edgeUniform.time, frame.time)
       gl.uniform1f(edgeUniform.dim, frame.dim || 0)
-      gl.bindVertexArray(edgeVao)
       gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuffer)
-      gl.bufferData(gl.ARRAY_BUFFER, edgeData.subarray(0, frame.edges.length * 10), gl.DYNAMIC_DRAW)
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, (SEGMENTS + 1) * 2, frame.edges.length)
+      gl.bufferData(gl.ARRAY_BUFFER, edgeData.subarray(0, edgeCount * EDGE_FLOATS), gl.DYNAMIC_DRAW)
     }
-
-    if (frame.nodes.length) {
-      if (nodeData.length < frame.nodes.length * 8) nodeData = new Float32Array(frame.nodes.length * 8 * 2)
-      frame.nodes.forEach((node, index) => {
-        const o = index * 8
-        nodeData[o] = node.x; nodeData[o + 1] = node.y; nodeData[o + 2] = node.r; nodeData[o + 3] = node.cell
-        nodeData[o + 4] = node.lit; nodeData[o + 5] = node.dim; nodeData[o + 6] = node.free ? 1 : 0; nodeData[o + 7] = node.weight || 0
-      })
+    if (nodeCount) {
       gl.useProgram(nodeProgram)
       gl.uniform2f(nodeUniform.resolution, size.width, size.height)
       gl.uniform2f(nodeUniform.pan, frame.pan[0], frame.pan[1])
@@ -450,10 +475,32 @@ export function createGraphRenderer(canvas) {
       gl.activeTexture(gl.TEXTURE0)
       gl.bindTexture(gl.TEXTURE_2D, texture)
       gl.uniform1i(nodeUniform.atlas, 0)
-      gl.bindVertexArray(nodeVao)
       gl.bindBuffer(gl.ARRAY_BUFFER, nodeBuffer)
-      gl.bufferData(gl.ARRAY_BUFFER, nodeData.subarray(0, frame.nodes.length * 8), gl.DYNAMIC_DRAW)
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, frame.nodes.length)
+      gl.bufferData(gl.ARRAY_BUFFER, nodeData.subarray(0, nodeCount * NODE_FLOATS), gl.DYNAMIC_DRAW)
+    }
+    // Ogni tratto di uno stesso tipo si disegna con una sola chiamata: i puntatori degli attributi partono dal primo elemento del tratto.
+    for (const run of runs) {
+      if (run.kind === 1) {
+        const stride = EDGE_FLOATS * 4
+        const base = run.start * stride
+        gl.useProgram(edgeProgram)
+        gl.bindVertexArray(edgeVao)
+        gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuffer)
+        gl.vertexAttribPointer(0, 4, gl.FLOAT, false, stride, base)
+        gl.vertexAttribPointer(1, 4, gl.FLOAT, false, stride, base + 16)
+        gl.vertexAttribPointer(2, 2, gl.FLOAT, false, stride, base + 32)
+        gl.vertexAttribPointer(3, 2, gl.FLOAT, false, stride, base + 40)
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, (PIECE_SEGMENTS + 1) * 2, run.count)
+      } else {
+        const stride = NODE_FLOATS * 4
+        const base = run.start * stride
+        gl.useProgram(nodeProgram)
+        gl.bindVertexArray(nodeVao)
+        gl.bindBuffer(gl.ARRAY_BUFFER, nodeBuffer)
+        gl.vertexAttribPointer(1, 4, gl.FLOAT, false, stride, base)
+        gl.vertexAttribPointer(2, 4, gl.FLOAT, false, stride, base + 16)
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, run.count)
+      }
     }
     gl.bindVertexArray(null)
   }
