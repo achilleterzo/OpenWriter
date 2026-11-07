@@ -246,6 +246,8 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [preferences.js.md](reference/src/lib/preferences.js.md) ([preferences.js](../src/lib/preferences.js)) — Interface preferences in the app data
     - [projectIcons.js.md](reference/src/lib/projectIcons.js.md) ([projectIcons.js](../src/lib/projectIcons.js)) — Project icons: reading, caching, choosing
     - [animatedIcon.js.md](reference/src/lib/animatedIcon.js.md) ([animatedIcon.js](../src/lib/animatedIcon.js)) — Decodes animated GIF/WebP icons of the Home graph and picks the frame by time
+    - [graphLayoutStore.js.md](reference/src/lib/graphLayoutStore.js.md) ([graphLayoutStore.js](../src/lib/graphLayoutStore.js)) — Remembers the positions of the projects in the Home network between launches
+    - [graphProjection.js.md](reference/src/lib/graphProjection.js.md) ([graphProjection.js](../src/lib/graphProjection.js)) — Perspective projection of the project network, so it can be turned in space (yaw and pitch)
     - [svgIcon.js.md](reference/src/lib/svgIcon.js.md) ([svgIcon.js](../src/lib/svgIcon.js)) — Gives SVG project icons an explicit size so the graph frames them like the list
     - [graphLayout.js.md](reference/src/lib/graphLayout.js.md) ([graphLayout.js](../src/lib/graphLayout.js)) — Physics of the Home network of projects
     - [graphRenderer.js.md](reference/src/lib/graphRenderer.js.md) ([graphRenderer.js](../src/lib/graphRenderer.js)) — WebGL2 drawing of the Home network
