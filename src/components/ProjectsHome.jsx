@@ -1,6 +1,8 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, RefreshCw, Search, Sparkles, X } from 'lucide-react'
 import ProjectGraph from './ProjectGraph.jsx'
+import ProjectSettingsDialog from './ProjectSettingsDialog.jsx'
+import { ContextMenuContext } from './ContextMenu.jsx'
 import PanelResizer from './PanelResizer.jsx'
 import { ProjectAvatar } from './ProjectIcon.jsx'
 import { samePath } from '../lib/pathCompare.js'
@@ -11,6 +13,7 @@ import { createSynonymCache, synonymKey } from '../lib/synonymCache.js'
 import { t, tp } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
+const REVEAL_LABEL = /Win/.test(navigator.platform) ? t('Show in File Explorer') : /Mac/.test(navigator.platform) ? t('Reveal in Finder') : t('Show in file manager')
 const MIN_QUERY = 2
 const DEBOUNCE_MS = 450
 const SYNONYMS_KEY = 'openwriter.homeSynonyms'
@@ -22,7 +25,7 @@ const synonymCache = createSynonymCache({ read: () => getPreference('openwriter.
 // «meno pertinenti» mostrati, posizione nell'elenco) sta quindi qui fuori e al ritorno è com'era, finché l'app resta aperta. `done`: la ricerca già fatta (testo e
 // impostazione dei sinonimi), che al ritorno non si ripete.
 const memory = { query: '', search: null, expansion: null, showWeak: false, weakLoaded: false, scrollTop: 0, done: null }
-const blankSearch = () => ({ state: 'idle', results: [], partial: false, weakCount: 0, error: '', query: '' })
+const blankSearch = () => ({ state: 'idle', results: [], partial: false, weakCount: 0, error: '', query: '', localTerms: [] })
 
 // Chiede al modello linguistico i sinonimi della ricerca: il modello di ricerca (impostazioni → assistente di ricerca) se è attivo, altrimenti quello dell'assistente.
 // Vede solo la parola cercata. `use`: { provider, model } del modello di ricerca, o null; `modelId`: identifica il modello che risponde (per la cache). Fallisce con un messaggio comprensibile.
@@ -62,7 +65,10 @@ function Relevance({ value, z }) {
  * La Home dei progetti: la rete dei progetti (bolle con le icone, sinapsi tra quelli affini) e, sopra, una ricerca per significato come la farebbe un agente.
  * I risultati compaiono in un pannello sovrapposto; le bolle con risultati si illuminano. `onOpenProject(percorso)`, `onOpenResult(passaggio)`.
  */
-export default function ProjectsHome({ project, visible = true, onOpenProject, onOpenResult }) {
+export default function ProjectsHome({ project, visible = true, onOpenProject, onOpenResult, onMove, onOpenFile, onSettingsChanged }) {
+  // Tasto destro su una bolla: menu del progetto (apri, impostazioni, sposta, mostra nel file manager). Le impostazioni si aprono nella stessa finestra della lista dei progetti.
+  const openMenu = useContext(ContextMenuContext)
+  const [settingsFor, setSettingsFor] = useState(null)
   const [graph, setGraph] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -162,10 +168,13 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
       setShowWeak(false)
       weakLoaded.current = false
       const finished = () => { if (!stale()) memory.done = { query: text, synonyms } }
+      // I sinonimi dell'IA, se attiva, partono subito, insieme alla prima ricerca (che include già i sinonimi locali): non aspettano il risultato.
+      const aiTerms = synonyms && aiOn ? expandQuery(text, researchModel, modelId) : null
+      aiTerms?.catch(() => {})
       try {
-        const answer = await electronAPI.searchProjects({ query: text, maxResults: 20 })
+        const answer = await electronAPI.searchProjects({ query: text, maxResults: 20, local: synonyms })
         if (stale()) return
-        setSearch({ state: 'done', results: answer.results, partial: Boolean(answer.partial), weakCount: answer.weakCount || 0, error: '', query: text })
+        setSearch({ state: 'done', results: answer.results, partial: Boolean(answer.partial), weakCount: answer.weakCount || 0, error: '', query: text, localTerms: answer.localTerms || [] })
       } catch (reason) {
         if (!stale()) setSearch({ state: 'error', results: [], partial: false, weakCount: 0, error: reason.message, query: text })
         return
@@ -174,13 +183,13 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
       if (!aiOn) { setExpansion({ state: 'off', terms: [], error: '' }); finished(); return }
       setExpansion({ state: 'loading', terms: [], error: '' })
       try {
-        const terms = await expandQuery(text, researchModel, modelId)
+        const terms = await aiTerms
         if (stale()) return
         if (!terms.length) { setExpansion({ state: 'done', terms: [], error: '' }); finished(); return }
         setExpansion({ state: 'searching', terms, error: '' })
         const answer = await electronAPI.searchProjects({ query: text, terms, maxResults: weakLoaded.current ? 30 : 20, includeWeak: weakLoaded.current })
         if (stale()) return
-        setSearch({ state: 'done', results: answer.results, partial: Boolean(answer.partial), weakCount: answer.weakCount || 0, error: '', query: text })
+        setSearch({ state: 'done', results: answer.results, partial: Boolean(answer.partial), weakCount: answer.weakCount || 0, error: '', query: text, localTerms: answer.localTerms || [] })
         setExpansion({ state: 'done', terms, error: '' })
         finished()
       } catch (reason) {
@@ -228,7 +237,7 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
   const weakShown = search.results.filter((hit) => hit.weak).length
   const canRevealWeak = search.state === 'done' && !showWeak && search.weakCount > 0
   const revealButton = (
-    <button type="button" disabled={weakBusy} className="flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs text-slate-400 transition hover:text-accent-400 disabled:opacity-60" onClick={revealWeak}>
+    <button type="button" disabled={weakBusy} className="flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs text-accent-400 underline decoration-accent-400/40 underline-offset-2 transition hover:text-accent-300 hover:decoration-accent-300 disabled:opacity-60" onClick={revealWeak}>
       {weakBusy && <Loader2 size={12} className="animate-spin" />}{t('Show less relevant too')}
     </button>
   )
@@ -236,6 +245,23 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
   const active = nodes.find((node) => project && samePath(node.path, project))?.path || null
   const sharing = nodes.filter((node) => node.shared && node.chunks > 0).length
   const showPanel = query.trim().length >= MIN_QUERY
+
+  function openProjectMenu(path, x, y) {
+    const node = nodes.find((item) => item.path === path)
+    if (!node || node.missing) return
+    const isOpen = project && samePath(path, project)
+    openMenu({
+      x,
+      y,
+      items: [
+        !isOpen && { label: t('Open'), onClick: () => onOpenProject(path) },
+        { label: t('Project settings…'), onClick: () => setSettingsFor(node) },
+        { separator: true },
+        onMove && { label: t('Move…'), onClick: async () => { try { if (await onMove(path)) load({ silent: true }) } catch (reason) { setError(reason.message) } } },
+        { label: REVEAL_LABEL, onClick: () => electronAPI.revealProject(path).catch((reason) => setError(reason.message)) },
+      ].filter(Boolean),
+    })
+  }
 
   return (
     <section ref={sectionRef} className="relative flex min-h-0 flex-1 flex-col bg-slate-950" aria-label={t('Projects home')}>
@@ -262,8 +288,7 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
       {/* Solo il grafo ha i colori fissi (sfondo grigio scuro, `.home-dark`); ricerca e risultati seguono il tema dell'app. */}
       <div className="home-dark relative flex min-h-0 flex-1 flex-col">
         {error && <p className="px-4 pt-16 text-xs text-rose-400">{error}</p>}
-        {!error && graph && !nodes.some((node) => !node.missing) && <p className="px-4 pt-16 text-sm text-slate-500">{t('No projects yet. Create one or open an existing folder.')}</p>}
-        {graph && nodes.some((node) => !node.missing) && <ProjectGraph graph={graph} matches={matches} activePath={active} onOpen={onOpenProject} />}
+        {graph && nodes.some((node) => !node.missing) && <ProjectGraph graph={graph} matches={matches} activePath={active} onOpen={onOpenProject} onContext={openProjectMenu} />}
         {!graph && loading && <div className="flex flex-1 items-center justify-center text-slate-500"><Loader2 className="animate-spin" size={20} aria-label={t('Loading…')} /></div>}
 
         {graph && (
@@ -286,10 +311,15 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
             <button type="button" aria-label={t('Close')} title={t('Close')} className="shrink-0 text-slate-500 transition hover:text-slate-100" onClick={() => setQuery('')}><X size={14} /></button>
           </div>
           <div ref={scrollRef} onScroll={(event) => { memory.scrollTop = event.currentTarget.scrollTop }} className="min-h-0 flex-1 overflow-y-auto">
+            {synonyms && search.state === 'done' && search.localTerms?.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-800/70 px-3 py-2 text-[11px] leading-4 text-slate-500">
+                <span>{t('Also searched in your texts:')}</span>{search.localTerms.map((term) => <span key={term} className="rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">{term}</span>)}
+              </div>
+            )}
             {synonyms && expansion.state !== 'idle' && (
               <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-800/70 px-3 py-2 text-[11px] leading-4 text-slate-500" aria-live="polite">
                 {(expansion.state === 'loading' || expansion.state === 'searching') && <><Loader2 size={11} className="animate-spin" /> {expansion.state === 'loading' ? t('Asking the AI for synonyms…') : t('Searching the synonyms…')}</>}
-                {expansion.state === 'off' && t('Synonyms need the AI assistant: turn it on in the settings.')}
+                {expansion.state === 'off' && t('The AI assistant is off: only the synonyms found in your texts are used. Turn it on in the settings for more.')}
                 {expansion.state === 'failed' && <span className="text-amber-500">{t('Synonyms not available: {message}', { message: expansion.error })}</span>}
                 {expansion.state === 'done' && !expansion.terms.length && t('The AI found no synonyms for this search.')}
                 {expansion.terms.length > 0 && <><span>{t('Also searched:')}</span>{expansion.terms.map((term) => <span key={term} className="rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">{term}</span>)}</>}
@@ -297,7 +327,7 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
             )}
             {search.state === 'error' && <p className="p-3 text-xs text-rose-400">{search.error}</p>}
             {search.state === 'done' && search.partial && groups.length > 0 && <p className="border-b border-slate-800/70 px-3 py-2 text-[11px] leading-4 text-slate-500">{t('No passage contains all the words: these contain some of them.')}</p>}
-            {search.state === 'done' && !groups.length && <p className="p-3 text-xs text-slate-500">{t('Nothing relevant found. Only projects with a search index are searched.')}</p>}
+            {search.state === 'done' && !groups.length && <p className="p-3 text-xs text-slate-500">{t('No relevant results')}</p>}
             {search.state === 'done' && !groups.length && canRevealWeak && revealButton}
             {groups.map((group) => (
               <div key={group.path} className="border-b border-slate-800/70 last:border-b-0">
@@ -336,6 +366,16 @@ export default function ProjectsHome({ project, visible = true, onOpenProject, o
           </div>
           </div>
         </div>
+      )}
+      {settingsFor && (
+        <ProjectSettingsDialog
+          title={settingsFor.name}
+          path={settingsFor.path}
+          onClose={() => setSettingsFor(null)}
+          onMove={onMove ? async (directory) => { const moved = await onMove(directory); if (moved) { setSettingsFor(null); load({ silent: true }) } return moved } : undefined}
+          onEditContext={project && samePath(settingsFor.path, project) && onOpenFile ? (file) => { setSettingsFor(null); onOpenFile(file) } : undefined}
+          onChanged={() => { load({ silent: true }); if (project && samePath(settingsFor.path, project)) onSettingsChanged?.() }}
+        />
       )}
     </section>
   )
