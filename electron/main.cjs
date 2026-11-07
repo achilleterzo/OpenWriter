@@ -39,7 +39,8 @@ const { createKnowledgeService, formatKnowledgeResults } = require('./knowledge-
 const { createSemanticPack } = require('./semantic-pack.cjs')
 const { createGpuContext } = require('./gpu-context.cjs')
 const { outsideFolders: outsideFoldersOf } = require('./shared-knowledge.cjs')
-const { affinityEdges, uniformEdges, collectVectors } = require('./project-graph.cjs')
+const { STOPWORDS } = require('./knowledge-index.cjs')
+const { affinityEdges, uniformEdges, collectVectors, parentProjects } = require('./project-graph.cjs')
 const { mergeSearches, cleanTerms } = require('./search-merge.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
 const MAX_SKILL_FILE_BYTES = MAX_SKILL_CHARS * 4
@@ -1278,11 +1279,26 @@ async function searchKnowledgeTool(args = {}, readTool = 'read_file', context = 
   return formatKnowledgeResults(query, { ...found, results: found.results.map(({ source: _source, relative: _relative, ...entry }) => entry) }, { files }, readTool)
 }
 // Ricerca della Home: gli stessi passaggi che vedrebbe l'assistente, ma strutturati (con il progetto di ogni passaggio e il file da aprire).
+// Sinonimi dai propri testi per una domanda: per ogni parola significativa (4+ lettere, non una parola funzionale), le parole del vocabolario dei progetti più vicine per
+// significato (vedi knowledge-worker.cjs, operazione `synonyms`). Funziona solo con la ricerca per significato attiva e il vocabolario già vettorizzato; altrimenti [].
+async function localSynonyms(query) {
+  if (!knowledge.available || !semanticAvailable()) return []
+  const fold = (value) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+  const words = [...new Set((String(query).match(/\p{L}+/gu) || []).map(fold).filter((word) => word.length >= 4 && !STOPWORDS.has(word)))].slice(0, 6)
+  if (!words.length) return []
+  try {
+    const found = await knowledge.synonyms(words)
+    return [...new Set(found.flatMap((entry) => entry.near.map((item) => item.word)))].slice(0, 6)
+  } catch { return [] }
+}
+
 async function searchProjectsForHome(args = {}) {
   const maxResults = Math.min(30, Math.max(1, Number(args.maxResults) || 20))
   const query = String(args.query || '').trim()
   // `terms`: sinonimi e termini affini chiesti dall'interfaccia al modello linguistico; ognuno si cerca a parte (parole e significato) e i risultati si uniscono.
-  const terms = cleanTerms(args.terms, query)
+  // Ai sinonimi dell'IA (se ci sono) si aggiungono sempre quelli locali: le parole dei testi più vicine per significato a quelle cercate (`local: false` li esclude).
+  const localTerms = args.local === false ? [] : await localSynonyms(query)
+  const terms = cleanTerms([...(Array.isArray(args.terms) ? args.terms : []), ...localTerms], query, 12)
   // `includeWeak`: anche i passaggi che il filtro di pertinenza scarta ("meno pertinenti"), con `weak: true`, ordinati per pertinenza.
   const includeWeak = args.includeWeak === true
   const base = await runKnowledgeSearch({ query, maxResults, includeWeak }, { home: true })
@@ -1317,7 +1333,7 @@ async function searchProjectsForHome(args = {}) {
     results = mergeSearches([{ term: query, original: true, results }, ...extra], { limit: maxResults + 10 })
   }
   // `partial`: nessun passaggio contiene tutte le parole (si mostrano quelli che ne hanno qualcuna).
-  return { query, terms, mode: found.mode, partial: found.mode === 'or' || Boolean(found.partial), weakCount, files, results }
+  return { query, terms, localTerms: terms.filter((term) => localTerms.includes(term)), mode: found.mode, partial: found.mode === 'or' || Boolean(found.partial), weakCount, files, results }
 }
 ipcMain.handle('projects:search', (_event, args) => searchProjectsForHome(args))
 
@@ -1365,11 +1381,17 @@ ipcMain.handle('projects:graph', async () => {
     } catch (error) { console.error('Vettori medi dei progetti non calcolati:', error.message) }
   }
   for (const node of nodes) node.pendingVectors = pending.has(node.path)
+  // Un sotto-progetto sta dentro la cartella di un altro progetto dell'elenco: `parent` è quello più vicino (il più interno), altrimenti null. Nel grafo è un satellite del padre.
+  const parents = parentProjects(nodes, { isSameOrInside, samePath })
+  for (const node of nodes) node.parent = parents.get(node.path) || null
   let edges = []
   let approximate = false
   if (vectors.size > 1) edges = affinityEdges(sharing.filter((node) => vectors.has(node.path)).map((node) => ({ id: node.path, vector: vectors.get(node.path) })))
   else if (sharing.length > 1) { edges = uniformEdges(sharing.map((node) => node.path)); approximate = true }
   // `busy`: l'indice sta ancora lavorando (scansione o vettori): l'interfaccia riguarda il grafo finché non ha finito.
+  // Un satellite si lega solo al padre: niente sinapsi di affinità da o verso i sotto-progetti.
+  const satellites = new Set(nodes.filter((node) => node.parent).map((node) => node.path))
+  edges = edges.filter((edge) => !satellites.has(edge.a) && !satellites.has(edge.b))
   const busy = pending.size > 0 || (knowledge.available && knowledge.syncing)
   return { nodes, edges, approximate, busy, semantic: vectors.size > 1 }
 })

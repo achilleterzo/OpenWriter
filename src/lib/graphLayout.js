@@ -23,6 +23,16 @@ const GRAVITY = 0.09
 const MAX_SPEED = 420
 const WANDER = 16
 const WALL = 9
+const SATELLITES_PER_RING = 6
+const SATELLITE_SPRING = 90
+
+// Imparentate (una dentro l'altra, a qualunque livello) o sorelle: non si respingono.
+function related(a, b) {
+  if (a.parent && a.parent === b.parent) return true
+  for (let up = a.parent; up; up = up.parent) if (up === b) return true
+  for (let up = b.parent; up; up = up.parent) if (up === a) return true
+  return false
+}
 
 export function createGraphSim({ seed = 7, wander = true } = {}) {
   const random = mulberry32(seed)
@@ -33,7 +43,8 @@ export function createGraphSim({ seed = 7, wander = true } = {}) {
   let wandering = wander
   let frozen = false
 
-  // `items`: [{ id, r }]; `links`: [{ a, b, weight }] (id). Le bolle già presenti mantengono posizione e velocità.
+  // `items`: [{ id, r, parent? }]; `links`: [{ a, b, weight }] (id). Le bolle già presenti mantengono posizione e velocità.
+  // `parent`: l'id del progetto che contiene questo (un sotto-progetto): la bolla è un satellite e gira intorno al padre.
   function setGraph(items, links, { width = 1000, height = 700 } = {}) {
     const previous = byId
     nodes = items.map((item) => {
@@ -42,10 +53,40 @@ export function createGraphSim({ seed = 7, wander = true } = {}) {
       return {
         id: item.id, r: item.r,
         x: (random() - 0.5) * width * 0.7, y: (random() - 0.5) * height * 0.7,
-        vx: 0, vy: 0, phase: random() * TAU, pinned: false, degree: 0,
+        vx: 0, vy: 0, phase: random() * TAU, pinned: false, degree: 0, fresh: true,
       }
     })
     byId = new Map(nodes.map((node) => [node.id, node]))
+    // Satelliti: il padre deve esistere, non essere la bolla stessa e non formare un giro (A dentro B dentro A).
+    const wanted = new Map(items.map((item) => [item.id, item.parent]))
+    const loops = (id) => { const seen = new Set([id]); let current = wanted.get(id); while (current) { if (seen.has(current)) return true; seen.add(current); current = wanted.get(current) } return false }
+    for (const node of nodes) { node.parent = null; node.satellites = []; node.halo = node.r }
+    for (const node of nodes) {
+      const parent = wanted.get(node.id)
+      if (parent && parent !== node.id && byId.has(parent) && !loops(node.id)) node.parent = byId.get(parent)
+    }
+    for (const node of nodes) {
+      if (!node.parent) continue
+      const siblings = node.parent.satellites
+      const index = siblings.length
+      siblings.push(node)
+      const ring = Math.floor(index / SATELLITES_PER_RING)
+      node.orbit = node.parent.r + node.r + 8 + ring * (node.r * 2 + 6)
+      node.spin = (index % 2 ? -1 : 1) * (0.28 + 0.07 * ring)
+    }
+    for (const node of nodes) {
+      if (!node.satellites.length) continue
+      node.satellites.forEach((satellite, index) => {
+        const count = Math.min(SATELLITES_PER_RING, node.satellites.length - Math.floor(index / SATELLITES_PER_RING) * SATELLITES_PER_RING)
+        if (satellite.angle === undefined) satellite.angle = (TAU * (index % SATELLITES_PER_RING)) / Math.max(1, count) + node.phase
+        node.halo = Math.max(node.halo, satellite.orbit + satellite.r)
+      })
+    }
+    // Un satellite nuovo parte già in orbita, non in un punto a caso dello spazio.
+    for (const node of nodes) {
+      if (node.parent && node.fresh) { node.x = node.parent.x + Math.cos(node.angle) * node.orbit; node.y = node.parent.y + Math.sin(node.angle) * node.orbit }
+      node.fresh = false
+    }
     edges = links
       .filter((link) => byId.has(link.a) && byId.has(link.b) && link.a !== link.b)
       .map((link) => ({ a: byId.get(link.a), b: byId.get(link.b), weight: Math.min(1, Math.max(0.05, Number(link.weight) || 0.5)) }))
@@ -67,12 +108,14 @@ export function createGraphSim({ seed = 7, wander = true } = {}) {
       for (let j = i + 1; j < nodes.length; j += 1) {
         const a = nodes[i]
         const b = nodes[j]
+        // Padre e satelliti (e i satelliti tra loro) hanno già il loro posto sull'orbita.
+        if (related(a, b)) continue
         let dx = b.x - a.x
         let dy = b.y - a.y
         let d2 = dx * dx + dy * dy
         if (d2 < 1e-4) { dx = random() - 0.5; dy = random() - 0.5; d2 = dx * dx + dy * dy + 1e-4 }
         const d = Math.sqrt(d2)
-        const gap = a.r + b.r + 26
+        const gap = a.halo + b.halo + 26
         let push = REPULSION / (d2 + 900)
         if (d < gap) push += (gap - d) * 14
         const fx = (dx / d) * push
@@ -99,7 +142,12 @@ export function createGraphSim({ seed = 7, wander = true } = {}) {
 
     nodes.forEach((node, i) => {
       if (node.pinned) { node.vx = 0; node.vy = 0; return }
-      if (node.degree > 0) {
+      if (node.parent) {
+        // Satellite: gira intorno al padre (da fermi, nel punto in cui sono) e vi resta agganciato con una molla rigida.
+        if (wandering) node.angle += node.spin * dt
+        ax[i] += (node.parent.x + Math.cos(node.angle) * node.orbit - node.x) * SATELLITE_SPRING
+        ay[i] += (node.parent.y + Math.sin(node.angle) * node.orbit - node.y) * SATELLITE_SPRING
+      } else if (node.degree > 0) {
         ax[i] -= node.x * GRAVITY
         ay[i] -= node.y * GRAVITY
       } else {
@@ -120,11 +168,11 @@ export function createGraphSim({ seed = 7, wander = true } = {}) {
       if (node.y > limitBottom) ay[i] -= (node.y - limitBottom) * WALL
       if (node.y < limitTop) ay[i] -= (node.y - limitTop) * WALL
 
-      const damping = Math.exp(-(node.degree > 0 ? 2.4 : 1.1) * dt)
+      const damping = Math.exp(-(node.parent ? 9 : node.degree > 0 ? 2.4 : 1.1) * dt)
       node.vx = (node.vx + ax[i] * dt) * damping
       node.vy = (node.vy + ay[i] * dt) * damping
       const speed = Math.hypot(node.vx, node.vy)
-      const cap = node.degree > 0 ? MAX_SPEED : 46
+      const cap = node.degree > 0 || node.parent ? MAX_SPEED : 46
       if (speed > cap) { node.vx *= cap / speed; node.vy *= cap / speed }
       node.x += node.vx * dt
       node.y += node.vy * dt

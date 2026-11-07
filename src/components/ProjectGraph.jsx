@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createGraphSim } from '../lib/graphLayout.js'
 import { createGraphRenderer, cssColor, webglAvailable } from '../lib/graphRenderer.js'
 import { loadProjectIcon, onProjectIconsChanged } from '../lib/projectIcons.js'
+import { decodeAnimatedIcon, disposeAnimatedIcon, frameAt } from '../lib/animatedIcon.js'
 import { ProjectAvatar } from './ProjectIcon.jsx'
 import { t, tp } from '../i18n/index.js'
 
@@ -9,7 +10,10 @@ const MIN_ZOOM = 0.4
 const MAX_ZOOM = 2.6
 
 const hashOf = (text) => { let hash = 2166136261; for (const char of String(text)) { hash ^= char.codePointAt(0); hash = Math.imul(hash, 16777619) } return hash >>> 0 }
-const radiusOf = (node) => 26 + Math.min(16, Math.log2((node.files || 0) + 1) * 2.6)
+// Il peso di un progetto (0-1) dai suoi file indicizzati, su scala logaritmica: decide la grandezza della bolla e quanto ha rilievo (vedi graphRenderer.js).
+const weightOf = (node) => Math.min(1, Math.log2((node.files || 0) + 1) / 7.5)
+// I sotto-progetti sono satelliti più piccoli, ma sempre con la loro misura.
+const radiusOf = (node) => (node.parent ? 14 + weightOf(node) * 8 : 22 + weightOf(node) * 24)
 const ease = (current, target, dt) => current + (target - current) * Math.min(1, dt * 9)
 
 function loadImage(url) {
@@ -28,7 +32,7 @@ const flagsOf = (node) => (!node.indexed ? t('Search index off') : node.shared ?
  * `graph`: { nodes, edges } da `projects:graph`; `matches`: Map(percorso progetto → numero di passaggi trovati) o null; `activePath`: il progetto aperto;
  * `onOpen(percorso)`. Se WebGL2 non c'è si mostra una griglia semplice con le stesse icone.
  */
-export default function ProjectGraph({ graph, matches = null, activePath = null, onOpen }) {
+export default function ProjectGraph({ graph, matches = null, activePath = null, onOpen, onContext }) {
   const wrapRef = useRef(null)
   const labelRefs = useRef(new Map())
   const live = useRef({})
@@ -41,6 +45,7 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
   live.current.activePath = activePath
   live.current.hoverId = hoverId
   live.current.onOpen = onOpen
+  live.current.onContext = onContext
 
   useEffect(() => {
     if (!supported || !wrapRef.current) return undefined
@@ -60,6 +65,7 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
     const size = { width: wrap.clientWidth || 800, height: wrap.clientHeight || 600, top: 84 }
     const mood = new Map() // id → { lit, dim }
     const index = new Map(visible.map((node, position) => [node.path, position]))
+    const weights = new Map(visible.map((node) => [node.path, weightOf(node)]))
     let running = true
     let frameId = 0
     let last = performance.now()
@@ -67,7 +73,8 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
     const readColors = () => ({ accent: cssColor('--accent-400', undefined, wrap), border: cssColor('--slate-700', [0.25, 0.25, 0.26], wrap) })
     let colors = readColors()
 
-    sim.setGraph(visible.map((node) => ({ id: node.path, r: radiusOf(node) })), (graph?.edges || []).map((edge) => ({ a: edge.a, b: edge.b, weight: edge.weight })), size)
+    const known = new Set(visible.map((node) => node.path))
+    sim.setGraph(visible.map((node) => ({ id: node.path, r: radiusOf(node), parent: node.parent && known.has(node.parent) ? node.parent : null })), (graph?.edges || []).map((edge) => ({ a: edge.a, b: edge.b, weight: edge.weight })), size)
     sim.settle(420, size)
     if (reduced) sim.freeze()
 
@@ -78,14 +85,31 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
     // Rilegge le icone (quelle già note vengono dalla cache) e rifà l'atlante. `always`: anche se nessun progetto ha un'immagine (un'icona tolta torna all'iniziale).
     // Più riletture possono sovrapporsi (due icone cambiate di seguito): conta solo l'ultima, altrimenti una più lenta riscriverebbe un'immagine vecchia.
     let iconRun = 0
+    let animated = []
+    let lastFrame = 0
+    const keeper = document.createElement('div')
+    keeper.setAttribute('aria-hidden', 'true')
+    keeper.style.cssText = 'position:absolute;left:0;top:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none'
+    wrap.appendChild(keeper)
     const loadIcons = async (always) => {
       const run = ++iconRun
       const images = await Promise.all(visible.map(async (node) => {
         const url = await loadProjectIcon(node.path)
-        return url ? loadImage(url) : null
+        return url ? { image: await loadImage(url), url, animated: /^data:image\/(gif|webp)/i.test(url) } : { image: null, url: null, animated: false }
       }))
       if (iconsCancelled || run !== iconRun) return
-      images.forEach((image, position) => { entries[position].image = image })
+      for (const entry of entries) { disposeAnimatedIcon(entry.anim); entry.anim = null; entry.shown = null }
+      images.forEach(({ image, animated: isAnimated }, position) => { entries[position].image = image; entries[position].animated = Boolean(image) && isAnimated })
+      // Immagine animata: si decodificano i fotogrammi (animatedIcon.js) e se ne mostra uno in base al tempo. Se non si può (niente ImageDecoder), l'immagine resta nel
+      // documento, invisibile, perché il browser ne faccia avanzare i fotogrammi, e ogni tanto se ne ricopia quello corrente nella texture.
+      keeper.replaceChildren(...entries.filter((entry) => entry.animated).map((entry) => entry.image))
+      animated = entries.map((entry, position) => (entry.animated ? position : -1)).filter((position) => position >= 0)
+      await Promise.all(animated.map(async (position) => {
+        const anim = await decodeAnimatedIcon(images[position].url)
+        if (iconsCancelled || run !== iconRun) { disposeAnimatedIcon(anim); return }
+        entries[position].anim = anim
+      }))
+      if (iconsCancelled || run !== iconRun) return
       if (always || entries.some((entry) => entry.image)) renderer.setIcons(entries)
     }
     loadIcons(false)
@@ -151,6 +175,14 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
       const point = toWorld(event.clientX, event.clientY)
       if (!sim.nodeAt(point.x, point.y)) { camera.x = 0; camera.y = 0; camera.zoom = 1 }
     }
+    // Tasto destro su una bolla: il chiamante apre il menu del progetto. Sullo sfondo non succede nulla (e non compare il menu del browser).
+    const onContextMenu = (event) => {
+      event.preventDefault()
+      const point = toWorld(event.clientX, event.clientY)
+      const hit = sim.nodeAt(point.x, point.y, 4 / camera.zoom)
+      if (hit) live.current.onContext?.(hit.id, event.clientX, event.clientY)
+    }
+    wrap.addEventListener('contextmenu', onContextMenu)
     wrap.addEventListener('pointerdown', onPointerDown)
     wrap.addEventListener('pointermove', onPointerMove)
     wrap.addEventListener('pointerup', onPointerUp)
@@ -167,6 +199,18 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
       last = now
       if (!wrap.offsetParent && !wrap.offsetWidth) return
       sim.step(dt, size)
+      // Icone animate: circa 12 fotogrammi al secondo (non con «riduci movimento»).
+      if (animated.length && !reduced) {
+        const dirty = []
+        for (const position of animated) {
+          const entry = entries[position]
+          if (entry.anim) {
+            const bitmap = frameAt(entry.anim, now)
+            if (bitmap !== entry.shown) { entry.shown = bitmap; entry.image = bitmap; dirty.push(position) }
+          } else if (now - lastFrame > 80) dirty.push(position)
+        }
+        if (dirty.length) { if (dirty.some((position) => !entries[position].anim)) lastFrame = now; renderer.refreshCells(dirty) }
+      }
 
       const { matches: found, activePath: opened, hoverId: hovered } = live.current
       const searching = Boolean(found)
@@ -191,7 +235,7 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
         // In una ricerca le sinapsi si interrompono verso chi non ha risultati.
         state.reach = ease(state.reach, searching && !found.has(node.id) ? 0 : 1, dt)
         mood.set(node.id, state)
-        return { x: node.x, y: node.y, r: node.r, cell: index.get(node.id) ?? 0, lit: state.lit, dim: state.dim, free: node.degree === 0 }
+        return { x: node.x, y: node.y, r: node.r, cell: index.get(node.id) ?? 0, lit: state.lit, dim: state.dim, free: node.degree === 0 && !node.parent, weight: weights.get(node.id) ?? 0 }
       })
       const edges = sim.edges.map((edge) => {
         const seed = hashOf(`${edge.a.id}|${edge.b.id}`)
@@ -204,6 +248,15 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
           reachA: mood.get(edge.a.id)?.reach ?? 1, reachB: mood.get(edge.b.id)?.reach ?? 1,
         }
       })
+      // Il legame tra un satellite e il suo padre: un filo corto, sempre acceso quanto il più evidenziato dei due.
+      for (const node of sim.nodes) {
+        if (!node.parent) continue
+        const lit = Math.max(mood.get(node.id)?.lit || 0, mood.get(node.parent.id)?.lit || 0)
+        edges.push({
+          ax: node.parent.x, ay: node.parent.y, bx: node.x, by: node.y, weight: -1, curve: 0, phase: (hashOf(node.id) % 1000) / 1000,
+          lit: Math.min(1, lit + 0.15), reachA: mood.get(node.parent.id)?.reach ?? 1, reachB: mood.get(node.id)?.reach ?? 1,
+        })
+      }
       renderer.draw({ time: now / 1000, still: reduced, pan: [camera.x, camera.y], zoom: camera.zoom, colors, nodes, edges, dim: hovered ? 0.65 : 0 })
 
       for (const node of sim.nodes) {
@@ -212,7 +265,10 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
         const x = (node.x - camera.x) * camera.zoom + size.width / 2
         const y = (node.y - camera.y) * camera.zoom + size.height / 2 + (node.r + 6) * camera.zoom
         element.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translateX(-50%)`
-        element.style.opacity = String(1 - 0.65 * (mood.get(node.id)?.dim || 0))
+        // Le etichette si vedono solo sotto il puntatore (o col focus da tastiera).
+        const state = mood.get(node.id)
+        if (state) state.label = ease(state.label || 0, node.id === hovered ? 1 : 0, dt)
+        element.style.opacity = String((state?.label || 0) < 0.02 ? 0 : state.label)
       }
     }
     frameId = requestAnimationFrame(loop)
@@ -224,10 +280,13 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
     return () => {
       running = false
       iconsCancelled = true
+      keeper.remove()
+      for (const entry of entries) disposeAnimatedIcon(entry.anim)
       stopListeningIcons()
       cancelAnimationFrame(frameId)
       resizeObserver.disconnect()
       themeObserver.disconnect()
+      wrap.removeEventListener('contextmenu', onContextMenu)
       wrap.removeEventListener('pointerdown', onPointerDown)
       wrap.removeEventListener('pointermove', onPointerMove)
       wrap.removeEventListener('pointerup', onPointerUp)

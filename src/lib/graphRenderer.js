@@ -67,7 +67,7 @@ const NODE_VERTEX = `#version 300 es
 precision highp float;
 layout(location = 0) in vec2 corner;
 layout(location = 1) in vec4 body;   // centro (x, y), raggio, indice cella
-layout(location = 2) in vec4 mood;   // evidenziata, attenuata, tipo (0 normale, 1 non connesso), vuoto
+layout(location = 2) in vec4 mood;   // evidenziata, attenuata, tipo (0 normale, 1 non connesso), peso (0-1: più è grande il progetto, più la bolla ha rilievo)
 uniform vec2 resolution;
 uniform vec2 pan;
 uniform float zoom;
@@ -99,12 +99,28 @@ void main() {
   float r = length(local);
   float edge = fwidth(r) * 1.2;
   float body = 1.0 - smoothstep(1.0 - edge, 1.0, r);
-  vec2 uv = local * 0.5 + 0.5;
+  // Rilievo: la bolla è una calotta sferica illuminata dall'alto a sinistra. Il peso (grandezza del progetto) decide quanto è marcata:
+  // i progetti grandi sono sfere piene e nette, i piccoli quasi piatti.
+  float weight = moodOut.w;
+  float depth = 0.28 + 0.72 * weight;
+  vec2 flat2 = clamp(local, vec2(-1.0), vec2(1.0));
+  float z = sqrt(max(0.0, 1.0 - min(dot(flat2, flat2), 1.0)));
+  vec3 normal = normalize(vec3(flat2, z));
+  // Come una lente: l'icona è leggermente ingrandita al centro e si incurva verso il bordo.
+  vec2 lens = local * mix(1.0, 0.86 + 0.14 * z, depth);
+  vec2 uv = lens * 0.5 + 0.5;
   float column = mod(cell, atlasGrid.x);
   float row = floor(cell / atlasGrid.x);
   vec2 atlasUv = (vec2(column, row) + clamp(uv, 0.0, 1.0)) / atlasGrid;
   vec4 icon = texture(atlas, atlasUv);
   vec3 face = mix(border * 0.55, icon.rgb, icon.a);
+  vec3 lightDir = normalize(vec3(-0.45, -0.62, 0.64));
+  float diffuse = max(dot(normal, lightDir), 0.0);
+  float specular = pow(max(dot(reflect(-lightDir, normal), vec3(0.0, 0.0, 1.0)), 0.0), 26.0);
+  float rimLight = pow(1.0 - z, 3.0);
+  face = face * mix(1.0, 0.50 + 0.66 * diffuse, depth)
+       + vec3(1.0) * specular * (0.10 + 0.42 * depth)
+       + accent * rimLight * 0.22 * depth;
   float ring = smoothstep(0.86, 0.9, r) * body;
   float lit = moodOut.x;
   vec3 rim = mix(border, accent, lit);
@@ -131,6 +147,7 @@ out float along;
 out float across;
 out vec4 styleOut;
 out vec2 reachOut;
+out float lengthOut;
 void main() {
   int id = gl_VertexID;
   float t = float(id / 2) / float(${SEGMENTS});
@@ -145,7 +162,9 @@ void main() {
   vec2 point = u * u * a + 2.0 * u * t * control + t * t * b;
   vec2 tangent = normalize(2.0 * u * (control - a) + 2.0 * t * (b - control));
   vec2 offsetDir = vec2(-tangent.y, tangent.x);
-  float width = (1.2 + 2.6 * style.x + 2.2 * style.w) / zoom;
+  // Peso negativo = il filo che lega un satellite al padre: più sottile, tratteggiato (vedi il frammento).
+  float tether = style.x < 0.0 ? 1.0 : 0.0;
+  float width = mix(1.2 + 2.6 * style.x + 2.2 * style.w, 0.85 + 0.9 * style.w, tether) / zoom;
   vec2 world = point + offsetDir * side * width;
   vec2 screen = (world - pan) * zoom;
   gl_Position = vec4(screen.x / (resolution.x * 0.5), -screen.y / (resolution.y * 0.5), 0.0, 1.0);
@@ -153,6 +172,7 @@ void main() {
   across = side;
   styleOut = style;
   reachOut = reach;
+  lengthOut = len;
 }`
 
 const EDGE_FRAGMENT = `#version 300 es
@@ -161,14 +181,23 @@ in float along;
 in float across;
 in vec4 styleOut;
 in vec2 reachOut;
+in float lengthOut;
 uniform vec3 accent;
 uniform float time;
 uniform float dim;
 out vec4 color;
 void main() {
-  float weight = styleOut.x;
   float lit = styleOut.w;
   float core = 1.0 - smoothstep(0.35, 1.0, abs(across));
+  if (styleOut.x < 0.0) {
+    // Il filo del satellite: tratti e vuoti regolari (non pulsa come una sinapsi), sempre dello stesso colore accento.
+    float dash = smoothstep(0.30, 0.42, abs(fract(along * lengthOut / 8.0) - 0.5) * 2.0);
+    float seen = mix(reachOut.x, reachOut.y, smoothstep(0.25, 0.75, along));
+    float a = core * dash * (0.62 + 0.38 * lit) * (1.0 - dim * (1.0 - lit)) * seen * seen;
+    color = vec4(accent * a, a);
+    return;
+  }
+  float weight = styleOut.x;
   // L'impulso: una piccola onda luminosa che percorre la sinapsi; le più forti pulsano più spesso.
   float speed = 0.18 + 0.22 * weight;
   float head = fract(time * speed + styleOut.z);
@@ -226,31 +255,35 @@ function buildAtlas(entries) {
   canvas.width = COLUMNS * CELL
   canvas.height = rows * CELL
   const context = canvas.getContext('2d')
-  entries.forEach((entry, index) => {
-    const x = (index % COLUMNS) * CELL
-    const y = Math.floor(index / COLUMNS) * CELL
-    if (entry.image) {
-      const side = Math.min(entry.image.naturalWidth || CELL, entry.image.naturalHeight || CELL) || CELL
-      const sx = ((entry.image.naturalWidth || CELL) - side) / 2
-      const sy = ((entry.image.naturalHeight || CELL) - side) / 2
-      context.fillStyle = 'rgba(30,30,32,1)'
-      context.fillRect(x, y, CELL, CELL)
-      context.drawImage(entry.image, sx, sy, side, side, x, y, CELL, CELL)
-    } else {
-      const hue = entry.hue ?? 0
-      const gradient = context.createLinearGradient(x, y, x + CELL, y + CELL)
-      gradient.addColorStop(0, `hsl(${hue} 18% 26%)`)
-      gradient.addColorStop(1, `hsl(${(hue + 40) % 360} 16% 17%)`)
-      context.fillStyle = gradient
-      context.fillRect(x, y, CELL, CELL)
-      context.fillStyle = 'rgba(235,235,230,0.92)'
-      context.font = `600 ${Math.round(CELL * 0.46)}px system-ui, sans-serif`
-      context.textAlign = 'center'
-      context.textBaseline = 'middle'
-      context.fillText(entry.initial || '?', x + CELL / 2, y + CELL / 2 + 4)
-    }
-  })
+  entries.forEach((entry, index) => drawCell(context, (index % COLUMNS) * CELL, Math.floor(index / COLUMNS) * CELL, entry))
   return { canvas, rows }
+}
+
+// Disegna una cella dell'atlante: l'icona ritagliata al quadrato centrale o, senza immagine, un tondo sfumato con l'iniziale.
+function drawCell(context, x, y, entry) {
+  if (entry.image) {
+    // Un'immagine (naturalWidth) o un fotogramma già decodificato (ImageBitmap: width).
+    const imageWidth = entry.image.naturalWidth || entry.image.width || CELL
+    const imageHeight = entry.image.naturalHeight || entry.image.height || CELL
+    const side = Math.min(imageWidth, imageHeight) || CELL
+    const sx = (imageWidth - side) / 2
+    const sy = (imageHeight - side) / 2
+    context.fillStyle = 'rgba(30,30,32,1)'
+    context.fillRect(x, y, CELL, CELL)
+    context.drawImage(entry.image, sx, sy, side, side, x, y, CELL, CELL)
+  } else {
+    const hue = entry.hue ?? 0
+    const gradient = context.createLinearGradient(x, y, x + CELL, y + CELL)
+    gradient.addColorStop(0, `hsl(${hue} 18% 26%)`)
+    gradient.addColorStop(1, `hsl(${(hue + 40) % 360} 16% 17%)`)
+    context.fillStyle = gradient
+    context.fillRect(x, y, CELL, CELL)
+    context.fillStyle = 'rgba(235,235,230,0.92)'
+    context.font = `600 ${Math.round(CELL * 0.46)}px system-ui, sans-serif`
+    context.textAlign = 'center'
+    context.textBaseline = 'middle'
+    context.fillText(entry.initial || '?', x + CELL / 2, y + CELL / 2 + 4)
+  }
 }
 
 export function createGraphRenderer(canvas) {
@@ -301,6 +334,8 @@ export function createGraphRenderer(canvas) {
   const texture = gl.createTexture()
   const emptyVao = gl.createVertexArray() // lo sfondo non ha attributi
   let atlasRows = 1
+  let atlasEntries = []
+  let cellCanvas = null
   let nodeData = new Float32Array(0)
   let edgeData = new Float32Array(0)
   let disposed = false
@@ -309,6 +344,7 @@ export function createGraphRenderer(canvas) {
   function setIcons(entries) {
     const { canvas: atlas, rows } = buildAtlas(entries)
     atlasRows = rows
+    atlasEntries = entries
     gl.bindTexture(gl.TEXTURE_2D, texture)
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlas)
@@ -317,6 +353,23 @@ export function createGraphRenderer(canvas) {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  }
+
+  // Icone animate (GIF, WebP): si ridisegnano solo le loro celle (il fotogramma corrente dell'immagine) e si caricano nella texture senza rifare l'atlante.
+  function refreshCells(indices) {
+    if (disposed || !indices.length) return
+    if (!cellCanvas) { cellCanvas = document.createElement('canvas'); cellCanvas.width = CELL; cellCanvas.height = CELL }
+    const context = cellCanvas.getContext('2d')
+    gl.bindTexture(gl.TEXTURE_2D, texture)
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false)
+    for (const index of indices) {
+      const entry = atlasEntries[index]
+      if (!entry) continue
+      context.clearRect(0, 0, CELL, CELL)
+      drawCell(context, 0, 0, entry)
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, (index % COLUMNS) * CELL, Math.floor(index / COLUMNS) * CELL, gl.RGBA, gl.UNSIGNED_BYTE, cellCanvas)
+    }
+    gl.generateMipmap(gl.TEXTURE_2D)
   }
 
   function resize() {
@@ -329,7 +382,7 @@ export function createGraphRenderer(canvas) {
 
   /**
    * frame: { time, still, pan: [x, y], zoom, colors: { accent, border },
-   *          nodes: [{ x, y, r, cell, lit, dim, free }], edges: [{ ax, ay, bx, by, weight, curve, phase, lit, reachA, reachB }], dim }
+   *          nodes: [{ x, y, r, cell, lit, dim, free, weight }], edges: [{ ax, ay, bx, by, weight, curve, phase, lit, reachA, reachB }], dim }
    */
   function draw(frame) {
     if (disposed) return
@@ -375,7 +428,7 @@ export function createGraphRenderer(canvas) {
       frame.nodes.forEach((node, index) => {
         const o = index * 8
         nodeData[o] = node.x; nodeData[o + 1] = node.y; nodeData[o + 2] = node.r; nodeData[o + 3] = node.cell
-        nodeData[o + 4] = node.lit; nodeData[o + 5] = node.dim; nodeData[o + 6] = node.free ? 1 : 0; nodeData[o + 7] = 0
+        nodeData[o + 4] = node.lit; nodeData[o + 5] = node.dim; nodeData[o + 6] = node.free ? 1 : 0; nodeData[o + 7] = node.weight || 0
       })
       gl.useProgram(nodeProgram)
       gl.uniform2f(nodeUniform.resolution, size.width, size.height)
@@ -412,5 +465,5 @@ export function createGraphRenderer(canvas) {
     gl.getExtension('WEBGL_lose_context')?.loseContext()
   }
 
-  return { setIcons, draw, resize, dispose }
+  return { setIcons, refreshCells, draw, resize, dispose }
 }
