@@ -240,7 +240,15 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
   )
 }
 
-export default function FileExplorer({ project, activePath, refreshToken, expandedPaths, onToggle, onChooseProject, onOpenProject, onOpenFile, onStatus, onRenamed, onDeleted, onSettingsChanged }) {
+export default function FileExplorer({ project, activePath, refreshToken, expandedPaths, onToggle, onChooseProject, onOpenProject, onOpenFile, onStatus, onRenamed, onDeleted, onSettingsChanged, settingsVersion = 0 }) {
+  // Il nome scelto nelle impostazioni del progetto (vuoto: si mostra il nome della cartella). Si rilegge quando le impostazioni cambiano.
+  const [projectName, setProjectName] = useState('')
+  useEffect(() => {
+    if (!project) { setProjectName(''); return undefined }
+    let cancelled = false
+    electronAPI.getProjectSettings().then((settings) => { if (!cancelled) setProjectName(String(settings?.name || '').trim()) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [project, settingsVersion])
   const [entries, setEntries] = useState([])
   const [error, setError] = useState('')
   const [localRefresh, setLocalRefresh] = useState(0)
@@ -695,7 +703,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     )
   }
 
-  const name = project.split(/[\\/]/).filter(Boolean).at(-1) || project
+  const name = projectName || project.split(/[\\/]/).filter(Boolean).at(-1) || project
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

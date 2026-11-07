@@ -10,10 +10,16 @@ import { TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP, formatTemperature, 
 import { setProjectEditor } from '../appearance.js'
 import { formatNumber } from '../i18n/index.js'
 import { samePath } from '../lib/pathCompare.js'
+import { SettingsHeaderActions } from './SettingsActions.jsx'
 import { t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
 const languages = ['Italiano', 'English', 'Español', 'Français', 'Deutsch', 'Português']
+// Il nome della cartella del progetto: da `settings.path` (la cartella .ow dentro il progetto) o, se si conosce, dal percorso del progetto.
+const folderOf = (settings, projectPath) => {
+  const source = projectPath || (settings?.path ? String(settings.path).replace(/[\\/]+\.ow[\\/]*$/i, '') : '')
+  return String(source).split(/[\\/]/).filter(Boolean).at(-1) || ''
+}
 const fieldClass = 'mt-2 w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2.5 text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400'
 
 // Dove sta il progetto sul disco: il percorso, e lo spostamento in un'altra cartella (la `.ow` si porta dietro tutto).
@@ -98,7 +104,8 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
     // Con `projectPath` si modificano le impostazioni di quel progetto (anche non aperto); altrimenti quelle del progetto aperto.
     ;(projectPath ? electronAPI.getProjectSettingsFor(projectPath) : electronAPI.getProjectSettings()).then((settings) => {
       setInfo(settings)
-      setForm({ name: settings.name, language: settings.ai.language, documentLanguage: settings.ai.documentLanguage || '', temperature: settings.ai.temperature ?? '', context: settings.ai.context, autoVersions: settings.options.autoVersions, searchIndex: settings.options.searchIndex !== false, sharedKnowledge: settings.options.sharedKnowledge !== false, inherit: settings.inherit === true, spellcheck: settings.spellcheck.languages, editor: settings.editor })
+      // Senza un nome scelto, il campo parte dal nome della cartella (che resta il nome finché non lo si cambia).
+      setForm({ name: settings.name || folderOf(settings, projectPath), language: settings.ai.language, documentLanguage: settings.ai.documentLanguage || '', temperature: settings.ai.temperature ?? '', context: settings.ai.context, autoVersions: settings.options.autoVersions, searchIndex: settings.options.searchIndex !== false, sharedKnowledge: settings.options.sharedKnowledge !== false, inherit: settings.inherit === true, spellcheck: settings.spellcheck.languages, editor: settings.editor })
     }).catch((reason) => setError(reason.message))
   }, [project, projectPath, reloadToken])
 
@@ -109,7 +116,8 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
 
   async function save() {
     try {
-      const payload = ({ name: form.name, ai: { context: form.context, language: form.language, documentLanguage: form.documentLanguage, temperature: form.temperature }, options: { autoVersions: form.autoVersions, searchIndex: form.searchIndex, sharedKnowledge: form.sharedKnowledge }, ...(info.parent ? { inherit: form.inherit } : {}), spellcheck: { languages: form.spellcheck }, editor: form.editor })
+      // Il nome uguale a quello della cartella non si salva: il progetto continua a seguire la cartella (se la si rinomina o sposta).
+      const payload = ({ name: form.name.trim() === folderOf(info, projectPath) ? '' : form.name, ai: { context: form.context, language: form.language, documentLanguage: form.documentLanguage, temperature: form.temperature }, options: { autoVersions: form.autoVersions, searchIndex: form.searchIndex, sharedKnowledge: form.sharedKnowledge }, ...(info.parent ? { inherit: form.inherit } : {}), spellcheck: { languages: form.spellcheck }, editor: form.editor })
       const result = await (projectPath ? electronAPI.saveProjectSettingsFor(projectPath, payload) : electronAPI.saveProjectSettings(payload))
       // Se è il progetto aperto, il carattere cambia subito.
       const open = await electronAPI.getProject()
@@ -130,6 +138,14 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
   if (error && !form) return <p className="text-sm text-rose-400">{error}</p>
   if (!form) return null
 
+  const saveActions = (
+    <>
+      {error && <span className="min-w-0 truncate text-sm text-rose-400" title={error}>{error}</span>}
+      {saved && <span className="flex shrink-0 items-center gap-1 text-sm text-emerald-400"><Check size={15} /> {t('Saved')}</span>}
+      <button type="button" className="shrink-0 rounded-md bg-accent-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-500" onClick={save}>{t('Save settings')}</button>
+    </>
+  )
+
   return (
     <section className={embedded ? 'grid grid-cols-1 gap-5 p-5' : 'grid grid-cols-1 gap-5 rounded-xl border border-slate-800 bg-slate-950/40 p-6'}>
       <div>
@@ -142,7 +158,10 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
 
       <div className="flex items-center gap-4">
         <ProjectIconField directory={projectPath || (typeof project === 'string' ? project : '')} name={form.name} onChanged={onChanged} onError={setError} />
-        <label className="min-w-0 flex-1 text-sm text-slate-300">{t('Project name')}<input value={form.name} maxLength={200} className={fieldClass} placeholder={t('Optional')} onChange={(event) => update({ name: event.target.value })} />
+        <label className="min-w-0 flex-1 text-sm text-slate-300">{t('Project name')}<span className="mt-2 flex items-stretch rounded-md border border-slate-700 bg-slate-800 focus-within:border-accent-400">
+            <span aria-hidden="true" className="flex select-none items-center border-r border-slate-700 px-3 text-slate-500">@</span>
+            <input value={form.name} maxLength={200} className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-slate-100 outline-none placeholder:text-slate-500" placeholder={t('Optional')} onChange={(event) => update({ name: event.target.value.replace(/^@+/, '') })} />
+          </span>
         </label>
       </div>
 
@@ -222,11 +241,11 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
 
       <CopyContext target={projectPath || null} onCopied={() => { onChanged?.(); setReloadToken((value) => value + 1) }} />
 
-      <div className="flex items-center gap-3">
-        <button type="button" className="rounded-md bg-accent-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-500" onClick={save}>{t('Save settings')}</button>
-        {saved && <span className="flex items-center gap-1 text-sm text-emerald-400"><Check size={15} /> {t('Saved')}</span>}
-        {error && <span className="text-sm text-rose-400">{error}</span>}
-      </div>
+      {/* Il salvataggio resta sempre in vista: nella finestra delle impostazioni sta a destra dell'intestazione, in quella del singolo progetto nel suo piede
+          (entrambi fuori dallo spazio che scorre, vedi SettingsActions.jsx). */}
+      <SettingsHeaderActions fallback={<div className="flex items-center justify-end gap-3">{saveActions}</div>}>
+        {saveActions}
+      </SettingsHeaderActions>
     </section>
   )
 }

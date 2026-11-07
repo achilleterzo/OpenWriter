@@ -23,7 +23,8 @@ function sharedProjects({ current, projects, references = [], isShared }) {
     let ok = false
     try { ok = Boolean(isShared(project.path)) } catch { ok = false }
     if (!ok) continue
-    const base = cleanName(path.basename(project.path) || project.name)
+    // La sigla viene dal nome del progetto (quello scelto nelle impostazioni, se c'è: l'elenco lo dà già così), altrimenti dalla cartella.
+    const base = cleanName(project.name || path.basename(project.path))
     let name = base
     for (let counter = 2; taken.has(name.toLowerCase()); counter += 1) name = `${base}-${counter}`
     taken.add(name.toLowerCase())
