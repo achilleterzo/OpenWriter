@@ -9,6 +9,7 @@ import McpSettings from './McpSettings.jsx'
 import QuickActionsSettings from './QuickActionsSettings.jsx'
 import ProjectSettings from './ProjectSettings.jsx'
 import SkillsManager from './SkillsManager.jsx'
+import { SettingsActionsContext } from './SettingsActions.jsx'
 import { t } from '../i18n/index.js'
 
 // Per aggiungere una sezione basta una nuova voce qui.
@@ -28,6 +29,8 @@ export default function SettingsScreen({ initialSection = 'general', project, on
   const [section, setSection] = useState(initialSection)
   const current = sections.find((item) => item.id === section)
   const pressedOnBackdrop = useRef(false)
+  // L'elemento a destra dell'intestazione dove le sezioni portano le loro azioni (vedi SettingsActions.jsx); in stato perché il contesto si aggiorni quando esiste.
+  const [actionsSlot, setActionsSlot] = useState(null)
 
   useEffect(() => {
     const closeOnEscape = (event) => { if (event.key === 'Escape') onBack() }
@@ -37,12 +40,13 @@ export default function SettingsScreen({ initialSection = 'general', project, on
 
   return (
     // Si chiude solo se click e rilascio avvengono entrambi sullo sfondo: trascinare una selezione fuori dal pannello non deve chiuderlo.
+    <SettingsActionsContext.Provider value={actionsSlot}>
     <div
       className="fixed inset-0 z-20 flex items-center justify-center bg-slate-950/75 p-4 text-slate-100 backdrop-blur-sm sm:p-8"
       onMouseDown={(event) => { pressedOnBackdrop.current = event.target === event.currentTarget }}
       onClick={(event) => { if (pressedOnBackdrop.current && event.target === event.currentTarget) onBack() }}
     >
-      <section role="dialog" aria-modal="true" aria-labelledby="settings-title" className="flex h-[min(760px,calc(100vh-2rem))] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
+      <section role="dialog" aria-modal="true" aria-labelledby="settings-title" className="flex h-[min(900px,calc(100vh-2rem))] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
         <header className="flex items-center gap-4 border-b border-slate-800 px-6 py-5">
           <button
             type="button"
@@ -58,6 +62,7 @@ export default function SettingsScreen({ initialSection = 'general', project, on
               <Settings2 size={15} /> {t('Settings')}</p>
             <h1 id="settings-title" className="mt-1 text-2xl font-semibold tracking-tight">{current.label}</h1>
           </div>
+          <div ref={setActionsSlot} className="ml-auto flex min-w-0 items-center justify-end gap-3" />
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
@@ -95,5 +100,6 @@ export default function SettingsScreen({ initialSection = 'general', project, on
         </div>
       </section>
     </div>
+    </SettingsActionsContext.Provider>
   )
 }
