@@ -33,6 +33,7 @@ The external agent and the built-in assistant do not compete: they split the wor
 **Write**
 - Edit Markdown in a rich-text interface while Markdown stays the native format, with a source view, find and replace, and extended Markdown (tables, footnotes, formulas, GitHub alerts, front matter, HTML) kept exactly as written.
 - Open Markdown, DOCX, and PDF files; export to DOCX, PDF, or a self-contained Markdown file. Open a `.md` file straight from the operating system.
+- Open any text file (code, configuration, logs, `.txt`) in a text reader tab: edit it as it is, with line numbers you can switch on, find and replace (match case, whole word, regular expressions), and its line endings and encoding preserved.
 - Organize documents in projects with a file explorer, tabs, outlines, bookmarks, sub-projects, linked documents, and their own icon. Work without a project too, in a built-in main project.
 - Customize themes, accent colors, typography, and spell-checking. The interface is available in English, Italian, French, Spanish, German, and Portuguese.
 
@@ -69,6 +70,7 @@ The sections below describe each area in detail.
 - When the assistant edits a passage, the change is shown at word level, so you review what actually changed and not the whole block.
 - Editor fonts: a curated set of Google Fonts, more installable from the catalog and kept for offline use, with an optional font per project. The reading mode follows the application theme, and the theme and the language default to the system's.
 - The Markdown source view shows line numbers.
+- **Text files.** Any file that is not a document opens in the text reader, from the explorer or from File → Open → All files. It is read and saved without interpretation: line endings (LF or CRLF), the UTF-8 signature, and the permissions of the file stay as they were. Files over 1 MB, binary files, and files that are not UTF-8 are not opened, and the message says why. The assistant and the external agents work on documents, not on these tabs.
 - An Info tab with the statistics of the document in front: last save, words, characters, sentences, pages, reading and speaking time, average and longest sentence, structure (headings, lists, tables, images, links, footnotes, formulas), and the numbers of the selected text.
 - Many modified documents can be saved at once from the tab bar; a document modified by the assistant counts as modified until you accept its edits.
 - The chat box takes a restricted Markdown (bold, italic, code, lists, links) with no visible toolbar: paste Markdown, start a line with `- ` for a list, and the replies and the assistant's questions are rendered as Markdown too.
@@ -96,7 +98,7 @@ OpenWriter instructs the CLI providers not to run arbitrary shell commands. Thei
 - **Research assistant.** An optional second model, chosen in Settings, that the assistant calls to explore the project on its own — searching and reading the files — and that returns a short report with paths and line numbers, so long explorations stay out of the conversation. It only reads.
 - **Context and attachments.** Choose which open documents are sent as context. Attach images and PDFs to a message (when the model can read them).
 - **Reviewable edits.** Edits made through the assistant's tools stay applied but are marked, with the previous text shown and Accept and Reject buttons. A version is archived before the first edit of a turn.
-- **Conversations.** Stored as readable JSON, with renaming, deletion, branching, copied message history, and additional conversation context.
+- **Conversations.** Stored as readable JSON, with renaming, deletion, branching, copied message history, and additional conversation context. Every step is saved as it happens, so a turn that was interrupted (a stop, an error, the app closing) can be resumed from its last step with "Resume from here", without redoing the work already done.
 - **Tools you can switch off.** Each group of tools can be turned off in Settings. The assistant is told which ones are off, so it can ask you to turn one on instead of working around it.
 
 ## Assistant tools
