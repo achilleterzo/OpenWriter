@@ -20,3 +20,5 @@ Project file tree. Without a project it shows a placeholder with the button that
 **Empty folders**: the main process also tells each folder what it holds (`emptiness`): `'empty'` (really nothing: no arrow, a click does not open it, tooltip "Empty folder"; it can still be selected, renamed, deleted, or have a file created in it from the menu, which expands it as before) or `'hidden'` (it has only hidden entries: expanded, it says "Only hidden files" instead of "Empty").
 
 The header shows the project name chosen in the settings (read again when `settingsVersion` changes) and the folder name when there is none.
+
+**Deselecting.** A click on the empty area under the rows clears the selection and the folder chosen as the destination of new files (new files go back to the project root). The row of the open document keeps its own highlight, which follows the tab, not the selection.

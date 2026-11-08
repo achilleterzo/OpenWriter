@@ -24,3 +24,7 @@ Secure bridge between the renderer and the main process, exposed as `window.elec
 
 
 `takeExternalProjects` / `onExternalProject`: folders to open as a project (file manager entry, command line). `getIntegrationStatus`, `setMarkdownAssociation(on)`, `setFolderMenu(on)`, `openDefaultApps()`: system integration (see [system-integration.cjs](system-integration.cjs.md)).
+
+`openTextFile(path)` and `saveTextFile({ filePath, text, eol, bom, saveAs })`: the text reader (see [text-file.cjs](text-file.cjs.md)).
+
+Workspaces: `listWorkspaces`, `createWorkspace`, `renameWorkspace`, `setWorkspaceMembers`, `addProjectToWorkspace`, `removeProjectFromWorkspace`, `removeWorkspace`, `setActiveWorkspace`, `addTemporaryProject`, `dismissTemporaryProject`, `adoptTemporaryProject`, `onWorkspacesChanged(callback)` (see [workspaces-store.cjs](workspaces-store.cjs.md)).

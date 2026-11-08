@@ -11,3 +11,4 @@ Internal dialog window for confirmations and text requests, used instead of `win
   - `prompt(message, initial, options)`: a single-line text request, resolving to the text or `null`.
 
 `DialogBox` is the shared window: a form with the message and the optional detail, an input for `prompt`, and the buttons. Escape or a click on the backdrop cancels (resolving to `false`, or `null` for `prompt` and `choose`).
+`radio(message, options, extra)`: a choice among several options with radio buttons (`options`: `[{ value, label, description? }]`; `extra.initial` the preselected value, `extra.confirmLabel` the button). It returns the chosen `value`, or null if cancelled. Used to ask in which workspace to add a project opened from outside.

@@ -17,3 +17,9 @@ Hook that applies native-menu document commands to the active tab, subscribing t
 - `print`: prints the editor HTML through the hidden print window.
 
 Errors are logged and surface as a generic status message.
+
+## useWorkspaces.js
+
+Source: [`src/hooks/useWorkspaces.js`](../../../src/hooks/useWorkspaces.js)
+
+The workspaces for the interface: `{ active, workspaces, temporary, activeWorkspace, refresh }`. `active` is the id of the active workspace (`all` = every project), `activeWorkspace` its definition (null for All), `temporary` the paths of the temporary members (projects opened by an agent). It also says whether the data have `loaded` (before that the list is empty, which does not mean there are no workspaces). It reads again whenever something changes (`workspaces:changed`), also when an agent changed it. Used by [WorkspaceSelector.jsx](components/pages/WorkspaceSelector.jsx.md), [ProjectsPanel.jsx](components/pages/ProjectsPanel.jsx.md) and [ProjectsHome.jsx](components/pages/ProjectsHome.jsx.md).

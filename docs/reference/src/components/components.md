@@ -21,6 +21,11 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [FontPicker.jsx](pages/FontPicker.jsx.md) — Editor font choice and Google Fonts catalog
 - [GeneralSettings.jsx](pages/GeneralSettings.jsx.md) — General settings: language, project folder, spell check
 - [HistoryPanel.jsx](pages/HistoryPanel.jsx.md) — Document history: versions, labels, diff, restore
+- [WorkspaceSelector.jsx](pages/WorkspaceSelector.jsx.md) — Selector of the active workspace
+- [WorkspaceDialog.jsx](pages/WorkspaceDialog.jsx.md) — Creates or edits a workspace, with a switch for each project
+- [TextPane.jsx](pages/TextPane.jsx.md) — Text reader: edits any text file, with line numbers, find and replace
+- [TextFindBar.jsx](pages/TextFindBar.jsx.md) — Find and replace of the text reader
+- [FindPanel.jsx](pages/FindPanel.jsx.md) — Shared look of the find and replace bar
 - [ImagePane.jsx](pages/ImagePane.jsx.md) — Zoomable read-only tab for a project image
 - [InfoPanel.jsx](pages/InfoPanel.jsx.md) — Document info: last save, word and character counts, reading time, structure
 - [InlineMarkdown.jsx](pages/InlineMarkdown.jsx.md) — Inline Markdown drawn with its styles, for note quotations and proposals

@@ -17,3 +17,5 @@ The requests that arrive from the MCP server — an external agent, through the 
 Called from [App.jsx](../App.jsx.md) when the main process forwards a request (`onMcpRequest`), answering with `answerMcp`.
 
 `save_web_reference` and `refresh_web_reference` (from an external agent, saved as `agent`) run through [webReferences.js](webReferences.js.md) in the background browser tab; they need the editing-by-agents setting like the other writing tools.
+
+`open_project` from an agent: a project the agent **created** (`created`) joins the active workspace like any new project; one it only **opened** is opened with `join: false` and registered as a temporary member of the active workspace (the user adds or ignores it), and stays visible to that agent ([mcp-server.cjs](../../electron/mcp-server.cjs.md)).

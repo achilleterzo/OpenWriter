@@ -35,6 +35,9 @@ Non-React helpers used by the editor and the assistant.
 - [readerMode.js](readerMode.js.md) — Article extraction, reading view, and save as Markdown
 - [webAddress.js](webAddress.js.md) — Which web addresses the assistant and agents may open
 - [animatedIcon.js](animatedIcon.js.md) — Decodes animated GIF/WebP icons of the Home graph and picks the frame by time
+- [snippetMarkdown.js](snippetMarkdown.js.md) — Reads the Markdown of a search excerpt into styled pieces, keeping the found words highlighted
+- [textSearch.js](textSearch.js.md) — Search and replace in a plain text (text reader)
+- [chatResume.js](chatResume.js.md) — Resumes an interrupted assistant turn from its last saved step
 - [graphLayoutStore.js](graphLayoutStore.js.md) — Remembers the positions of the projects in the Home network between launches
 - [graphProjection.js](graphProjection.js.md) — Perspective projection of the project network, so it can be turned in space (yaw and pitch)
 - [svgIcon.js](svgIcon.js.md) — Gives SVG project icons an explicit size so the graph frames them like the list

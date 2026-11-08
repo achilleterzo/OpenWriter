@@ -10,3 +10,5 @@ Remembers where each project sits in the network of the Home between launches, s
 - `clearLayout(storage?)` forgets everything.
 
 Every access is protected: with no storage or damaged data the network arranges itself as the first time. Tested in `tests/graph-layout-store.test.cjs`.
+
+**One arrangement per workspace.** "All" keeps the original key (`openwriter.graphLayout.v1`), every other workspace has its own (`…:<id>`): `loadLayout(storage, workspace)`, `saveLayout(nodes, storage, workspace)`, `clearLayout(storage, workspace)` (the `workspace` argument comes after the optional `storage`, so existing callers are unchanged), `layoutKeyFor(workspace)`. `pruneLayouts(validIds, storage)` removes the arrangements of workspaces that no longer exist and never touches "All" or other keys. Each key keeps at most 400 projects.

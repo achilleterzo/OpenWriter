@@ -31,3 +31,11 @@ With no project at all (the agent does not work in a project and the app has non
 The pages the user saved with the star of the browser tab ([web-references.cjs](web-references.cjs.md)) are `@web/…` for `search_knowledge`, `read_document` and `list_documents`, and appear in `project_info` (`sharedWithThisProject`) as "saved web pages"; those of the other shared projects are `@<project>-web`.
 
 Web references ([web-references.cjs](web-references.cjs.md)): `list_web_references` (read: title, address, `@web/…` path, who saved it, saved, updated and checked dates and the age in days, from `.ow/web.json`) and, among the writing tools, `save_web_reference` and `refresh_web_reference` (through the app, which opens the page in a background browser tab; saved as `agent`): an agent can save pages that it finds important for the work as context, check how old each copy is and refresh it.
+
+**Workspaces.** The server reads the workspace files ([workspaces-store.cjs](workspaces-store.cjs.md)) at every call, so a workspace chosen in the app applies at once. By default the projects offered and searched (`project_info > sharedWithThisProject`, `search_knowledge`) are those of the **active workspace**; `project_info` says which one it is.
+
+- `list_workspaces` (read-only): the workspaces with their projects and which is active.
+- `open_workspace` (a writing tool: it changes what the user sees; not in read-only mode): makes a workspace the active one, or "All". With the app open it goes through the bridge (the interface updates); otherwise it is written to the files and applies at the next start.
+- `search_knowledge` takes `workspace`: omitted = the active workspace; `false` (or `"all"`) = every project; a string = that workspace by name. An unknown name is an error that lists the available ones, with or without the app.
+- **Grants.** The projects this process opened itself with `open_project` stay visible to it even if they are not members (`granted`), and travel with `search_knowledge` to the app; other agents and the assistant do not see them until the user adds them.
+- **Reading is not filtered.** `read_document` and `list_documents` on an explicit `@name` work for any shared project (as with `workspace: false`): the name was seen in a search, and the workspace decides what is offered and searched by default.
