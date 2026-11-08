@@ -225,6 +225,8 @@ export default function App() {
   const [settingsVersion, setSettingsVersion] = useState(0)
   // Cambia quando l'elenco dei progetti cambia (tolto, spostato, rinominato): la Home ricarica il grafo.
   const [projectsVersion, setProjectsVersion] = useState(0)
+  // Cambia lo spazio di lavoro (o i suoi membri): la Home ricarica il grafo; l'elenco dei progetti si rilegge da sé.
+  useEffect(() => (electronAPI?.onWorkspacesChanged ? electronAPI.onWorkspacesChanged(() => setProjectsVersion((value) => value + 1)) : undefined), [])
   const [notes, setNotes] = useState([])
   const [notesVersion, setNotesVersion] = useState(0)
   // Segnalibri del documento di contesto (ancore con nome: link `file#nome`, punti da far notare all'assistente).
@@ -269,7 +271,7 @@ export default function App() {
   // Gli ultimi valori restano in un ref: serve a salvare la sessione anche dai timer e da beforeunload.
   const latest = useRef({})
   const openProjectRef = useRef(null)
-  latest.current = { openProject: (directory) => openProjectRef.current?.(directory), ready, tabs, activeId, editors, project, sideTab, expandedPaths, assistantOpen, conversationId, contextPins, contextTabId: contextTab?.id }
+  latest.current = { openProject: (directory, options) => openProjectRef.current?.(directory, options), ready, tabs, activeId, editors, project, sideTab, expandedPaths, assistantOpen, conversationId, contextPins, contextTabId: contextTab?.id }
   const saveTimer = useRef(null)
 
   const buildSession = useCallback(() => {
@@ -478,7 +480,7 @@ export default function App() {
   }, [flushSession, applySession])
 
   const chooseProject = useCallback(() => switchProject(() => electronAPI.chooseProject()), [switchProject])
-  const openProject = useCallback((directory) => switchProject(() => electronAPI.openProject(directory)), [switchProject])
+  const openProject = useCallback((directory, options) => switchProject(() => electronAPI.openProject(directory, options)), [switchProject])
   openProjectRef.current = openProject
   // Scegliendo un progetto dal pannello Progetti si passa subito ai suoi file (se la scelta è annullata non cambia nulla).
   // Con la scheda Progetti attiva l'area centrale mostra la Home (la rete dei progetti) al posto dei documenti e della chat, che restano montati.
@@ -1177,7 +1179,7 @@ export default function App() {
           activate: setActiveId,
           notify: (title) => setStatus(t('An agent proposed changes to “{title}”: review them in the document', { title })),
           refreshNotes: () => setNotesVersion((value) => value + 1),
-          openProject: (directory) => latest.current.openProject(directory),
+          openProject: (directory, options) => latest.current.openProject(directory, options),
           setStatus,
           // La richiesta parte nella chat dell'assistente, firmata col nome dell'agente (messaggio riconoscibile come non scritto dall'utente);
           // si risponde quando il messaggio è salvato, con l'id della chat e l'indice del messaggio.
@@ -1450,7 +1452,28 @@ export default function App() {
     const open = (document) => workspaceRef.current.openLoaded(document)
     electronAPI.takeExternalDocuments().then((list) => list.forEach(open)).catch((error) => console.error(error))
     // Cartelle passate all'app (voce «Apri come progetto OpenWriter»): si apre il progetto e si passa ai suoi file.
-    const openFolder = (directory) => showFiles(openProject(directory))
+    // Con uno spazio di lavoro attivo di cui il progetto non fa parte, si chiede dove aggiungerlo: lo spazio attuale (predefinito), un altro (lo aggiunge e passa a quello),
+    // o nessuno (resta solo tra tutti i progetti). Annullare vale «nessuno»: il progetto si apre lo stesso.
+    const openFolder = async (directory) => {
+      let state = null
+      try { state = await electronAPI.listWorkspaces() } catch { /* senza spazi di lavoro si apre e basta */ }
+      const current = state?.workspaces.find((item) => item.id === state.active)
+      if (!current || current.projects.some((known) => samePath(known, directory))) return showFiles(openProject(directory))
+      const picked = await dialogsRef.current.radio(t('Where do you want to add “{name}”?', { name: baseName(directory) }), [
+        { value: current.id, label: t('{name} (current)', { name: current.name }) },
+        ...state.workspaces.filter((item) => item.id !== current.id).map((item) => ({ value: item.id, label: item.name })),
+        { value: 'none', label: t('Only in All projects'), description: t('It will not belong to any workspace.') },
+      ], { initial: current.id, confirmLabel: t('Open') })
+      const choice = picked || 'none'
+      const opened = await showFiles(openProject(directory, { join: false }))
+      if (opened && choice !== 'none') {
+        try {
+          await electronAPI.addProjectToWorkspace(choice, directory)
+          if (choice !== current.id) await electronAPI.setActiveWorkspace(choice)
+        } catch (error) { console.error(error) }
+      }
+      return opened
+    }
     electronAPI.takeExternalProjects?.().then((list) => list.forEach(openFolder)).catch((error) => console.error(error))
     const stopProjects = electronAPI.onExternalProject?.(openFolder)
     const stopDocuments = electronAPI.onExternalDocument(open)
