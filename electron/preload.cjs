@@ -27,6 +27,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     install: (family) => ipcRenderer.invoke('fonts:install', family),
     remove: (family) => ipcRenderer.invoke('fonts:remove', family),
   },
+  listAllProjects: () => ipcRenderer.invoke('workspaces:all-projects'),
+  listWorkspaces: () => ipcRenderer.invoke('workspaces:list'),
+  createWorkspace: (input) => ipcRenderer.invoke('workspaces:create', input),
+  renameWorkspace: (id, name) => ipcRenderer.invoke('workspaces:rename', id, name),
+  setWorkspaceMembers: (id, projects) => ipcRenderer.invoke('workspaces:set-members', id, projects),
+  addProjectToWorkspace: (id, project) => ipcRenderer.invoke('workspaces:add-project', id, project),
+  removeProjectFromWorkspace: (id, project) => ipcRenderer.invoke('workspaces:remove-project', id, project),
+  removeWorkspace: (id) => ipcRenderer.invoke('workspaces:remove', id),
+  setActiveWorkspace: (id) => ipcRenderer.invoke('workspaces:set-active', id),
+  addTemporaryProject: (project) => ipcRenderer.invoke('workspaces:add-temporary', project),
+  dismissTemporaryProject: (project) => ipcRenderer.invoke('workspaces:dismiss-temporary', project),
+  adoptTemporaryProject: (project) => ipcRenderer.invoke('workspaces:adopt-temporary', project),
+  onWorkspacesChanged: (callback) => {
+    const listener = () => callback()
+    ipcRenderer.on('workspaces:changed', listener)
+    return () => ipcRenderer.removeListener('workspaces:changed', listener)
+  },
   openTextFile: (filePath) => ipcRenderer.invoke('text:open', filePath),
   saveTextFile: (payload) => ipcRenderer.invoke('text:save', payload),
   openDocument: () => ipcRenderer.invoke('document:open'),
@@ -182,7 +199,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listProjects: () => ipcRenderer.invoke('workspace:list-projects'),
   getProjectGraph: (options) => ipcRenderer.invoke('projects:graph', options),
   searchProjects: (args) => ipcRenderer.invoke('projects:search', args),
-  openProject: (directory) => ipcRenderer.invoke('workspace:open-project', directory),
+  openProject: (directory, options) => ipcRenderer.invoke('workspace:open-project', directory, options),
   createProject: (name) => ipcRenderer.invoke('workspace:create-project', name),
   removeProject: (directory) => ipcRenderer.invoke('workspace:remove-project', directory),
   chooseProject: () => ipcRenderer.invoke('workspace:choose-project'),

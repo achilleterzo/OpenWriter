@@ -42,6 +42,7 @@ const { createKnowledgeService, formatKnowledgeResults } = require('./knowledge-
 const { createSemanticPack } = require('./semantic-pack.cjs')
 const { createGpuContext } = require('./gpu-context.cjs')
 const { outsideFolders: outsideFoldersOf } = require('./shared-knowledge.cjs')
+const { createWorkspacesStore } = require('./workspaces-store.cjs')
 const { STOPWORDS } = require('./knowledge-index.cjs')
 const { affinityEdges, uniformEdges, collectVectors, parentProjects } = require('./project-graph.cjs')
 const { mergeSearches, cleanTerms } = require('./search-merge.cjs')
@@ -81,6 +82,8 @@ const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
 
 let projectPath = null
 const projectsStore = createProjectsStore({ filePath: () => path.join(app.getPath('userData'), 'projects.json') })
+// Gli spazi di lavoro (workspace): un filtro sull'elenco dei progetti e sulla conoscenza che l'assistente e gli agenti raggiungono (workspaces-store.cjs).
+const workspacesStore = createWorkspacesStore({ directory: () => app.getPath('userData') })
 // Progetto "main": una cartella con la sua `.ow` nei dati dell'app. Quando nessun progetto è aperto fa da progetto (chat, note, memoria,
 // contesto, skill) e tiene sempre cronologia e note dei documenti sparsi, cioè fuori dal progetto aperto.
 const mainDirectory = () => path.join(app.getPath('userData'), 'main')
@@ -268,9 +271,10 @@ function startKnowledge() {
 const sharedSynced = new Map()
 // Tutto ciò che sta fuori dal progetto e si cerca insieme ad esso (`@sigla/…`, sempre in sola lettura): le cartelle di riferimento, le pagine web salvate (`@web`), gli altri progetti che
 // condividono la loro conoscenza (vedi shared-knowledge.cjs; chi ha spento l'indice o la condivisione non c'è) e le loro pagine web (`@nome-web`).
-const outsideFolders = () => {
+// `granted`: progetti concessi a chi chiede (quelli che un agente ha aperto da sé), visibili anche fuori dallo spazio di lavoro attivo.
+const outsideFolders = ({ granted = [], workspace } = {}) => {
   try {
-    return projectPath ? outsideFoldersOf({ current: projectPath, references: referencesStore.list(), projects: projectsStore.list(), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(), webFolderOf }) : []
+    return projectPath ? outsideFoldersOf({ current: projectPath, references: referencesStore.list(), projects: workspacesStore.visibleProjects(projectsStore.list(), { granted, workspace }), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(), webFolderOf }) : []
   } catch { return [] }
 }
 // Le cartelle di riferimento collegate e le pagine web salvate del progetto (`.ow/web`, automatica: `@web`).
@@ -461,6 +465,8 @@ function workspaceFilePath() {
 }
 
 async function loadProject() {
+  // I membri temporanei (progetti aperti da un agente) non sopravvivono a un riavvio.
+  try { workspacesStore.clearTemporary() } catch (error) { console.error('Membri temporanei non azzerati:', error.message) }
   try {
     const { project } = JSON.parse(await fs.readFile(workspaceFilePath(), 'utf8'))
     if (project && (await fs.stat(project)).isDirectory()) projectPath = project
@@ -480,12 +486,16 @@ function initializeProject() {
   startKnowledge()
 }
 
-async function setProject(directory) {
+// `join`: un progetto nuovo per l'elenco entra nello spazio di lavoro attivo (se non è «Tutti»). Chi apre da fuori lo chiede all'utente prima e passa `join: false`;
+// un agente che apre un progetto non lo fa entrare: diventa un membro temporaneo (vedi mcpRequests.js).
+async function setProject(directory, { join = true } = {}) {
+  const known = projectsStore.list().some((item) => samePath(item.path, directory))
   projectPath = directory
   initializeProject()
-  await fs.mkdir(app.getPath('userData'), { recursive: true })
-  await fs.writeFile(workspaceFilePath(), JSON.stringify({ project: projectPath }, null, 2))
+  // `workspace.json` porta anche lo spazio di lavoro attivo: si scrive unendo i campi, altrimenti ogni apertura di un progetto lo cancellerebbe.
+  workspacesStore.setLastProject(projectPath)
   projectsStore.touch(projectPath)
+  if (join && !known) { try { if (workspacesStore.joinActive(projectPath)) notifyWorkspaces() } catch (error) { console.error('Spazio di lavoro non aggiornato:', error.message) } }
   applySpellcheck()
   return projectPath
 }
@@ -1286,17 +1296,17 @@ ipcMain.handle('project:knowledge-rebuild', async (_event, directory) => {
 // per un altro progetto (un agente esterno che lavora altrove) si leggono i suoi riferimenti. Senza progetto: tutti i progetti che condividono.
 // `everything` (la ricerca della Home, che è dell'utente e non di un assistente): tutti i progetti con l'indice acceso, anche quelli che non condividono la loro conoscenza. Condividere
 // decide solo cosa vedono gli ALTRI progetti e i loro assistenti; le informazioni, nel proprio indice, ci sono comunque.
-function outsideFor(base, { everything = false } = {}) {
-  if (base && projectPath && samePath(base, projectPath)) return outsideFolders()
+function outsideFor(base, { everything = false, granted = [], workspace } = {}) {
+  if (base && projectPath && samePath(base, projectPath)) return outsideFolders({ granted, workspace })
   let references = []
   try { references = base ? createReferencesStore({ getProjectPath: () => base }).list() : [] } catch { references = [] }
   try {
-    return outsideFoldersOf({ current: base, references, projects: projectsStore.list(), isShared: (directory) => { const file = createProjectFile({ getProjectPath: () => directory }); return everything ? file.searchIndexEnabled() : file.sharedKnowledgeEnabled() }, webFolderOf })
+    return outsideFoldersOf({ current: base, references, projects: workspacesStore.visibleProjects(projectsStore.list(), { granted, workspace }), isShared: (directory) => { const file = createProjectFile({ getProjectPath: () => directory }); return everything ? file.searchIndexEnabled() : file.sharedKnowledgeEnabled() }, webFolderOf })
   } catch { return [] }
 }
 // Ricerca per rilevanza (e per significato, se c'è il modello) nel progetto, nei suoi riferimenti e negli altri progetti. Non dipende dal progetto aperto: `project` (un agente
 // esterno) indica da quale progetto si cerca; senza, si usa quello aperto, e senza nessuno si cerca in tutti i progetti che condividono la loro conoscenza.
-async function runKnowledgeSearch(args = {}, { project: asked = null, home = false } = {}) {
+async function runKnowledgeSearch(args = {}, { project: asked = null, home = false, granted = [] } = {}) {
   const known = (directory) => Boolean((projectPath && samePath(directory, projectPath)) || projectsStore.list().some((item) => samePath(item.path, directory)))
   // `home`: la ricerca della Home non parte da nessun progetto, anche se uno è aperto: cerca in tutti quelli che condividono la conoscenza.
   const base = home ? null : asked && known(path.resolve(String(asked))) ? path.resolve(String(asked)) : (asked ? null : projectPath)
@@ -1311,7 +1321,8 @@ async function runKnowledgeSearch(args = {}, { project: asked = null, home = fal
   // `others` (o il vecchio `references`): tutto ciò che sta fuori dal progetto, cioè gli altri progetti e le cartelle di riferimento.
   const wanted = String(args.scope || '').toLowerCase()
   const scope = wanted === 'project' ? 'project' : (wanted === 'others' || wanted === 'references') ? 'others' : 'all'
-  const outside = outsideFor(base, { everything: home })
+  // `workspace` (un agente esterno): non indicato = lo spazio di lavoro attivo; false = tutti i progetti; un nome = quello spazio. Il resto vale come nell'interfaccia.
+  const outside = outsideFor(base, { everything: home, granted, workspace: args.workspace })
   const sourceOf = (item) => ({ key: knowledge.key(item.path), prefix: `@${item.name}`, item })
   let sources
   let folder = ''
@@ -1372,7 +1383,9 @@ async function searchProjectsForHome(args = {}) {
   const terms = cleanTerms([...(Array.isArray(args.terms) ? args.terms : []), ...localTerms], query, 12)
   // `includeWeak`: anche i passaggi che il filtro di pertinenza scarta ("meno pertinenti"), con `weak: true`, ordinati per pertinenza.
   const includeWeak = args.includeWeak === true
-  const base = await runKnowledgeSearch({ query, maxResults, includeWeak }, { home: true })
+  // `workspace`: dove cerca la Home: non indicato = lo spazio di lavoro attivo; 'all' = tutti i progetti; un id = quello spazio (lo sceglie l'utente accanto al campo di ricerca).
+  const workspace = typeof args.workspace === 'string' && args.workspace ? args.workspace : undefined
+  const base = await runKnowledgeSearch({ query, maxResults, includeWeak, workspace }, { home: true })
   const { found, files, outside } = base
   // Le pagine web salvate di un progetto (`@nome-web`) appartengono a quel progetto.
   const ownerOf = (item) => (item.web ? outside.find((other) => other.project && (item.name === `${other.name}-web` || item.name.startsWith(`${other.name}-web-`))) || null : item)
@@ -1396,7 +1409,7 @@ async function searchProjectsForHome(args = {}) {
   if (terms.length) {
     const extra = await Promise.all(terms.map(async (term) => {
       try {
-        const { found: termFound } = await runKnowledgeSearch({ query: term, maxResults: 10, includeWeak }, { home: true })
+        const { found: termFound } = await runKnowledgeSearch({ query: term, maxResults: 10, includeWeak, workspace }, { home: true })
         weakCount += termFound.weakCount || 0
         return { term, original: false, results: shape(termFound.results) }
       } catch { return { term, original: false, results: [] } }
@@ -1408,15 +1421,36 @@ async function searchProjectsForHome(args = {}) {
 }
 ipcMain.handle('projects:search', (_event, args) => searchProjectsForHome(args))
 
+// Spazi di lavoro (workspace): le definizioni, quello attivo e i membri temporanei. Ogni modifica avvisa l'interfaccia (`workspaces:changed`).
+function notifyWorkspaces() {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('workspaces:changed')
+}
+const workspacesState = () => ({ active: workspacesStore.active(), workspaces: workspacesStore.list(), temporary: workspacesStore.temporary() })
+const changesWorkspaces = (action) => (_event, ...args) => { const result = action(...args); notifyWorkspaces(); return result }
+ipcMain.handle('workspaces:list', () => workspacesState())
+ipcMain.handle('workspaces:create', changesWorkspaces((input = {}) => workspacesStore.create({ name: input.name, projects: Array.isArray(input.projects) ? input.projects.map(String) : [] })))
+ipcMain.handle('workspaces:rename', changesWorkspaces((id, name) => workspacesStore.rename(String(id), name)))
+ipcMain.handle('workspaces:set-members', changesWorkspaces((id, projects) => workspacesStore.setMembers(String(id), Array.isArray(projects) ? projects.map(String) : [])))
+ipcMain.handle('workspaces:add-project', changesWorkspaces((id, project) => workspacesStore.addProject(String(id), String(project))))
+ipcMain.handle('workspaces:remove-project', changesWorkspaces((id, project) => workspacesStore.removeProject(String(id), String(project))))
+ipcMain.handle('workspaces:remove', changesWorkspaces((id) => workspacesStore.remove(String(id))))
+ipcMain.handle('workspaces:set-active', changesWorkspaces((id) => workspacesStore.setActive(String(id))))
+ipcMain.handle('workspaces:add-temporary', changesWorkspaces((project) => workspacesStore.addTemporary(String(project))))
+ipcMain.handle('workspaces:dismiss-temporary', changesWorkspaces((project) => workspacesStore.dismissTemporary(String(project))))
+ipcMain.handle('workspaces:adopt-temporary', changesWorkspaces((project) => workspacesStore.adoptTemporary(String(project))))
 // Dati del grafo della Home: ogni progetto (con le sue opzioni) e le connessioni per affinità. I vettori medi si ricalcolano solo se l'indice del progetto è cambiato.
 const centroidCache = new Map() // chiave → { signature, vector }
 ipcMain.handle('projects:graph', async (_event, options = {}) => {
-  const list = projectsStore.list().filter((item) => item && item.path)
+  // Il grafo mostra i progetti dello spazio di lavoro attivo (e i membri temporanei, segnati dall'interfaccia).
+  const temporaryMembers = workspacesStore.temporary()
+  // Lo spazio di lavoro di questi dati: l'interfaccia dà a ogni spazio la sua disposizione delle bolle.
+  const workspace = workspacesStore.active()
+  const list = workspacesStore.visibleProjects(projectsStore.list(), { temporary: true }).filter((item) => item && item.path)
   const device = semanticAllowed() ? activeDevice() : null
   const model = device ? semanticPacks[device].id : ''
   const nodes = []
   for (const item of list) {
-    const base = { path: item.path, name: item.name, missing: Boolean(item.missing), openedAt: item.openedAt || null }
+    const base = { path: item.path, name: item.name, missing: Boolean(item.missing), openedAt: item.openedAt || null, ...(temporaryMembers.some((known) => samePath(known, item.path)) ? { temporary: true } : {}) }
     if (item.missing) { nodes.push({ ...base, indexed: false, shared: false, files: 0, chunks: 0, updatedAt: null }); continue }
     let file = null
     try { file = createProjectFile({ getProjectPath: () => item.path }) } catch { file = null }
@@ -1463,7 +1497,7 @@ ipcMain.handle('projects:graph', async (_event, options = {}) => {
   const satellites = new Set(nodes.filter((node) => node.parent).map((node) => node.path))
   edges = edges.filter((edge) => !satellites.has(edge.a) && !satellites.has(edge.b))
   const busy = pending.size > 0 || (knowledge.available && knowledge.syncing)
-  return { nodes, edges, approximate, busy, semantic: vectors.size > 1 }
+  return { nodes, edges, approximate, busy, semantic: vectors.size > 1, workspace }
 })
 ipcMain.handle('tools:search-knowledge', (_event, args) => searchKnowledgeTool(args))
 // Gli strumenti di lettura valgono anche per le cartelle di riferimento: un percorso `@sigla/…` si legge dentro quella cartella (e solo lì).
@@ -1672,11 +1706,18 @@ ipcMain.handle('workspace:choose-project', async () => {
   const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openDirectory', 'createDirectory'] })
   return result.canceled ? projectPath : setProject(result.filePaths[0])
 })
-ipcMain.handle('workspace:list-projects', () => projectsStore.list())
-ipcMain.handle('workspace:open-project', async (_event, directory) => {
+// L'elenco dei progetti dello spazio attivo; i membri temporanei (aperti da un agente) sono segnati.
+const listedProjects = () => {
+  const temporary = workspacesStore.temporary()
+  return workspacesStore.visibleProjects(projectsStore.list(), { temporary: true }).map((item) => (temporary.some((known) => samePath(known, item.path)) ? { ...item, temporary: true } : item))
+}
+ipcMain.handle('workspace:list-projects', () => listedProjects())
+// Tutti i progetti dell'elenco, senza filtro: per scegliere i membri di uno spazio di lavoro.
+ipcMain.handle('workspaces:all-projects', () => projectsStore.list())
+ipcMain.handle('workspace:open-project', async (_event, directory, options = {}) => {
   const target = path.resolve(String(directory || ''))
   if (!(await fs.stat(target).then((stat) => stat.isDirectory(), () => false))) throw new Error(t('The project folder no longer exists'))
-  return setProject(target)
+  return setProject(target, { join: options?.join !== false })
 })
 // Crea una cartella di progetto con il nome dato: la posizione si sceglie con la finestra di sistema.
 ipcMain.handle('workspace:create-project', async (_event, name) => {
@@ -1795,7 +1836,12 @@ ipcMain.handle('links:reveal', (_event, target) => {
   shell.showItemInFolder(path.resolve(String(target)))
 })
 ipcMain.handle('chat:copy-to-project', (_event, { id, target } = {}) => chatStore.copyTo(String(id || ''), String(target || '')))
-ipcMain.handle('workspace:remove-project', (_event, directory) => { projectsStore.remove(String(directory || '')); return projectsStore.list() })
+ipcMain.handle('workspace:remove-project', (_event, directory) => {
+  projectsStore.remove(String(directory || ''))
+  // Tolto dall'elenco, esce da tutti gli spazi di lavoro.
+  try { workspacesStore.removeEverywhere(String(directory || '')); notifyWorkspaces() } catch (error) { console.error('Spazi di lavoro non aggiornati:', error.message) }
+  return listedProjects()
+})
 // Per l'assistente: sposta nel cestino (con la conferma dell'utente) o sposta/rinomina dentro il progetto.
 ipcMain.handle('memory:list', () => memoryStore.list())
 ipcMain.handle('memory:add', (_event, entry) => memoryStore.add(entry))
@@ -1946,6 +1992,7 @@ ipcMain.handle('workspace:move-project-in', async (_event, directory) => {
   await moveDirectory(source, target)
   try { setInheritance(target, true) } catch (error) { console.error('Eredità non aggiornata:', error) }
   projectsStore.remove(source)
+  try { workspacesStore.removeEverywhere(source); notifyWorkspaces() } catch (error) { console.error('Spazi di lavoro non aggiornati:', error.message) }
   return target
 })
 // Sposta un progetto (anche non aperto) in un'altra cartella: l'elenco dei progetti e le sessioni seguono la nuova posizione.
@@ -1969,6 +2016,8 @@ ipcMain.handle('workspace:move-project', async (_event, directory) => {
   const wasOpen = Boolean(projectPath) && path.resolve(projectPath).toLowerCase() === source.toLowerCase()
   await moveDirectory(source, target)
   projectsStore.replace(source, target)
+  // Un progetto spostato conserva il suo posto negli spazi di lavoro.
+  try { workspacesStore.replacePath(source, target); notifyWorkspaces() } catch (error) { console.error('Spazi di lavoro non aggiornati:', error.message) }
   try { moveSessions(source, target) } catch (error) { console.error('Sessioni non aggiornate:', error) }
   if (wasOpen) await setProject(target)
   return { path: target, wasOpen }
@@ -2342,7 +2391,18 @@ const mcpBridge = createMcpBridge({
   getProjectPath: () => projectPath,
   isEnabled: () => loadPreferences()['openwriter.mcpEdit'] !== 'off',
   // Con l'app aperta la ricerca per conoscenza di un agente esterno passa da qui: stessa ricerca dell'assistente, quindi anche per significato (se acceso).
-  localTools: { search_knowledge: (args, context) => searchKnowledgeTool(args, 'read_document', { project: context?.project }) },
+  localTools: {
+    search_knowledge: (args, context) => searchKnowledgeTool(args, 'read_document', { project: context?.project, granted: context?.granted || [] }),
+    // Un agente cambia lo spazio di lavoro attivo (come l'utente dal selettore): l'interfaccia si aggiorna.
+    open_workspace: (args) => {
+      const wanted = String(args.name ?? '').trim()
+      const found = /^all$/i.test(wanted) ? null : workspacesStore.find(wanted)
+      if (!/^all$/i.test(wanted) && !found) throw new Error(`Workspace "${wanted}" not found. Available: ${['All', ...workspacesStore.list().map((item) => item.name)].join(', ')}`)
+      workspacesStore.setActive(found ? found.id : 'all')
+      notifyWorkspaces()
+      return `The workspace "${found ? found.name : 'All'}" is now active in OpenWriter.`
+    },
+  },
 })
 ipcMain.on('mcp:response', (_event, id, payload) => mcpBridge.answer(id, payload))
 
