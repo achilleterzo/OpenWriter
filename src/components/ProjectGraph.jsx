@@ -29,7 +29,7 @@ function loadImage(url) {
   })
 }
 
-const flagsOf = (node) => (!node.indexed ? t('Search index off') : node.shared ? t('Shares its knowledge') : t('Does not share its knowledge'))
+const flagsOf = (node) => `${node.temporary ? `${t('Temporary')} · ` : ''}${!node.indexed ? t('Search index off') : node.shared ? t('Shares its knowledge') : t('Does not share its knowledge')}`
 
 /**
  * La rete dei progetti: una bolla con l'icona per progetto, sinapsi tra quelli affini per significato, bolle libere che galleggiano per gli altri.
@@ -72,7 +72,9 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
     let awakeUntil = 0
     let awake = false
     const wake = (ms) => { awakeUntil = Math.max(awakeUntil, performance.now() + ms) }
-    const remember = () => saveLayout(sim.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y, z: node.z })))
+    // Ogni spazio di lavoro ha la sua disposizione (graphLayoutStore.js): `layoutKey` è quello dei dati mostrati (arriva con il grafo).
+    let layoutKey = 'all'
+    const remember = () => saveLayout(sim.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y, z: node.z })), undefined, layoutKey)
     // `yaw` / `pitch`: dove si vuole portare l'inclinazione della rete (tasto destro sullo sfondo e trascinamento); `tilt`: quella mostrata, che la segue con dolcezza.
     // La rete è un piano visto in prospettiva (graphProjection.js): ruotano le posizioni, le icone restano dritte e rivolte verso chi guarda.
     const camera = { x: 0, y: 0, zoom: 1, yaw: 0, pitch: 0 }
@@ -129,15 +131,26 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
     // con le molle (senza scatti). Le icone si rifanno solo se cambia l'elenco dei progetti o i loro nomi, non a ogni variazione di peso.
     let applied
     let signature = null
-    const applyGraph = ({ animate = false } = {}) => {
+    const applyGraph = ({ animate = false, ignoreSaved = false } = {}) => {
       const { visible: nodesNow, graph: data } = live.current
       if (data === applied && !animate) return
       applied = data
+      // Cambia lo spazio di lavoro: la rete riparte dalla disposizione di quello (le bolle già presenti non restano dove stavano nell'altro). Se quello spazio non ne ha ancora
+      // una, parte da quella di «Tutti» (i progetti hanno già il loro posto) e da subito la si ricorda.
+      const workspace = data?.workspace || 'all'
+      let remembered = true
+      if (workspace !== layoutKey) {
+        layoutKey = workspace
+        sim.setGraph([], [], size)
+        for (const key of mood.keys()) mood.delete(key)
+        remembered = Object.keys(loadLayout(undefined, layoutKey)).length > 0
+      }
       list = nodesNow
       index = new Map(list.map((node, position) => [node.path, position]))
       weights = new Map(list.map((node) => [node.path, weightOf(node)]))
       const known = new Set(list.map((node) => node.path))
-      const saved = loadLayout()
+      // Le posizioni ricordate dello spazio; uno spazio diverso da «Tutti» si appoggia a quelle di «Tutti» per i progetti che non ha ancora disposto. Ricalcolando non si usano.
+      const saved = ignoreSaved ? {} : layoutKey === 'all' ? loadLayout(undefined, 'all') : { ...loadLayout(undefined, 'all'), ...loadLayout(undefined, layoutKey) }
       const before = new Set(sim.nodes.map((node) => node.id))
       sim.setGraph(list.map((node) => ({ id: node.path, r: radiusOf(node), data: weightOf(node), at: saved[node.path] || null, parent: node.parent && known.has(node.parent) ? node.parent : null })), (data?.edges || []).map((edge) => ({ a: edge.a, b: edge.b, weight: edge.weight })), size)
       // Chi ha già un posto (ricordato o già nella rete) resta fermo: solo le bolle nuove cercano il loro, tenendo conto di quelle che ci sono, e poi la rete si ricorda.
@@ -153,8 +166,10 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
           sim.freeze(true)
           sim.freeze(false)
           remember()
+          remembered = true
         }
       }
+      if (!remembered) remember()
       const next = list.map((node) => `${node.path}|${node.name}`).join('\n')
       if (next === signature) return
       signature = next
@@ -167,10 +182,10 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
     live.current.apply = applyGraph
     // Il pulsante «Ricalcola»: si dimentica la disposizione e la rete si ricompone da zero, con un movimento che poi si ferma.
     live.current.recalc = () => {
-      clearLayout()
+      clearLayout(undefined, layoutKey)
       sim.setGraph([], [], size)
       for (const key of mood.keys()) mood.delete(key)
-      applyGraph({ animate: true })
+      applyGraph({ animate: true, ignoreSaved: true })
       if (reduced) { sim.settle(420, size); remember() }
     }
     // Il carattere dell'interfaccia potrebbe non essere ancora caricato quando si disegnano le iniziali: a font pronto l'atlante si rifà.
