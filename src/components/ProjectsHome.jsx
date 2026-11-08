@@ -2,6 +2,9 @@ import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState
 import { Loader2, RefreshCw, Search, Sparkles, X } from 'lucide-react'
 import ProjectGraph from './ProjectGraph.jsx'
 import ProjectSettingsDialog from './ProjectSettingsDialog.jsx'
+import WorkspaceSelector from './WorkspaceSelector.jsx'
+import useWorkspaces from '../hooks/useWorkspaces.js'
+import { pruneLayouts } from '../lib/graphLayoutStore.js'
 import { ContextMenuContext } from './ContextMenu.jsx'
 import PanelResizer from './PanelResizer.jsx'
 import { ProjectAvatar } from './ProjectIcon.jsx'
@@ -10,6 +13,7 @@ import { RESULTS_PANEL, loadResultsWidth, saveResultsWidth } from '../lib/layout
 import { expansionMessages, parseExpansion } from '../lib/queryExpansion.js'
 import { getPreference, setPreference } from '../lib/preferences.js'
 import { createSynonymCache, synonymKey } from '../lib/synonymCache.js'
+import { snippetTokens } from '../lib/snippetMarkdown.js'
 import { t, tp } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
@@ -43,19 +47,35 @@ async function expandQuery(text, use, modelId) {
   } finally { clearTimeout(timer) }
 }
 
-// Le parole trovate arrivano tra « »: si evidenziano.
+// L'estratto di un passaggio: Markdown grezzo, tagliato, con le parole trovate tra « ». Si legge in modo tollerante (snippetMarkdown.js): niente simboli di formattazione,
+// grassetto, corsivo, barrato e codice in linea, e le parole trovate evidenziate.
 function Snippet({ text }) {
-  const parts = String(text || '').split(/(«[^»]*»)/g)
-  return <>{parts.map((part, index) => (part.startsWith('«') && part.endsWith('»') ? <mark key={index} className="rounded bg-accent-500/25 px-0.5 text-slate-50">{part.slice(1, -1)}</mark> : <Fragment key={index}>{part.replace(/[«»]/g, '')}</Fragment>))}</>
+  const tokens = useMemo(() => snippetTokens(text), [text])
+  return (
+    <>
+      {tokens.map((token, index) => {
+        let node = token.text
+        if (token.code) node = <code className="rounded bg-slate-800 px-1 font-mono text-[11px] text-slate-300">{node}</code>
+        if (token.strike) node = <del className="opacity-70">{node}</del>
+        if (token.italic) node = <em>{node}</em>
+        if (token.bold) node = <strong className="font-semibold text-slate-300">{node}</strong>
+        if (token.mark) node = <mark className="rounded bg-accent-500/25 px-0.5 text-slate-50">{node}</mark>
+        return <Fragment key={index}>{node}</Fragment>
+      })}
+    </>
+  )
 }
 
-// Il fattore di pertinenza di un passaggio: una barra e la percentuale. Dice quanto si stacca dagli altri per questa ricerca (e, se contiene le parole, almeno "buono").
+// Il colore della barra di pertinenza, a semaforo: sotto il 33% rosso, dal 33% al 66% giallo, sopra il 66% verde (sulla percentuale mostrata).
+const relevanceColor = (percent) => (percent < 33 ? 'bg-rose-500' : percent <= 66 ? 'bg-amber-400' : 'bg-emerald-500')
+
+// Il fattore di pertinenza di un passaggio: una barra a semaforo e la percentuale. Dice quanto si stacca dagli altri per questa ricerca (e, se contiene le parole, almeno "buono").
 function Relevance({ value, z }) {
   const percent = Math.round(Math.max(0, Math.min(1, value)) * 100)
   const title = t('Relevance {percent}%: how much this passage stands out from the others for this search{detail}', { percent, detail: z === undefined ? '' : ` (z ${z})` })
   return (
     <span title={title} aria-label={title} className="flex shrink-0 items-center gap-1.5 text-[10px] tabular-nums text-slate-400">
-      <span className="h-1 w-10 overflow-hidden rounded-full bg-slate-700"><span className="block h-full rounded-full bg-accent-400" style={{ width: `${percent}%` }} /></span>
+      <span className="h-1 w-10 overflow-hidden rounded-full bg-slate-700"><span className={`block h-full rounded-full ${relevanceColor(percent)}`} style={{ width: `${percent}%` }} /></span>
       {percent}%
     </span>
   )
@@ -68,6 +88,14 @@ function Relevance({ value, z }) {
 export default function ProjectsHome({ project, visible = true, projectsVersion = 0, onOpenProject, onOpenResult, onMove, onOpenFile, onSettingsChanged }) {
   // Tasto destro su una bolla: menu del progetto (apri, impostazioni, sposta, mostra nel file manager). Le impostazioni si aprono nella stessa finestra della lista dei progetti.
   const openMenu = useContext(ContextMenuContext)
+  const { active: activeId, activeWorkspace, workspaces, loaded: workspacesLoaded } = useWorkspaces()
+  // Dove cerca la ricerca: «tutti» o uno spazio di lavoro. Parte dallo spazio attivo (e lo segue quando cambia); con l'elenco degli spazi vuoto la scelta non esiste.
+  const [scope, setScope] = useState('all')
+  useEffect(() => { setScope(activeId) }, [activeId])
+  // Uno spazio eliminato mentre era scelto: si torna a quello attivo.
+  useEffect(() => { if (workspacesLoaded && scope !== 'all' && !workspaces.some((item) => item.id === scope)) setScope(activeId) }, [workspaces, workspacesLoaded, scope, activeId])
+  // Gli spazi eliminati lasciano la loro disposizione delle bolle: si toglie (solo quando l'elenco degli spazi è arrivato).
+  useEffect(() => { if (workspacesLoaded) pruneLayouts(workspaces.map((item) => item.id)) }, [workspaces, workspacesLoaded])
   const [settingsFor, setSettingsFor] = useState(null)
   const [graph, setGraph] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -159,7 +187,7 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
       return undefined
     }
     // Ricerca già fatta (tornando nella Home): si tengono i risultati com'erano, senza ripeterla né richiamare l'IA.
-    if (memory.done && memory.done.query === text && memory.done.synonyms === synonyms) return undefined
+    if (memory.done && memory.done.query === text && memory.done.synonyms === synonyms && memory.done.scope === scope) return undefined
     const mine = ++sequence.current
     const stale = () => mine !== sequence.current
     const timer = setTimeout(async () => {
@@ -169,12 +197,12 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
       setExpansion({ state: 'idle', terms: [], error: '' })
       setShowWeak(false)
       weakLoaded.current = false
-      const finished = () => { if (!stale()) memory.done = { query: text, synonyms } }
+      const finished = () => { if (!stale()) memory.done = { query: text, synonyms, scope } }
       // I sinonimi dell'IA, se attiva, partono subito, insieme alla prima ricerca (che include già i sinonimi locali): non aspettano il risultato.
       const aiTerms = synonyms && aiOn ? expandQuery(text, researchModel, modelId) : null
       aiTerms?.catch(() => {})
       try {
-        const answer = await electronAPI.searchProjects({ query: text, maxResults: 20, local: synonyms })
+        const answer = await electronAPI.searchProjects({ query: text, maxResults: 20, local: synonyms, workspace: scope })
         if (stale()) return
         setSearch({ state: 'done', results: answer.results, partial: Boolean(answer.partial), weakCount: answer.weakCount || 0, error: '', query: text, localTerms: answer.localTerms || [] })
       } catch (reason) {
@@ -189,7 +217,7 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
         if (stale()) return
         if (!terms.length) { setExpansion({ state: 'done', terms: [], error: '' }); finished(); return }
         setExpansion({ state: 'searching', terms, error: '' })
-        const answer = await electronAPI.searchProjects({ query: text, terms, maxResults: weakLoaded.current ? 30 : 20, includeWeak: weakLoaded.current })
+        const answer = await electronAPI.searchProjects({ query: text, terms, maxResults: weakLoaded.current ? 30 : 20, includeWeak: weakLoaded.current, workspace: scope })
         if (stale()) return
         setSearch({ state: 'done', results: answer.results, partial: Boolean(answer.partial), weakCount: answer.weakCount || 0, error: '', query: text, localTerms: answer.localTerms || [] })
         setExpansion({ state: 'done', terms, error: '' })
@@ -200,7 +228,7 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
       }
     }, DEBOUNCE_MS)
     return () => clearTimeout(timer)
-  }, [query, synonyms, aiOn, researchModel, modelId, rerun])
+  }, [query, synonyms, aiOn, researchModel, modelId, rerun, scope])
 
   const nodes = graph?.nodes || []
   const known = useMemo(() => new Map(nodes.map((node) => [node.path, node])), [nodes])
@@ -228,7 +256,7 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
     if (weakLoaded.current) { setShowWeak(true); return }
     setWeakBusy(true)
     try {
-      const answer = await electronAPI.searchProjects({ query: search.query, terms: expansion.terms, maxResults: 30, includeWeak: true })
+      const answer = await electronAPI.searchProjects({ query: search.query, terms: expansion.terms, maxResults: 30, includeWeak: true, workspace: scope })
       weakLoaded.current = true
       setSearch((current) => (current.query === search.query ? { ...current, results: answer.results, partial: Boolean(answer.partial), weakCount: answer.weakCount || current.weakCount } : current))
       setShowWeak(true)
@@ -261,6 +289,11 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
         { separator: true },
         onMove && { label: t('Move…'), onClick: async () => { try { if (await onMove(path)) load({ silent: true }) } catch (reason) { setError(reason.message) } } },
         { label: REVEAL_LABEL, onClick: () => electronAPI.revealProject(path).catch((reason) => setError(reason.message)) },
+        // Un progetto aperto da un agente è un membro temporaneo dello spazio attivo: lo si aggiunge o lo si ignora. Altrimenti, dentro uno spazio, lo si può togliere da lì.
+        (node.temporary || activeWorkspace) && { separator: true },
+        node.temporary && { label: t('Add to the workspace'), onClick: () => electronAPI.adoptTemporaryProject(path).catch((reason) => setError(reason.message)) },
+        node.temporary && { label: t('Ignore'), onClick: () => electronAPI.dismissTemporaryProject(path).catch((reason) => setError(reason.message)) },
+        !node.temporary && activeWorkspace && { label: t('Remove from workspace'), danger: true, onClick: () => electronAPI.removeProjectFromWorkspace(activeWorkspace.id, path).catch((reason) => setError(reason.message)) },
       ].filter(Boolean),
     })
   }
@@ -269,7 +302,10 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
     <section ref={sectionRef} className="relative flex min-h-0 flex-1 flex-col bg-slate-950" aria-label={t('Projects home')}>
       {/* Centrata nello spazio libero: con i risultati aperti si sposta per non finirci sotto. */}
       <div style={{ left: 0, right: showPanel ? panelWidth + 12 : 0, marginInline: 'auto' }} className="pointer-events-none absolute top-0 z-10 flex max-w-xl items-start gap-2 px-3 pb-3 pt-5">
-        <label className="pointer-events-auto flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/90 px-3 py-2 shadow-lg backdrop-blur focus-within:border-accent-400">
+        {/* Un gruppo di campi: prima la scelta di dove cercare (tutti i progetti o uno spazio di lavoro; assente se non ce ne sono), poi la ricerca. */}
+        <div className="pointer-events-auto flex min-w-0 flex-1 items-stretch rounded-lg border border-slate-700 bg-slate-900/90 shadow-lg backdrop-blur focus-within:border-accent-400">
+        {workspaces.length > 0 && <WorkspaceSelector embedded value={scope} onChange={setScope} />}
+        <label className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2">
           <Search size={15} className="shrink-0 text-slate-500" />
           <input
             ref={input}
@@ -284,6 +320,7 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
           <button type="button" aria-pressed={synonyms} aria-label={t('Synonyms with AI')} title={synonyms ? (researchModel ? t('Synonyms with AI: on, with the research model {model} (it only sees the searched words)', { model: researchModel.model }) : t('Synonyms with AI: on (the AI model only sees the searched words)')) : t('Synonyms with AI: off')} className={`shrink-0 transition ${synonyms ? 'text-accent-400' : 'text-slate-500 hover:text-slate-200'}`} onClick={toggleSynonyms}><Sparkles size={15} /></button>
           {query && <button type="button" aria-label={t('Clear')} title={t('Clear')} className="shrink-0 text-slate-500 transition hover:text-slate-100" onClick={() => { setQuery(''); input.current?.focus() }}><X size={14} /></button>}
         </label>
+        </div>
         <button type="button" aria-label={t('Refresh')} title={t('Refresh')} disabled={loading} className="pointer-events-auto rounded-lg border border-slate-700 bg-slate-900/90 p-2.5 text-slate-400 shadow-lg backdrop-blur transition hover:text-accent-400 disabled:opacity-50" onClick={() => { memory.done = null; load({ refresh: true }); setRerun((value) => value + 1) }}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /></button>
       </div>
 
@@ -293,13 +330,13 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
         {graph && nodes.some((node) => !node.missing) && <ProjectGraph graph={graph} matches={matches} activePath={active} onOpen={onOpenProject} onContext={openProjectMenu} />}
         {!graph && loading && <div className="flex flex-1 items-center justify-center text-slate-500"><Loader2 className="animate-spin" size={20} aria-label={t('Loading…')} /></div>}
 
-        {graph && (
-          <p className="pointer-events-none absolute bottom-3 right-3 max-w-[60%] truncate text-right text-[11px] text-slate-600">
-            {sharing > 1
-              ? (graph.approximate ? t('Connections are approximate: the meaning model is not available.') : graph.semantic ? t('Lines join the projects closest in meaning.') : t('Not enough indexed text to connect the projects yet.'))
-              : t('Connect projects by turning on knowledge sharing in their settings.')}
-          </p>
-        )}
+        {/* Una nota in basso solo quando c'è qualcosa da sapere: le connessioni sono approssimate, mancano testi, o nessun progetto condivide. Nel caso normale non c'è nulla da dire. */}
+        {graph && (() => {
+          const hint = sharing > 1
+            ? (graph.approximate ? t('Connections are approximate: the meaning model is not available.') : graph.semantic ? null : t('Not enough indexed text to connect the projects yet.'))
+            : t('Connect projects by turning on knowledge sharing in their settings.')
+          return hint && <p className="pointer-events-none absolute bottom-3 right-3 max-w-[60%] truncate text-right text-[11px] text-slate-600">{hint}</p>
+        })()}
       </div>
 
       {showPanel && (
