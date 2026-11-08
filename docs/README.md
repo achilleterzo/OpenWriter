@@ -4,6 +4,10 @@ OpenWriter is a desktop Markdown editor with an integrated AI writing assistant.
 
 Documented source files have reference pages under [`docs/reference/`](reference/). The Project Structure section lists the documentation pages in their real directory hierarchy and links each page to the physical source file it documents.
 
+## Feature guides
+
+What each area does, written for the user and moved out of the root [README](../README.md) to keep it short: [Documents and the editor](guide/documents-and-editor.md), [The assistant](guide/assistant.md), [External agents (MCP)](guide/external-agents.md), [Projects and data](guide/projects.md), [Projects Home](guide/projects-home.md), [Workspaces](guide/workspaces.md), [Knowledge: search, sharing, saved pages](guide/knowledge.md), [The application and the system](guide/system.md), [Privacy](guide/privacy.md).
+
 ## Design notes
 
 Designs agreed before they are built: [Workspaces](design/workspaces.md) (a filter that limits the project list, the Home and the knowledge reachable by the assistant and the agents).

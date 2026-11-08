@@ -1,0 +1,11 @@
+# Privacy
+
+What leaves the computer, what is downloaded, and what the agents may reach.
+
+[Back to the technical documentation](../README.md) · [Back to the README](../../README.md)
+
+Document text is sent to the selected AI provider only when you submit a request. With a local Ollama model, the text stays on your machine. Ollama Cloud, OpenRouter, and Gemini credentials are stored using Electron's encrypted credential storage. Web browsing by the assistant is off by default, and when on it never reaches the local or private network.
+
+The search index is a local copy of your documents in the application data, and the vectors are computed on your machine. The only things that are downloaded are the local model packs, and only when you click the button: from Hugging Face and the npm registry through jsDelivr, at fixed versions and checked against pinned sizes and SHA-256 hashes. The synonyms suggested by an AI model send only the words you searched, to the model you configured for it. Knowledge sharing is per project: a project that does not share is invisible to the assistants and agents of other projects, although your own Home search can read it. The associations touch only the current user's registry or home folder, never system-wide settings.
+
+External agents are opt-in, and what an agent may read or change is the same the assistant may ([External agents (MCP)](external-agents.md)); what an agent finds in other projects is limited to the ones that share their knowledge. The server runs as a separate process, never writes to the document files, and reaches no path beyond the documents of the project, the ones linked to it, the ones open in OpenWriter, and the chats of the assistant. The bridge, and the HTTP server when you turn it on, listen only on `127.0.0.1` and require a token: `mcp-bridge.json` and `mcp-http.json` in the application data, readable only by your user, the second renewable. The HTTP server also refuses requests that carry an `Origin` header, so a web page cannot reach it. Both can be switched off, or made read-only, which removes every writing tool. The server itself never contacts an AI provider: when an agent hands a task to the built-in assistant, it runs in the app with the provider you configured, like any other request of yours.
