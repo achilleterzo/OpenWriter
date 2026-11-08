@@ -291,7 +291,6 @@
   "Low": "Baixo",
   "Manual version": "Versão manual",
   "Markdown source": "Fonte Markdown",
-  "Markdown source: changes are applied to the document as you type.": "Fonte Markdown: as alterações são aplicadas ao documento à medida que escreve.",
   "Match case": "Diferenciar maiúsculas",
   "Maximum": "Máximo",
   "Maximum reply tokens (num_predict)": "Tokens máximos da resposta (num_predict)",
@@ -1306,5 +1305,12 @@
   "Folders": "Pastas",
   "Right-click a folder and open it as an OpenWriter project directly.": "Clica com o botão direito numa pasta e abre-a diretamente como projeto do OpenWriter.",
   "Not available on macOS: the system does not let an app add an entry to the Finder menu.": "Não disponível no macOS: o sistema não permite que uma aplicação adicione uma entrada ao menu do Finder.",
-  "Recalculate the layout": "Recalcular a disposição"
+  "Recalculate the layout": "Recalcular a disposição",
+  "Line numbers": "Números de linha",
+  "line": "linha",
+  "lines": "linhas",
+  "All files": "Todos os ficheiros",
+  "New text file.txt": "Novo ficheiro de texto.txt",
+  "This file does not look like text (it is binary or not UTF-8).": "Este ficheiro não parece de texto (é binário ou não é UTF-8).",
+  "This file is too large to open here (the limit is {limit} MB).": "Este ficheiro é demasiado grande para abrir aqui (o limite é {limit} MB)."
 }

@@ -1,5 +1,5 @@
 import { useContext, useEffect, useRef, useState } from 'react'
-import { FileText, Globe, Image as ImageIcon, PanelRight, Pin, Plus, SaveAll, X } from 'lucide-react'
+import { FileCode, FileText, Globe, Image as ImageIcon, PanelRight, Pin, Plus, SaveAll, X } from 'lucide-react'
 import { ContextMenuContext } from './ContextMenu.jsx'
 import { t } from '../i18n/index.js'
 
@@ -58,7 +58,7 @@ export default function TabBar({ tabs, onPromote, unsavedCount = 0, onSaveAll, a
             key={tab.id}
             role="tab"
             aria-selected={active}
-            title={tab.filePath || tab.sourcePath || tab.imagePath || tab.title}
+            title={tab.filePath || tab.sourcePath || tab.imagePath || tab.textPath || tab.title}
             className={`group flex ${tab.pinned ? 'max-w-40' : 'max-w-56'} shrink-0 cursor-pointer ${dropTarget === tab.id ? 'ring-1 ring-inset ring-accent-400' : ''} items-center gap-2 border-r border-t-2 border-r-slate-800 px-3 py-2 text-sm transition ${active ? 'border-t-accent-400 bg-slate-900 text-slate-100' : 'border-t-transparent text-slate-500 hover:bg-slate-900/60 hover:text-slate-300'}`}
             draggable
             onDragStart={(event) => { dragging.current = tab.id; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', tab.id) }}
@@ -69,7 +69,7 @@ export default function TabBar({ tabs, onPromote, unsavedCount = 0, onSaveAll, a
             onContextMenu={(event) => {
               event.preventDefault()
               openMenu({ x: event.clientX, y: event.clientY, items: [
-                tab.kind !== 'browser' && tab.kind !== 'image' && { label: tab.pinned ? t('Unpin tab') : t('Pin tab'), onClick: () => onTogglePin(tab.id) },
+                tab.kind !== 'browser' && tab.kind !== 'image' && tab.kind !== 'text' && { label: tab.pinned ? t('Unpin tab') : t('Pin tab'), onClick: () => onTogglePin(tab.id) },
                 { label: t('Close'), onClick: () => onClose(tab.id) },
               ].filter(Boolean) })
             }}
@@ -77,9 +77,9 @@ export default function TabBar({ tabs, onPromote, unsavedCount = 0, onSaveAll, a
             onDoubleClick={() => { if (tab.preview) onPromote?.(tab.id) }}
             onAuxClick={(event) => { if (event.button === 1) onClose(tab.id) }}
           >
-            {tab.kind === 'browser' ? <Globe size={14} className="shrink-0" /> : tab.kind === 'image' ? <ImageIcon size={14} className="shrink-0" /> : <FileText size={14} className="shrink-0" />}
+            {tab.kind === 'browser' ? <Globe size={14} className="shrink-0" /> : tab.kind === 'image' ? <ImageIcon size={14} className="shrink-0" /> : tab.kind === 'text' ? <FileCode size={14} className="shrink-0" /> : <FileText size={14} className="shrink-0" />}
             <span className={`truncate ${tab.closed ? 'italic opacity-60' : tab.preview ? 'italic' : ''}`} title={tab.preview ? t('Preview: it is replaced by the next file you open, until you work on it. Double-click to keep it.') : undefined}>{tab.title}</span>
-            {tab.kind !== 'browser' && tab.kind !== 'image' && (
+            {tab.kind !== 'browser' && tab.kind !== 'image' && tab.kind !== 'text' && (
               <button
                 type="button"
                 aria-label={tab.pinned ? t('Unpin tab') : t('Pin tab')}

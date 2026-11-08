@@ -22,6 +22,11 @@ export default function useDocumentFileCommands({ activeTab, getEditor, workspac
 
         if (command === 'extract-markdown-images') return workspace.extractImages(null, activeTab?.filePath || activeTab?.sourcePath || null)
 
+        // Il lettore testuale salva il testo del suo campo; gli altri comandi di documento (esportazioni, stampa) non lo riguardano.
+        if (activeTab?.kind === 'text') {
+          if ((command === 'save' || command === 'save-as') && await workspace.saveText(activeTab.id, { saveAs: command === 'save-as' })) onStatusChange(t('Saved'))
+          return undefined
+        }
         const editor = activeTab && getEditor(activeTab.id)
         if (!editor) return undefined
 
