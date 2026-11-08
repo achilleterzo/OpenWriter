@@ -36,6 +36,7 @@ const { createReferencesStore } = require('./project-references.cjs')
 const { webFolderOf, createWebReferencesStore } = require('./web-references.cjs')
 const { createProjectsStore } = require('./projects.cjs')
 const { outsideFolders } = require('./shared-knowledge.cjs')
+const { createWorkspacesStore } = require('./workspaces-store.cjs')
 const { isSameOrInside, samePath } = require('./path-compare.cjs')
 const { findOwners } = require('./project-owner.cjs')
 const { analyzeMarkdown, markdownToPlain } = require('./markdown-plain.cjs')
@@ -128,14 +129,21 @@ const linksStore = createLinksStore({ getProjectPath: projectPath })
 const referencesStore = createReferencesStore({ getProjectPath: projectPath })
 const webStore = createWebReferencesStore({ getProjectPath: projectPath })
 const projectsStore = createProjectsStore({ filePath: () => path.join(dataDirectory, 'projects.json') })
+// Lo spazio di lavoro attivo (un filtro: workspaces-store.cjs) si legge dai file a ogni chiamata, così un cambio fatto nell'app vale subito per questo agente.
+// `granted`: i progetti che questo agente ha aperto da sé con open_project durante la sua vita: li vede anche se non sono membri (gli altri no, finché l'utente non li aggiunge).
+const workspacesStore = createWorkspacesStore({ directory: () => dataDirectory })
+const granted = new Set()
+// L'argomento `workspace` di search_knowledge: false (o "all") = tutti i progetti; un nome = quello spazio; non indicato = lo spazio attivo (undefined).
+const workspaceArg = (value) => (value === false || /^(false|all)$/i.test(typeof value === 'string' ? value.trim() : '') ? false : (typeof value === 'string' && value.trim() ? value.trim() : undefined))
 const currentProject = () => { try { return projectPath() } catch { return null } }
-function outsideSources() {
+// `workspace`: non indicato = lo spazio di lavoro attivo; false = tutti i progetti; un nome = quello spazio (vedi workspaces-store.cjs, `membersFor`).
+function outsideSources({ workspace } = {}) {
   try {
     const current = currentProject()
     return outsideFolders({
       current,
       references: current ? referencesStore.list() : [],
-      projects: projectsStore.list(),
+      projects: workspacesStore.visibleProjects(projectsStore.list(), { granted: [...granted], workspace }),
       isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(),
       webFolderOf,
     })
@@ -146,7 +154,8 @@ function outsideRoot(given) {
   const value = String(given || '').trim()
   if (!value.startsWith('@')) return null
   const [name, ...rest] = value.slice(1).split(/[\\/]/)
-  const found = outsideSources().find((item) => item.name.toLowerCase() === name.toLowerCase())
+  // Leggere `@nome` non dipende dallo spazio di lavoro: il nome lo ha visto in una ricerca (anche con workspace: false). Lo spazio decide cosa si OFFRE e si cerca per impostazione predefinita.
+  const found = outsideSources({ workspace: false }).find((item) => item.name.toLowerCase() === name.toLowerCase())
   if (!found) throw new Error(`"@${name}" is not a reference folder or a shared project of this one: project_info lists the available ones`)
   if (!isDirectory(found.path)) throw new Error(`The folder of "@${found.name}" is missing`)
   return { name: found.name, root: found.path, relative: rest.filter(Boolean).join('/') }
@@ -377,6 +386,8 @@ const TOOLS = [
         project,
         chosenFrom: source,
         activeDocument: app?.active || null,
+        // Lo spazio di lavoro attivo limita i progetti offerti sotto (sharedWithThisProject): list_workspaces li elenca, open_workspace cambia quello attivo.
+        workspace: workspacesStore.active() === 'all' ? 'All' : workspacesStore.get(workspacesStore.active()).name,
         openDocuments: app?.open || [],
         // I documenti raggiungibili: quelli del progetto, più questi due elenchi (fuori dalla cartella del progetto).
         linkedDocuments: linkedDocuments(),
@@ -513,10 +524,31 @@ const TOOLS = [
     },
   },
   {
+    name: 'list_workspaces',
+    description: 'Lists the user\'s workspaces. A workspace is a named set of projects that works as a FILTER: the project list, the Projects Home and the knowledge that the assistant and the agents reach by default are limited to the projects of the active workspace. "All" is the built-in workspace with every project (no filter). Each workspace shows its projects; "active" says which one is in use. search_knowledge searches the active workspace by default, and takes a workspace argument (false for everything, or a workspace name) to look elsewhere; open_workspace changes the active one. It reads the same files as the app, so it works also when OpenWriter is closed.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    run() {
+      const activeId = workspacesStore.active()
+      const named = (project) => ({ name: path.basename(project), path: project })
+      return {
+        active: activeId === 'all' ? 'All' : workspacesStore.get(activeId).name,
+        workspaces: [
+          { name: 'All', active: activeId === 'all', description: 'every project of the list, no filter' },
+          ...workspacesStore.list().map((item) => ({ name: item.name, active: item.id === activeId, projects: item.projects.map(named) })),
+        ],
+      }
+    },
+  },
+  {
     name: 'search_knowledge',
-    description: 'Finds the PASSAGES of the documents that best deal with a subject, ranked by relevance, from the search index that OpenWriter keeps up to date. It covers the project and also what the user shares with it: the reference folders linked to the project and the user\'s OTHER PROJECTS (their paths start with "@name/", which read_document opens, read-only), so a subject may well be answered there and not in the project itself. Write a few significant words, not a sentence; accents and capitals do not matter and the last word also matches its beginnings. Each result gives file, line range and the path of its headings, plus the text around the match: read the lines with read_document startLine/endLine before relying on them. With OpenWriter open on this project it is the same search as the app\'s assistant, so it also finds passages by MEANING (synonyms, other words) when the project turned that on; without the app it matches words only (try other words or synonyms). It reflects the saved files, a few seconds behind. Use it to explore ("where do we talk about X?"); use search_files for an exact phrase, a regular expression, code files or every occurrence. Needs OpenWriter to have opened the project at least once.',
-    inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'a few significant words to look for' }, path: { type: 'string', description: 'optional: folder or file relative to the project root, or "@name/…" for a reference folder or another project' }, scope: { type: 'string', enum: ['all', 'project', 'others'], description: '"all" (default): the project, its reference folders and the other shared projects; "project": the project only; "others": only the reference folders and the other projects' }, maxResults: { type: 'integer', minimum: 1, maximum: 50, description: 'maximum passages (default 10)' } }, required: ['query'], additionalProperties: false },
-    async run(args) {
+    description: 'Finds the PASSAGES of the documents that best deal with a subject, ranked by relevance, from the search index that OpenWriter keeps up to date. It covers the project and also what the user shares with it: the reference folders linked to the project and the user\'s OTHER PROJECTS (their paths start with "@name/", which read_document opens, read-only), so a subject may well be answered there and not in the project itself. Write a few significant words, not a sentence; accents and capitals do not matter and the last word also matches its beginnings. Each result gives file, line range and the path of its headings, plus the text around the match: read the lines with read_document startLine/endLine before relying on them. With OpenWriter open on this project it is the same search as the app\'s assistant, so it also finds passages by MEANING (synonyms, other words) when the project turned that on; without the app it matches words only (try other words or synonyms). It reflects the saved files, a few seconds behind. Use it to explore ("where do we talk about X?"); use search_files for an exact phrase, a regular expression, code files or every occurrence. Needs OpenWriter to have opened the project at least once. By default it covers the projects of the user\'s ACTIVE WORKSPACE (list_workspaces shows them); pass workspace=false to search every project instead, or workspace="name" to search one particular workspace.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'a few significant words to look for' }, workspace: { description: 'omit: the active workspace; false: every project, no workspace filter; a string: the name of the workspace to search (see list_workspaces)', anyOf: [{ type: 'boolean', enum: [false] }, { type: 'string' }] }, path: { type: 'string', description: 'optional: folder or file relative to the project root, or "@name/…" for a reference folder or another project' }, scope: { type: 'string', enum: ['all', 'project', 'others'], description: '"all" (default): the project, its reference folders and the other shared projects; "project": the project only; "others": only the reference folders and the other projects' }, maxResults: { type: 'integer', minimum: 1, maximum: 50, description: 'maximum passages (default 10)' } }, required: ['query'], additionalProperties: false },
+    async run(rawArgs) {
+      // Lo spazio di lavoro scelto dall'agente: un nome sconosciuto è un errore chiaro (con l'elenco), uguale con o senza l'app.
+      const workspace = workspaceArg(rawArgs.workspace)
+      workspacesStore.membersFor(workspace)
+      const args = { ...rawArgs, workspace }
+      if (workspace === undefined) delete args.workspace
       // Con l'app aperta sullo stesso progetto la ricerca la fa l'app (ponte locale): è la stessa dell'assistente, quindi anche per significato se il
       // progetto l'ha acceso. Se l'app non c'è, ha un'altra versione o ha aperto un altro progetto, si ripiega sull'indice letto direttamente.
       try { return await bridgeCall('search_knowledge', args) } catch (error) {
@@ -530,7 +562,7 @@ const TOOLS = [
       const asked = String(args.scope || '').toLowerCase()
       const scope = asked === 'project' ? 'project' : (asked === 'others' || asked === 'references') ? 'others' : 'all'
       const projectSource = project ? { key: projectKey(project), prefix: '' } : null
-      const otherSources = () => outsideSources().map((item) => ({ key: projectKey(item.path), name: item.name }))
+      const otherSources = () => outsideSources({ workspace }).map((item) => ({ key: projectKey(item.path), name: item.name }))
       let sources
       let folder = ''
       if (given.startsWith('@')) {
@@ -702,7 +734,7 @@ function bridgeCall(tool, args) {
   if (!bridge?.port || !bridge?.token) return Promise.reject(new Error(notRunning))
   let project = null
   try { project = projectPath() } catch { /* open_project funziona anche senza un progetto */ }
-  const payload = JSON.stringify({ project, tool, arguments: args })
+  const payload = JSON.stringify({ project, tool, arguments: args, granted: [...granted] })
   return new Promise((resolve, reject) => {
     const request = http.request({ host: '127.0.0.1', port: bridge.port, path: '/call', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), Authorization: `Bearer ${bridge.token}` }, timeout: 130000 }, (response) => {
       let body = ''
@@ -779,13 +811,31 @@ const WRITE_TOOLS = [
         fs.mkdirSync(path.join(target, '.ow'), { recursive: true })
       } else if (!isDirectory(target)) throw new Error(`The project folder does not exist: ${target} (pass create=true to create a new project there)`)
       try {
-        const result = await bridgeCall('open_project', { path: target })
+        // `created`: un progetto nuovo entra nello spazio di lavoro attivo; uno solo aperto da un agente resta un membro temporaneo (vedi mcpRequests.js).
+        const result = await bridgeCall('open_project', { path: target, ...(isTrue(create) ? { created: true } : {}) })
         switchedProject = target
+        granted.add(target)
         return `${isTrue(create) ? `Project created at ${target}. ` : ''}${result} This server now works on it.`
       } catch (error) {
         if (isTrue(create)) return `Project created at ${target}, but it was not opened in OpenWriter: ${error.message}`
         throw error
       }
+    },
+  },
+  {
+    name: 'open_workspace',
+    description: 'Makes a workspace the ACTIVE one in OpenWriter: the project list and the Projects Home show only its projects, and the assistant and the agents reach by default the knowledge of those projects (see list_workspaces). Pass the name of the workspace, or "All" to remove the filter. It changes what the user sees, like open_project: use it when the work needs another set of projects, and tell the user. It opens no project. With OpenWriter closed it is saved and takes effect when the app starts.',
+    inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'name of the workspace (see list_workspaces), or "All"' } }, required: ['name'], additionalProperties: false },
+    async run({ name }) {
+      const wanted = text(name).trim()
+      const isAll = /^all$/i.test(wanted)
+      const found = isAll ? null : workspacesStore.find(wanted)
+      if (!isAll && !found) throw new Error(`Workspace "${wanted}" not found. Available: ${['All', ...workspacesStore.list().map((item) => item.name)].join(', ')}`)
+      try { return await bridgeCall('open_workspace', { name: wanted }) } catch (error) {
+        if (!/does not seem to be running|did not answer|Unknown tool|Unexpected answer|socket hang up/i.test(String(error.message))) throw error
+      }
+      workspacesStore.setActive(found ? found.id : 'all')
+      return `The workspace "${found ? found.name : 'All'}" is now active (OpenWriter is not running: it takes effect when the app starts).`
     },
   },
   {

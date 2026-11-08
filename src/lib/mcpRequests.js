@@ -40,8 +40,12 @@ export async function handleMcpRequest({ tool, args = {} }, { api, toolBridge, p
   if (tool === 'open_project') {
     const directory = String(args.path ?? '').trim()
     if (!isAbsolute(directory)) throw new Error('Give the absolute path of the project folder')
-    const opened = await openProject(directory)
+    // Un progetto creato dall'agente (`created`) entra nello spazio di lavoro attivo come ogni progetto nuovo; uno solo aperto da lui no: diventa un membro temporaneo
+    // (l'utente lo aggiunge o lo ignora), e a lui resta visibile (vedi il server MCP). Con «Tutti» non serve.
+    const created = args.created === true || args.created === 'true'
+    const opened = await openProject(directory, created ? undefined : { join: false })
     if (!opened) throw new Error('The project could not be opened')
+    if (!created) { try { await api.addTemporaryProject?.(opened) } catch (error) { console.warn('Membro temporaneo non registrato', error) } }
     setStatus?.(t("An agent opened the project “{project}”", { project: opened }))
     return `Project ${opened} is now open in OpenWriter.`
   }
