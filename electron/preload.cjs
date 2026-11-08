@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     install: (family) => ipcRenderer.invoke('fonts:install', family),
     remove: (family) => ipcRenderer.invoke('fonts:remove', family),
   },
+  openTextFile: (filePath) => ipcRenderer.invoke('text:open', filePath),
+  saveTextFile: (payload) => ipcRenderer.invoke('text:save', payload),
   openDocument: () => ipcRenderer.invoke('document:open'),
   openDocumentPath: (filePath, options) => ipcRenderer.invoke('document:open-path', filePath, options),
   reopenDocument: (filePath) => ipcRenderer.invoke('document:reopen', filePath),

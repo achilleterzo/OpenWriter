@@ -27,6 +27,7 @@ const { findImages, rewriteImageDestinations } = require('./markdown-images.cjs'
 const { writeFileAtomic } = require('./atomic-write.cjs')
 const { createFontsStore } = require('./fonts.cjs')
 const { parsePdf, MARKER } = require('./pdf-import.cjs')
+const textFiles = require('./text-file.cjs')
 const { createBrowserHistory } = require('./browser-history.cjs')
 const { createReferencesStore } = require('./project-references.cjs')
 const { createWebReferencesStore, webFolderOf } = require('./web-references.cjs')
@@ -144,6 +145,8 @@ const documentExtensions = ['.md', '.markdown', '.mdown', '.docx', '.pdf']
 // Quel che l'albero dei file mostra: i documenti e le immagini (che si aprono in una scheda di visualizzazione).
 const listedExtensions = [...documentExtensions, ...IMAGE_EXTENSIONS]
 const hiddenDirectories = new Set(['node_modules', 'dist', 'out'])
+// File di testo aperti nel lettore testuale fuori dal progetto: solo quelli che l'utente ha scelto con la finestra di apertura (o che erano nella sessione).
+const userTextPaths = new Set()
 
 // I pacchetti della ricerca per significato (semantic-pack.cjs): non sono nell'installer, si scaricano quando l'utente lo chiede (Impostazioni → Modelli locali) e
 // vivono nei dati dell'app. Ce n'è uno per dispositivo: 'cpu' (modello a 8 bit, WebAssembly in un thread di Node, circa 150 MB) e 'gpu' (modello fp16 su WebGPU
@@ -329,15 +332,41 @@ async function readDocument(filePath) {
   return { filePath, content: buffer.toString('utf8'), contentType: 'markdown', format: 'markdown' }
 }
 
+// Il percorso di un file di testo che il lettore testuale può aprire o salvare: nel progetto, scelto dall'utente con una finestra, o già nella sessione.
+function resolveTextPath(target) {
+  const resolved = path.resolve(String(target || ''))
+  if ([...userTextPaths].some((known) => samePath(known, resolved))) return resolved
+  if ((loadSession()?.texts || []).some((saved) => samePath(path.resolve(String(saved.path || '')), resolved))) return resolved
+  return resolveInProject(target)
+}
+
+// Lettura per il lettore testuale, con messaggi tradotti per i due rifiuti attesi (binario, troppo grande).
+async function readTextForTab(target) {
+  try {
+    return await textFiles.readTextFile(target)
+  } catch (error) {
+    if (error.code === 'NOT_TEXT') throw new Error(t('This file does not look like text (it is binary or not UTF-8).'))
+    if (error.code === 'TEXT_TOO_LARGE') throw new Error(t('This file is too large to open here (the limit is {limit} MB).', { limit: textFiles.TEXT_LIMIT / 1048576 }))
+    throw error
+  }
+}
+
 async function openDocument() {
   const result = await dialog.showOpenDialog(mainWindow, {
     defaultPath: projectPath || undefined,
     properties: ['openFile'],
-    filters: [supportedDocumentsFilter(), markdownFilter, { name: 'Word', extensions: ['docx'] }, { name: 'PDF', extensions: ['pdf'] }],
+    filters: [supportedDocumentsFilter(), markdownFilter, { name: 'Word', extensions: ['docx'] }, { name: 'PDF', extensions: ['pdf'] }, { name: t('All files'), extensions: ['*'] }],
   })
 
   if (result.canceled) return null
-  return readDocument(result.filePaths[0])
+  const chosen = result.filePaths[0]
+  // Un file che non è un documento si apre nel lettore testuale: la scelta dell'utente lo rende apribile (e salvabile) anche fuori dal progetto.
+  if (!documentExtensions.includes(path.extname(chosen).toLowerCase()) && !IMAGE_EXTENSIONS.includes(path.extname(chosen).toLowerCase())) {
+    const text = await readTextForTab(chosen)
+    userTextPaths.add(path.resolve(chosen))
+    return { ...text, format: 'text' }
+  }
+  return readDocument(chosen)
 }
 
 function sessionsFilePath() {
@@ -743,7 +772,8 @@ async function listDirectory(directory) {
       isDirectory: entry.isDirectory(),
       isProject: entry.isDirectory() && fsSync.existsSync(path.join(resolved, entry.name, projectFile.directoryName)),
       ...(entry.isDirectory() && states.get(entry.name) ? { emptiness: states.get(entry.name) } : {}),
-      ...(!entry.isDirectory() ? { openable: listedExtensions.includes(path.extname(entry.name).toLowerCase()) } : {}),
+      // Documenti e immagini si aprono come sempre; ogni altro file che non sia di un tipo noto come binario si apre nel lettore testuale (se poi non è testo lo dice).
+      ...(!entry.isDirectory() ? { openable: listedExtensions.includes(path.extname(entry.name).toLowerCase()) || !textFiles.isBinaryName(entry.name) } : {}),
       ...(isMarkdown(entry) && originals.has(stem(entry)) ? { originals: originals.get(stem(entry)) } : {}),
     }))
     .sort((left, right) => Number(right.isDirectory) - Number(left.isDirectory) || left.name.localeCompare(right.name, 'it', { sensitivity: 'base' }))
@@ -926,6 +956,19 @@ function createWindow() {
 }
 
 ipcMain.handle('document:open', openDocument)
+// Lettore testuale: apre e salva file di testo qualsiasi, senza interpretarli (text-file.cjs).
+ipcMain.handle('text:open', async (_event, filePath) => readTextForTab(resolveTextPath(filePath)))
+ipcMain.handle('text:save', async (_event, { filePath, text, eol, bom, saveAs }) => {
+  let target = filePath && !saveAs ? resolveTextPath(filePath) : null
+  if (!target) {
+    const result = await dialog.showSaveDialog(mainWindow, { defaultPath: filePath || startingPath(t('New text file.txt')), filters: [{ name: t('All files'), extensions: ['*'] }] })
+    if (result.canceled) return null
+    target = result.filePath
+    userTextPaths.add(path.resolve(target))
+  }
+  textFiles.writeTextFile(target, String(text ?? ''), { eol: eol === 'crlf' ? 'crlf' : 'lf', bom: Boolean(bom) })
+  return target
+})
 ipcMain.handle('document:open-path', async (_event, filePath, { original = false } = {}) => {
   // Un documento collegato al progetto sta fuori dalla sua cartella ma si apre (e si modifica) lì dov'è.
   const target = linksStore.has(filePath) ? path.resolve(filePath) : resolveInProject(filePath)
