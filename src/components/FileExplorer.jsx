@@ -761,11 +761,13 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
             if (target && row.dataset.treeRow === 'file' && isImageFile(target) && isImageFile(activePath)) onOpenFile(target, { preview: true })
           })
         }}
+        // Un clic sull'area vuota sotto le righe toglie la selezione (e la cartella scelta come destinazione dei nuovi file: si torna alla radice del progetto).
+        onClick={(event) => { if (event.target === event.currentTarget) { setSelection([]); anchorRef.current = null; setSelectedFolder(null) } }}
         onDragOver={(event) => drop.over(event, project)}
         onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDropTarget(null) }}
         onDrop={(event) => drop.drop(event, project)}
       >
-        {error && <p className="px-3 py-2 text-xs text-rose-400">{error}</p>}
+        {error &&<p className="px-3 py-2 text-xs text-rose-400">{error}</p>}
         {!error && entries.length === 0 && <p className="px-3 py-2 text-xs text-slate-500">{t('No documents (.md, .docx, .pdf) in this folder. Drop files here to copy them.')}</p>}
         {creating?.parent === project && <CreateRow depth={0} menu={menu} />}
         {entries.map((entry) => (
