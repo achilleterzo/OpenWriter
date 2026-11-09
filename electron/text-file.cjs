@@ -73,6 +73,7 @@ async function readTextFile(filePath, { limit = TEXT_LIMIT } = {}) {
 
 function writeTextFile(filePath, text, options) {
   // La sostituzione atomica crea un file nuovo: i permessi del vecchio (un script eseguibile) si ripassano al nuovo, altrimenti si perderebbero.
+  try { filePath = fs.realpathSync(filePath) } catch (error) { if (error.code !== 'ENOENT') throw error }
   let mode
   try { mode = fs.statSync(filePath).mode & 0o777 } catch { /* file nuovo */ }
   writeFileAtomic(filePath, encodeText(text, options), mode === undefined ? undefined : { mode })
