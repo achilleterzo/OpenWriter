@@ -1069,8 +1069,6 @@
   "“Approve for me”: when the work is done the assistant's edits are accepted and saved, and the documents it opened are closed again. The previous version stays in the history.": "«Approva per me»: a lavoro finito le modifiche dell'assistente si accettano e si salvano, e i documenti che ha aperto lui si richiudono. La versione precedente resta nella cronologia.",
   "Researching… (report)": "Ricerca… (rapporto)",
   "Research assistant": "Assistente di ricerca",
-  "Let the assistant delegate explorations to a second model": "Lascia che l'assistente deleghi le esplorazioni a un secondo modello",
-  "The research assistant searches and reads the project files on its own (it never changes anything) and returns a short report: the exploration stays out of the conversation, which keeps it small and fast. A model that is good with tools is enough.": "L'assistente di ricerca cerca e legge da solo i file del progetto (non modifica mai nulla) e restituisce un rapporto breve: l'esplorazione resta fuori dalla conversazione, che si mantiene piccola e veloce. Basta un modello bravo con gli strumenti.",
   "Maximum research steps": "Passi massimi della ricerca",
   "The API key and the endpoint of the chosen provider are the ones set for it above: configure it first if you have not used it yet.": "La chiave API e l'indirizzo del provider scelto sono quelli impostati per lui sopra: configuralo prima se non l'hai ancora usato.",
   "Researching… (step {step})": "Ricerca… (passo {step})",
@@ -1340,5 +1338,6 @@
   "Where to search: all the projects, or a workspace": "Dove cercare: in tutti i progetti o in un workspace",
   "Workspace actions": "Azioni del workspace",
   "Edit workspace…": "Modifica workspace…",
-  "Add project": "Aggiungi progetto"
+  "Add project": "Aggiungi progetto",
+  "Delegate the research to another dedicated assistant": "Delega la ricerca a un altro assistente dedicato"
 }

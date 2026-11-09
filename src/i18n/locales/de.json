@@ -1069,8 +1069,6 @@
   "“Approve for me”: when the work is done the assistant's edits are accepted and saved, and the documents it opened are closed again. The previous version stays in the history.": "„Für mich genehmigen“: Nach getaner Arbeit werden die Änderungen des Assistenten übernommen und gespeichert, und die von ihm geöffneten Dokumente wieder geschlossen. Die vorherige Version bleibt im Verlauf.",
   "Researching… (report)": "Recherche… (Bericht)",
   "Research assistant": "Recherche-Assistent",
-  "Let the assistant delegate explorations to a second model": "Den Assistenten Erkundungen an ein zweites Modell delegieren lassen",
-  "The research assistant searches and reads the project files on its own (it never changes anything) and returns a short report: the exploration stays out of the conversation, which keeps it small and fast. A model that is good with tools is enough.": "Der Recherche-Assistent sucht und liest die Projektdateien selbstständig (er ändert nie etwas) und liefert einen kurzen Bericht: Die Erkundung bleibt außerhalb der Unterhaltung, die dadurch klein und schnell bleibt. Ein Modell, das gut mit Werkzeugen umgeht, genügt.",
   "Maximum research steps": "Maximale Recherche-Schritte",
   "The API key and the endpoint of the chosen provider are the ones set for it above: configure it first if you have not used it yet.": "API-Schlüssel und Endpunkt des gewählten Anbieters sind die oben für ihn eingestellten: richte ihn zuerst ein, falls du ihn noch nicht benutzt hast.",
   "Researching… (step {step})": "Recherche… (Schritt {step})",
@@ -1340,5 +1338,6 @@
   "Where to search: all the projects, or a workspace": "Wo gesucht wird: in allen Projekten oder in einem Arbeitsbereich",
   "Workspace actions": "Aktionen des Arbeitsbereichs",
   "Edit workspace…": "Arbeitsbereich bearbeiten…",
-  "Add project": "Projekt hinzufügen"
+  "Add project": "Projekt hinzufügen",
+  "Delegate the research to another dedicated assistant": "Die Recherche an einen anderen, eigenen Assistenten delegieren"
 }
