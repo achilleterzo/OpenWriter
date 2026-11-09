@@ -150,6 +150,7 @@ jobs:
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          DEBUG: electron-builder
         run: |
           rm -rf release
           npm run build:desktop:ci -- ${{ matrix.build_args }} --publish never
