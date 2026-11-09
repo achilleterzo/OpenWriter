@@ -39,7 +39,10 @@ const Numbers = memo(function Numbers({ text, marks, numbers }) {
         const rowEnd = starts[row] + lines[row].length
         const from = Math.max(mark.from, starts[row]) - starts[row]
         const to = Math.min(mark.to, rowEnd) - starts[row]
-        if (to > from || (to === from && mark.from === mark.to)) buckets.set(row, [...(buckets.get(row) || []), { from, to, current: mark.current }])
+        if (to > from || (to === from && mark.from === mark.to)) {
+          if (!buckets.has(row)) buckets.set(row, [])
+          buckets.get(row).push({ from, to, current: mark.current })
+        }
       }
     }
     return buckets
