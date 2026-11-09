@@ -25,7 +25,7 @@ const BINARY_EXTENSIONS = new Set([
   // immagini e grafica (le immagini note si aprono nel visore: queste no)
   '.psd', '.ai', '.sketch', '.fig', '.xcf', '.tif', '.tiff', '.raw', '.cr2', '.nef', '.heic', '.heif',
   // documenti e archivi di dati binari
-  '.doc', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp', '.epub', '.mobi', '.db', '.sqlite', '.sqlite3', '.mdb', '.accdb', '.dat', '.pak', '.lock',
+  '.doc', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp', '.epub', '.mobi', '.db', '.sqlite', '.sqlite3', '.mdb', '.accdb', '.dat', '.pak',
   // caratteri
   '.ttf', '.otf', '.woff', '.woff2', '.eot',
 ])
