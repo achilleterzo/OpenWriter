@@ -50,7 +50,9 @@ export default function TextFindBar({ text, onText, onMarks, onReveal, replaceMo
   }
   const replaceEverything = () => {
     if (!count) return
-    onText(replaceAll(text, matches, replacement).text)
+    // `matches` è limitato per la visualizzazione: per sostituire tutto si ricalcolano senza limite.
+    const all = truncated ? findMatches(text, { query, ...options, limit: Infinity }).matches : matches
+    onText(replaceAll(text, all, replacement).text)
   }
 
   const toggle = (key) => setOptions((value) => ({ ...value, [key]: !value[key] }))

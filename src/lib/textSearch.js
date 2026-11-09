@@ -1,7 +1,7 @@
 /**
  * Cerca e sostituisci in un testo semplice (il lettore testuale, `TextPane`). Funzioni pure: lavorano su stringhe e posizioni (indici nel testo), non sul DOM.
  *
- *   findMatches(text, { query, caseSensitive, wholeWord, regex }) → { matches: [{ from, to, groups }], error, truncated }
+ *   findMatches(text, { query, caseSensitive, wholeWord, regex, limit }) → (limit: massimo di corrispondenze, MAX_MATCHES se omesso) { matches: [{ from, to, groups }], error, truncated }
  *   replaceOne(text, match, replacement, { regex })               → { text, caret }       (caret: dove finisce il testo inserito)
  *   replaceAll(text, matches, replacement, { regex })             → { text, count }
  *   lineStarts(text) / lineOf(starts, position)                    posizioni di inizio riga e riga di una posizione (per i numeri di riga)
@@ -24,12 +24,13 @@ export function findMatches(text, options) {
   if (!options?.query) return { matches: [], error: '', truncated: false }
   let pattern
   try { pattern = buildPattern(options) } catch (error) { return { matches: [], error: error.message, truncated: false } }
+  const limit = options.limit ?? MAX_MATCHES // il limite riguarda solo ciò che si mostra: per sostituire si passa `limit: Infinity`
   const matches = []
   let truncated = false
   let found
   while ((found = pattern.exec(text)) !== null) {
     if (found[0] === '') { pattern.lastIndex += 1; continue }
-    if (matches.length >= MAX_MATCHES) { truncated = true; break }
+    if (matches.length >= limit) { truncated = true; break }
     matches.push({ from: found.index, to: found.index + found[0].length, groups: options.regex ? { list: [...found], named: found.groups || {} } : null })
   }
   return { matches, error: '', truncated }

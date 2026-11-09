@@ -65,11 +65,21 @@ export default function SourceEditor({ value, onChange, label, lineNumbers = tru
   // si mostrano come segnaposto e tornano interi nel documento a ogni modifica.
   const shown = useMemo(() => (plain ? { text: value, blobs: null } : collapseEmbeddedImages(value)), [value, plain])
 
+  // Si porta in vista il tratto evidenziato corrente, non l'intera riga: una riga che va a capo su più schermate (JSON minificato, log lunghi) lascerebbe fuori la corrispondenza.
+  // Le evidenziazioni arrivano un render dopo la richiesta, quindi la richiesta resta in attesa finché la riga non contiene il tratto corrente (o non ce n'è).
+  const pending = useRef(null)
+  useEffect(() => { if (reveal) pending.current = reveal.nonce }, [reveal?.nonce]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!reveal) return
+    if (!reveal || pending.current !== reveal.nonce) return
     const row = lineOf(lineStarts(shown.text), reveal.position)
-    container.current?.querySelector(`[data-line="${row}"]`)?.scrollIntoView({ block: 'nearest' })
-  }, [reveal?.nonce]) // eslint-disable-line react-hooks/exhaustive-deps
+    const line = container.current?.querySelector(`[data-line="${row}"]`)
+    if (!line) return
+    const mark = line.querySelector('.source-mark-current')
+    if (mark || !marks?.length) {
+      pending.current = null
+      ;(mark || line).scrollIntoView({ block: 'nearest' })
+    }
+  }, [reveal?.nonce, marks]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div ref={container} className={`document-source h-full overflow-y-auto ${lineNumbers ? '' : 'source-plain'}`}>
