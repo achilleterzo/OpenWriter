@@ -50,8 +50,8 @@ function setup() {
 }
 
 // Avvia il server su A e restituisce call(tool, args) → testo (o errore).
-function startServer({ a, data }) {
-  const child = spawn(process.execPath, [path.join(__dirname, '../electron/mcp-server.cjs'), '--project', a, '--data', data, '--read-only'], { stdio: ['pipe', 'pipe', 'pipe'] })
+function startServer({ a, data }, { readOnly = true } = {}) {
+  const child = spawn(process.execPath, [path.join(__dirname, '../electron/mcp-server.cjs'), '--project', a, '--data', data, ...(readOnly ? ['--read-only'] : [])], { stdio: ['pipe', 'pipe', 'pipe'] })
   const waiting = new Map()
   let buffer = ''
   child.stdout.on('data', (chunk) => {
@@ -170,4 +170,102 @@ test('MCP: la ricerca dell\'app non dipende dal progetto aperto; senza app si ri
       assert.match(refused.text, /turned off/)
     })
   } finally { server.stop(); fs.rmSync(env.root, { recursive: true, force: true }) }
+})
+
+// ----- Spazi di lavoro (workspace): un filtro su ciò che l'agente raggiunge -----
+const { createWorkspacesStore } = require('../electron/workspaces-store.cjs')
+
+test('MCP: lo spazio di lavoro attivo limita ricerca e offerta, si rilegge a ogni chiamata, e workspace sceglie altro', async () => {
+  const env = setup()
+  const store = createWorkspacesStore({ directory: () => env.data })
+  const server = startServer(env)
+  try {
+    await server.ready
+    // Senza filtro («Tutti») l'altro progetto si trova.
+    assert.match((await server.call('search_knowledge', { query: 'penale ritardo' })).text, /@B\/contratto\.md/)
+    // Attivato uno spazio che contiene solo A: B sparisce dalla ricerca e dall'offerta, senza riavviare il server.
+    const only = store.create({ name: 'Solo A', projects: [env.a] })
+    const both = store.create({ name: 'A e B', projects: [env.a, env.b] })
+    store.setActive(only.id)
+    assert.match((await server.call('search_knowledge', { query: 'penale ritardo' })).text, /Nothing found/)
+    const info = JSON.parse((await server.call('project_info')).text)
+    assert.equal(info.workspace, 'Solo A')
+    assert.deepEqual(info.sharedWithThisProject.map((item) => item.name), ['@norme'], 'restano i riferimenti del progetto: non sono progetti')
+    // `workspace`: false = tutti i progetti; un nome = quello spazio (anche senza badare alle maiuscole); un nome sconosciuto è un errore che elenca gli spazi.
+    assert.match((await server.call('search_knowledge', { query: 'penale ritardo', workspace: false })).text, /@B\/contratto\.md/)
+    assert.match((await server.call('search_knowledge', { query: 'penale ritardo', workspace: 'a e b' })).text, /@B\/contratto\.md/)
+    assert.match((await server.call('search_knowledge', { query: 'penale ritardo', workspace: 'Solo A' })).text, /Nothing found/)
+    const unknown = await server.call('search_knowledge', { query: 'penale', workspace: 'Inesistente' })
+    assert.equal(unknown.error, true)
+    assert.match(unknown.text, /not found.*All, Solo A, A e B/)
+    // Leggere un nome `@B` visto in una ricerca non dipende dallo spazio: lo spazio decide cosa si offre e si cerca per impostazione predefinita.
+    assert.equal((await server.call('read_document', { path: '@B/contratto.md' })).error, false)
+    // Uno spazio con B si vede; tornati a «Tutti» pure.
+    store.setActive(both.id)
+    assert.match((await server.call('search_knowledge', { query: 'penale ritardo' })).text, /@B\/contratto\.md/)
+    store.setActive('all')
+    assert.equal(JSON.parse((await server.call('project_info')).text).workspace, 'All')
+    assert.match((await server.call('search_knowledge', { query: 'penale ritardo' })).text, /@B\/contratto\.md/)
+  } finally { server.stop(); fs.rmSync(env.root, { recursive: true, force: true }) }
+})
+
+test('MCP: list_workspaces elenca gli spazi; open_workspace cambia quello attivo (con l\'app chiusa lo scrive nei file); in sola lettura non c\'è', async () => {
+  const env = setup()
+  const store = createWorkspacesStore({ directory: () => env.data })
+  store.create({ name: 'Libro', projects: [env.a, env.b] })
+  store.create({ name: 'Lavoro', projects: [env.c] })
+  const readOnly = startServer(env)
+  const writable = startServer(env, { readOnly: false })
+  try {
+    await Promise.all([readOnly.ready, writable.ready])
+    const listed = JSON.parse((await readOnly.call('list_workspaces')).text)
+    assert.equal(listed.active, 'All')
+    assert.deepEqual(listed.workspaces.map((item) => item.name), ['All', 'Libro', 'Lavoro'])
+    assert.deepEqual(listed.workspaces[1].projects.map((item) => item.name), ['A', 'B'])
+    // In sola lettura open_workspace non esiste: cambia ciò che l'utente vede.
+    assert.equal((await readOnly.call('open_workspace', { name: 'Libro' })).error, true)
+    // Senza l'app: si scrive nei file (vale al prossimo avvio) e si vede subito.
+    const opened = await writable.call('open_workspace', { name: 'libro' })
+    assert.equal(opened.error, false)
+    assert.match(opened.text, /"Libro" is now active/)
+    assert.equal(store.active(), store.find('Libro').id)
+    assert.equal(JSON.parse((await readOnly.call('list_workspaces')).text).active, 'Libro')
+    assert.equal((await writable.call('open_workspace', { name: 'Sconosciuto' })).error, true)
+    await writable.call('open_workspace', { name: 'All' })
+    assert.equal(store.active(), 'all')
+  } finally { readOnly.stop(); writable.stop(); fs.rmSync(env.root, { recursive: true, force: true }) }
+})
+
+test('MCP: il progetto che un agente apre da sé gli resta visibile fuori dallo spazio di lavoro; agli altri no', async () => {
+  const env = setup()
+  const store = createWorkspacesStore({ directory: () => env.data })
+  const only = store.create({ name: 'Solo A', projects: [env.a] })
+  store.setActive(only.id)
+  const calls = []
+  let bridge
+  // L'app finta risponde a open_project e registra cosa riceve la ricerca locale.
+  const window = { isDestroyed: () => false, webContents: { send: (channel, message) => { if (channel === 'mcp:request') setTimeout(() => bridge.answer(message.id, { ok: true, text: 'Project opened.' }), 0) } } }
+  bridge = createMcpBridge({ directory: env.data, getWindow: () => window, getProjectPath: () => env.a, isEnabled: () => true, localTools: { search_knowledge: async (args, context) => { calls.push(context); return "risposta dell'app" } } })
+  await bridge.start()
+  const server = startServer(env, { readOnly: false })
+  const stranger = startServer(env, { readOnly: false })
+  try {
+    await Promise.all([server.ready, stranger.ready])
+    assert.match((await server.call('search_knowledge', { query: 'penale ritardo' })).text, /risposta dell'app/)
+    assert.deepEqual(calls[0].granted, [], 'prima di aprire nulla non ha concessioni')
+    // L'agente apre B e torna su A: B non è nello spazio, ma l'ha aperto lui.
+    assert.equal((await server.call('open_project', { path: env.b })).error, false)
+    assert.equal((await server.call('open_project', { path: env.a })).error, false)
+    await server.call('search_knowledge', { query: 'penale ritardo' })
+    assert.deepEqual(calls.at(-1).granted.map((item) => path.basename(item)).sort(), ['A', 'B'], "le concessioni (i progetti che l'agente ha aperto) viaggiano con la ricerca verso l'app")
+    // Senza l'app si ripiega sull'indice letto direttamente: la concessione vale lì.
+    bridge.stop()
+    assert.match((await server.call('search_knowledge', { query: 'penale ritardo' })).text, /@B\/contratto\.md/)
+    assert.equal((await server.call('read_document', { path: '@B/contratto.md' })).error, false)
+    // Un altro agente (altro processo) non ha concessioni: B per lui resta fuori.
+    assert.match((await stranger.call('search_knowledge', { query: 'penale ritardo' })).text, /Nothing found/)
+    // Leggere un nome `@B` esplicito non dipende dallo spazio (come con workspace: false): lo spazio e le concessioni decidono cosa si cerca e si offre.
+    assert.equal((await stranger.call('read_document', { path: '@B/contratto.md' })).error, false)
+    assert.deepEqual(JSON.parse((await stranger.call('project_info')).text).sharedWithThisProject.map((item) => item.name), ['@norme'], 'e non gli viene offerto')
+  } finally { bridge.stop(); server.stop(); stranger.stop(); fs.rmSync(env.root, { recursive: true, force: true }) }
 })

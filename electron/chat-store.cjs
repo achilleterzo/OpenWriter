@@ -68,6 +68,8 @@ function createChatStore({ getProjectPath }) {
           content: text(message.content, MAX_MESSAGE_CHARS),
           at: typeof message.at === 'string' ? message.at : now,
           ...(message.error ? { error: true } : {}),
+          // Risposta interrotta dall'utente a metà: il turno si può riprendere da lì (src/lib/chatResume.js).
+          ...(message.role === 'assistant' && message.interrupted ? { interrupted: true } : {}),
           // Ragionamento mostrato dal modello e chiamate agli strumenti restano nel log della conversazione.
           // Contesto allegato dall'app (es. una nota): etichetta mostrata all'utente, dettaglio inviato al modello, id della nota per il collegamento.
           ...(message.role === 'user' && message.attachment && typeof message.attachment === 'object'

@@ -18,6 +18,7 @@ import { t } from '../i18n/index.js'
 import { activeSkillIds, skillsPromptText } from '../lib/skills.js'
 import { abbreviateEmbeddedImages } from '../lib/embeddedImages.js'
 import { MAX_MODEL_USER_IMAGES, MAX_MODEL_USER_PDFS, MAX_PENDING_ATTACHMENTS, blobToBase64, canAttach, formatBytes, formatTokens, prepareImage, readAttachmentFile, totalUsage } from '../lib/chatAttachments.js'
+import { canResumeMessages, prepareResume, RESUME_NOTE } from '../lib/chatResume.js'
 
 const api = window.electronAPI
 const ai = api?.ai
@@ -904,10 +905,9 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   })
 
   // Riprende da dove si era interrotto: l'ultimo messaggio è dell'utente (o un errore dell'assistente, che viene scartato).
-  const canResume = !busy && enabled && current.messages.length > 0 && (() => {
-    const last = current.messages[current.messages.length - 1]
-    return last.role === 'user' || (last.role === 'assistant' && last.error)
-  })()
+  // Il turno è incompleto se l'ultimo messaggio è dell'utente, un errore, una risposta interrotta, una chiamata di strumento senza risultato o un risultato senza risposta
+  // (chatResume.js): ogni passo è già salvato, quindi si riparte dall'ultimo.
+  const canResume = !busy && enabled && canResumeMessages(current.messages)
 
   // Funzioni stabili per i messaggi memorizzati: puntano sempre alle versioni più recenti.
   const handlers = useRef({})
@@ -958,8 +958,13 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     // Modificando un messaggio precedente le risposte successive vengono troncate; riprendendo si scartano solo gli errori in coda.
     let base = current.messages
     const edited = editingIndex !== null ? current.messages[editingIndex] : null
-    if (resume) while (base.length && base[base.length - 1].role === 'assistant' && base[base.length - 1].error) base = base.slice(0, -1)
-    else if (edited) base = base.slice(0, editingIndex)
+    let resumeNote = false
+    if (resume) {
+      // Si scartano in coda le risposte fallite o interrotte; una chiamata di strumento rimasta senza risultato ne riceve uno che dice che l'esito è ignoto.
+      const prepared = prepareResume(current.messages)
+      base = prepared.messages
+      resumeNote = prepared.note
+    } else if (edited) base = base.slice(0, editingIndex)
     setEditingIndex(null)
     const kept = attachment ?? edited?.attachment ?? null
     const outgoing = resume ? [] : pendingFiles
@@ -1143,7 +1148,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
               webText,
             )
             const loadedImages = new Map([...(await loadRecentImages(conversation.messages)), ...(await loadUserAttachments(conversation.messages, capabilities))])
-            const modelMessages = [{ role: 'system', content: system }, ...toModelMessages(conversation.messages, context, native, loadedImages)]
+            // Alla ripresa il modello sa che il lavoro era già avviato: prosegue dall'ultimo risultato senza rifare i passi fatti.
+            const modelMessages = [{ role: 'system', content: system }, ...toModelMessages(conversation.messages, context, native, loadedImages), ...(resumeNote && step === 0 ? [{ role: 'user', content: RESUME_NOTE }] : [])]
             // Dopo il risultato di uno strumento il piano c'è già: si ragiona di meno (impostazione "Ragionamento con gli strumenti"), così l'esecuzione è più rapida.
             const afterTool = conversation.messages.at(-1)?.role === 'tool'
             const mode = settings.toolReasoning || 'reduced'
@@ -1178,7 +1184,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         } catch (reason) {
           const partial = visibleText(liveRef.current.text).text
           if (runRef.current.cancelled) {
-            if (partial.trim()) await append({ role: 'assistant', content: `${partial}\n\n${t('(interrupted)')}`, ...(liveRef.current.thinking ? { thinking: liveRef.current.thinking } : {}) })
+            if (partial.trim()) await append({ role: 'assistant', content: `${partial}\n\n${t('(interrupted)')}`, interrupted: true, ...(liveRef.current.thinking ? { thinking: liveRef.current.thinking } : {}) })
             else setError(t('Request interrupted'))
           } else {
             await append({ role: 'assistant', content: reason.message, error: true })

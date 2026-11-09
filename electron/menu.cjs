@@ -7,6 +7,8 @@ const PAGES_VIEW_ENABLED = false
 
 function createApplicationMenu(sendCommand, state = {}) {
   const command = (name) => () => sendCommand(name)
+  // `state.home`: la Home dei progetti è aperta e il documento non si vede: ciò che lo modifica o lo cerca si disattiva (modifica, ricerca, salvataggio, stampa, esportazione).
+  const onDocument = !state.home
 
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
@@ -15,15 +17,16 @@ function createApplicationMenu(sendCommand, state = {}) {
         { label: t('New document'), accelerator: 'CmdOrCtrl+N', click: command('new') },
         { label: t('Open…'), accelerator: 'CmdOrCtrl+O', click: command('open') },
         { label: t('Open project folder…'), accelerator: 'CmdOrCtrl+Shift+O', click: command('open-project') },
-        { label: t('Close tab'), accelerator: 'CmdOrCtrl+W', click: command('close-tab') },
+        { label: t('Close tab'), accelerator: 'CmdOrCtrl+W', click: command('close-tab'), enabled: onDocument },
         { type: 'separator' },
-        { label: t('Save'), accelerator: 'CmdOrCtrl+S', click: command('save') },
-        { label: t('Save as…'), accelerator: 'CmdOrCtrl+Shift+S', click: command('save-as') },
+        { label: t('Save'), accelerator: 'CmdOrCtrl+S', click: command('save'), enabled: onDocument },
+        { label: t('Save as…'), accelerator: 'CmdOrCtrl+Shift+S', click: command('save-as'), enabled: onDocument },
         { type: 'separator' },
-        { label: t('Print…'), accelerator: 'CmdOrCtrl+P', click: command('print') },
+        { label: t('Print…'), accelerator: 'CmdOrCtrl+P', click: command('print'), enabled: onDocument },
         { type: 'separator' },
         {
           label: t('Export'),
+          enabled: onDocument,
           submenu: [
             { label: t('Word document (.docx)…'), click: command('export-docx') },
             { label: t('PDF document (.pdf)…'), click: command('export-pdf') },
@@ -40,16 +43,16 @@ function createApplicationMenu(sendCommand, state = {}) {
     {
       label: t('Edit'),
       submenu: [
-        { role: 'undo', label: t('Undo') },
-        { role: 'redo', label: t('Redo') },
+        { role: 'undo', label: t('Undo'), enabled: onDocument },
+        { role: 'redo', label: t('Redo'), enabled: onDocument },
         { type: 'separator' },
         { role: 'cut', label: t('Cut') },
         { role: 'copy', label: t('Copy') },
         { role: 'paste', label: t('Paste') },
         { role: 'selectAll', label: t('Select all') },
         { type: 'separator' },
-        { label: t('Find…'), accelerator: 'CmdOrCtrl+F', click: command('find') },
-        { label: t('Replace…'), accelerator: 'CmdOrCtrl+H', click: command('replace') },
+        { label: t('Find…'), accelerator: 'CmdOrCtrl+F', click: command('find'), enabled: onDocument },
+        { label: t('Replace…'), accelerator: 'CmdOrCtrl+H', click: command('replace'), enabled: onDocument },
       ],
     },
     ...(PAGES_VIEW_ENABLED ? [{

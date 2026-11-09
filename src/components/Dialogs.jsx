@@ -13,21 +13,32 @@ function DialogBox({ dialog, onClose }) {
 
   useEffect(() => {
     const onKeyDown = (event) => {
-      if (event.key === 'Escape') { event.stopPropagation(); onClose(dialog.kind === 'prompt' || dialog.kind === 'choice' ? null : false) }
+      if (event.key === 'Escape') { event.stopPropagation(); onClose(dialog.kind === 'prompt' || dialog.kind === 'choice' || dialog.kind === 'radio' ? null : false) }
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [dialog, onClose])
 
-  const accept = () => onClose(dialog.kind === 'prompt' ? value : true)
+  const [picked, setPicked] = useState(dialog.initial ?? dialog.options?.[0]?.value ?? null)
+  const accept = () => onClose(dialog.kind === 'prompt' ? value : dialog.kind === 'radio' ? picked : true)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(dialog.kind === 'prompt' || dialog.kind === 'choice' ? null : false) }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(dialog.kind === 'prompt' || dialog.kind === 'choice' || dialog.kind === 'radio' ? null : false) }}>
       <form role="dialog" aria-modal="true" aria-label={dialog.message} className="grid w-full max-w-sm gap-3 rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-200 shadow-xl" onSubmit={(event) => { event.preventDefault(); accept() }}>
         <p className="break-words">{dialog.message}</p>
         {dialog.detail && <p className="whitespace-pre-line break-words text-xs text-slate-400">{dialog.detail}</p>}
         {dialog.kind === 'prompt' && (
           <input autoFocus value={value} className="w-full rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-slate-100 outline-none focus:border-accent-400" onChange={(event) => setValue(event.target.value)} />
+        )}
+        {dialog.kind === 'radio' && (
+          <div role="radiogroup" aria-label={dialog.message} className="grid gap-1">
+            {dialog.options.map((option) => (
+              <label key={option.value} className={`flex cursor-pointer items-start gap-2.5 rounded-md border px-2.5 py-2 transition ${picked === option.value ? 'border-accent-400 bg-accent-500/10' : 'border-slate-700 hover:bg-slate-800'}`}>
+                <input type="radio" name="dialog-radio" autoFocus={picked === option.value} checked={picked === option.value} className="mt-0.5 accent-accent-500" onChange={() => setPicked(option.value)} />
+                <span className="min-w-0"><span className="block truncate text-slate-100">{option.label}</span>{option.description && <span className="block text-xs text-slate-400">{option.description}</span>}</span>
+              </label>
+            ))}
+          </div>
         )}
         {dialog.kind === 'choice' ? (
           <div className="flex flex-wrap justify-end gap-2">
@@ -43,8 +54,8 @@ function DialogBox({ dialog, onClose }) {
           </div>
         ) : (
         <div className="flex justify-end gap-2">
-            <button type="button" className="rounded-md px-3 py-1.5 text-slate-300 transition hover:bg-slate-800" onClick={() => onClose(dialog.kind === 'prompt' ? null : false)}>{t('Cancel')}</button>
-            <button ref={confirmRef} autoFocus={dialog.kind !== 'prompt'} type="submit" className={`rounded-md px-3 py-1.5 font-medium text-white transition ${dialog.danger ? 'bg-rose-600 hover:bg-rose-500' : 'bg-accent-600 hover:bg-accent-500'}`}>{dialog.confirmLabel || t('OK')}</button>
+            <button type="button" className="rounded-md px-3 py-1.5 text-slate-300 transition hover:bg-slate-800" onClick={() => onClose(dialog.kind === 'prompt' || dialog.kind === 'radio' ? null : false)}>{t('Cancel')}</button>
+            <button ref={confirmRef} autoFocus={dialog.kind !== 'prompt' && dialog.kind !== 'radio'} type="submit" className={`rounded-md px-3 py-1.5 font-medium text-white transition ${dialog.danger ? 'bg-rose-600 hover:bg-rose-500' : 'bg-accent-600 hover:bg-accent-500'}`}>{dialog.confirmLabel || t('OK')}</button>
           </div>
         )}
       </form>
@@ -85,6 +96,8 @@ export function DialogProvider({ children }) {
     // Scelta tra più azioni: restituisce il `value` scelto, o null se si annulla (Esc o clic fuori).
     choose: (message, choices) => open({ kind: 'choice', message, choices }),
     prompt: (message, initial = '', options = {}) => open({ kind: 'prompt', message, initial, ...options }),
+    // Una scelta tra più opzioni con i pulsanti radio: `options` = [{ value, label, description? }]; restituisce il `value` scelto, o null se si annulla.
+    radio: (message, options, extra = {}) => open({ kind: 'radio', message, options, ...extra }),
   }), [open])
 
   return (

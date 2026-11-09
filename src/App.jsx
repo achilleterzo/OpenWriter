@@ -4,6 +4,7 @@ import ActivityBar, { sideTabs } from './components/ActivityBar.jsx'
 import AiChatPanel from './components/AiChatPanel.jsx'
 import BrowserPane from './components/BrowserPane.jsx'
 import ImagePane from './components/ImagePane.jsx'
+import TextPane from './components/TextPane.jsx'
 import { getPreference, setPreference } from './lib/preferences.js'
 import { isImageFile } from './lib/imagePaths.js'
 import ContextMenu, { ContextMenuContext, modKey } from './components/ContextMenu.jsx'
@@ -18,6 +19,8 @@ import MemoryPanel from './components/MemoryPanel.jsx'
 import WebReferencesPanel from './components/WebReferencesPanel.jsx'
 import { WEB_REFERENCES_CHANGED } from './lib/webReferences.js'
 import AboutDialog from './components/AboutDialog.jsx'
+import FirstRunModelsDialog from './components/FirstRunModelsDialog.jsx'
+import { SettingsActionsContext } from './components/SettingsActions.jsx'
 import { useDialogs } from './components/Dialogs.jsx'
 import { acceptAll, getPending, serializePending } from './lib/pendingChangesExtension.js'
 import OutlinePanel from './components/OutlinePanel.jsx'
@@ -98,7 +101,10 @@ function createTab(document = null, id = crypto.randomUUID()) {
 const createBrowserTab = (initialUrl) => ({ id: crypto.randomUUID(), kind: 'browser', title: t('Browser'), filePath: null, sourcePath: null, dirty: false, ...(initialUrl ? { initialUrl } : {}) })
 // Le schede del browser e delle immagini non hanno editor né file da salvare: non sono documenti.
 const createImageTab = (imagePath) => ({ id: crypto.randomUUID(), kind: 'image', title: baseName(imagePath), imagePath, filePath: null, sourcePath: null, dirty: false })
-const isDocument = (tab) => tab && tab.kind !== 'browser' && tab.kind !== 'image'
+// Il lettore testuale: un file di testo qualsiasi, letto e salvato com'è. Non è un documento (niente editor, note, cronologia né assistente): ha una scheda propria.
+const createTextTab = (file, id = crypto.randomUUID()) => ({ id, kind: 'text', title: baseName(file.filePath), textPath: file.filePath, text: file.content, savedText: file.content, eol: file.eol === 'crlf' ? 'crlf' : 'lf', bom: Boolean(file.bom), filePath: null, sourcePath: null, dirty: false })
+const DOCUMENT_FILE = /\.(md|markdown|mdown|docx|pdf)$/i
+const isDocument = (tab) => tab && tab.kind !== 'browser' && tab.kind !== 'image' && tab.kind !== 'text'
 // Una scheda fissata chiusa resta al suo posto senza documento caricato (con il pulsante "Apri"): non ha editor.
 const isLive = (tab) => isDocument(tab) && !tab.closed
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms) })
@@ -135,6 +141,19 @@ async function restoreTabs(session) {
     const url = /^https?:\/\//i.test(saved.url) ? saved.url : ''
     result.splice(Math.min(Math.max(Number(saved.index) || 0, 0), result.length), 0, { ...createBrowserTab(), id: saved.id, title: String(saved.title || t('Browser')), initialUrl: url })
   }
+  // Le schede del lettore testuale: rilette dal file, o con la bozza non salvata che avevano.
+  for (const saved of [...(Array.isArray(session?.texts) ? session.texts : [])].sort((left, right) => left.index - right.index)) {
+    if (typeof saved?.id !== 'string' || typeof saved.path !== 'string') continue
+    try {
+      const draft = typeof saved.draft === 'string'
+      const file = draft ? { filePath: saved.path, content: saved.draft, eol: saved.eol, bom: saved.bom } : await electronAPI.openTextFile(saved.path)
+      const tab = createTextTab(file, saved.id)
+      // Di una bozza non si sa com'è il file sul disco: conta come modificata finché non si salva.
+      result.splice(Math.min(Math.max(Number(saved.index) || 0, 0), result.length), 0, draft ? { ...tab, savedText: null, dirty: true } : tab)
+    } catch (error) {
+      console.warn('Scheda di testo non ripristinata', saved?.title, error)
+    }
+  }
   return result
 }
 
@@ -147,7 +166,19 @@ export default function App() {
   // Progetto "main" (nei dati dell'app): area di lavoro dell'assistente quando nessun progetto è aperto.
   const [mainProject, setMainProject] = useState(null)
   const workspaceRoot = project || mainProject
-  const [sideTab, setSideTab] = useState('files')
+  const [sideTab, setSideTabState] = useState('files')
+  // La Home (rete dei progetti e ricerca) è un modo dell'area centrale, non del pannello: resta anche con il pannello laterale chiuso (come il documento resta
+  // con il pannello dei file chiuso). Si entra scegliendo la scheda Progetti e se ne esce scegliendo un'altra scheda; chiudere il pannello non la cambia.
+  const [homeMode, setHomeMode] = useState(false)
+  // Il posto a destra del titolo del pannello laterale per le azioni del pannello (SettingsActions.jsx).
+  const [sideActions, setSideActions] = useState(null)
+  const sideTabRef = useRef('files')
+  const setSideTab = useCallback((value) => {
+    const next = typeof value === 'function' ? value(sideTabRef.current) : value
+    sideTabRef.current = next
+    setSideTabState(next)
+    if (next) setHomeMode(next === 'projects')
+  }, [])
   // Cambia quando una pagina web si aggiunge ai riferimenti del progetto o se ne toglie una (stellina del browser, pannello «Riferimenti web»).
   const [webRefsVersion, setWebRefsVersion] = useState(0)
   // Anche l'assistente o un agente (MCP) salvano e rinfrescano pagine: pannello e stellina si aggiornano.
@@ -176,6 +207,9 @@ export default function App() {
   const setNoteView = (value) => { setNoteViewState(value); setPreference('openwriter.noteView', value) }
   const [noteSearch, setNoteSearch] = useState('')
   const [aboutOpen, setAboutOpen] = useState(false)
+  // Prima configurazione dei modelli locali: una sola volta, e solo se nessun pacchetto è già scaricato (chi li ha già non viene disturbato).
+  const [modelsIntroOpen, setModelsIntroOpen] = useState(false)
+  const closeModelsIntro = () => { setModelsIntroOpen(false); setPreference('openwriter.localModelsIntro', 'done') }
   const [aboutCheck, setAboutCheck] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [updateRelease, setUpdateRelease] = useState(null)
@@ -189,6 +223,10 @@ export default function App() {
   const [largeLoading, setLargeLoading] = useState(null)
   const [conversationId, setConversationId] = useState(null)
   const [settingsVersion, setSettingsVersion] = useState(0)
+  // Cambia quando l'elenco dei progetti cambia (tolto, spostato, rinominato): la Home ricarica il grafo.
+  const [projectsVersion, setProjectsVersion] = useState(0)
+  // Cambia lo spazio di lavoro (o i suoi membri): la Home ricarica il grafo; l'elenco dei progetti si rilegge da sé.
+  useEffect(() => (electronAPI?.onWorkspacesChanged ? electronAPI.onWorkspacesChanged(() => setProjectsVersion((value) => value + 1)) : undefined), [])
   const [notes, setNotes] = useState([])
   const [notesVersion, setNotesVersion] = useState(0)
   // Segnalibri del documento di contesto (ancore con nome: link `file#nome`, punti da far notare all'assistente).
@@ -211,6 +249,19 @@ export default function App() {
   // Le schede documento si montano (e costruiscono il loro editor) solo quando si guardano la prima volta, o se hanno modifiche da conservare: riaprire un progetto
   // con molte schede pesanti non le costruisce tutte insieme.
   const mountedTabs = useRef(new Set())
+  // Il testo delle schede del lettore testuale sta nel loro campo: l'applicazione lo chiede quando serve (salvare, sessione) tramite questo registro.
+  const textBuffers = useRef(new Map())
+  const registerTextBuffer = useCallback((id, api) => {
+    if (api) textBuffers.current.set(id, api)
+    else textBuffers.current.delete(id)
+  }, [])
+  const [textLineNumbers, setTextLineNumbers] = useState(() => { try { return localStorage.getItem('openwriter.textLineNumbers') !== 'off' } catch { return true } })
+  const toggleTextLineNumbers = useCallback(() => {
+    setTextLineNumbers((current) => {
+      try { localStorage.setItem('openwriter.textLineNumbers', current ? 'off' : 'on') } catch { /* la preferenza vale solo per questa sessione */ }
+      return !current
+    })
+  }, [])
   const activeTab = tabs.find((tab) => tab.id === activeId) || tabs[0]
   if (isLive(activeTab)) lastDocumentId.current = activeTab.id
   if (activeTab) mountedTabs.current.add(activeTab.id)
@@ -220,7 +271,7 @@ export default function App() {
   // Gli ultimi valori restano in un ref: serve a salvare la sessione anche dai timer e da beforeunload.
   const latest = useRef({})
   const openProjectRef = useRef(null)
-  latest.current = { openProject: (directory) => openProjectRef.current?.(directory), ready, tabs, activeId, editors, project, sideTab, expandedPaths, assistantOpen, conversationId, contextPins, contextTabId: contextTab?.id }
+  latest.current = { openProject: (directory, options) => openProjectRef.current?.(directory, options), ready, tabs, activeId, editors, project, sideTab, expandedPaths, assistantOpen, conversationId, contextPins, contextTabId: contextTab?.id }
   const saveTimer = useRef(null)
 
   const buildSession = useCallback(() => {
@@ -235,6 +286,12 @@ export default function App() {
       // Schede del browser: indirizzo attuale e posizione tra le schede. Si riaprono alla pagina dov'erano (non la cronologia di navigazione).
       browser: currentTabs.map((tab, index) => ({ tab, index })).filter(({ tab }) => tab.kind === 'browser').map(({ tab, index }) => ({ id: tab.id, title: tab.title, url: browserControllers.current.get(tab.id)?.info().url || tab.initialUrl || '', index })),
       activeBrowserId: currentTabs.some((tab) => tab.id === currentActive && tab.kind === 'browser') ? currentActive : null,
+      // Schede del lettore testuale: il file, la posizione tra le schede e, se ci sono modifiche non salvate, il testo (bozza).
+      texts: currentTabs.map((tab, index) => ({ tab, index })).filter(({ tab }) => tab.kind === 'text').map(({ tab, index }) => ({
+        id: tab.id, path: tab.textPath, title: tab.title, index,
+        ...(tab.dirty ? { draft: textBuffers.current.get(tab.id)?.getText?.() ?? tab.text, eol: tab.eol, bom: tab.bom } : {}),
+      })),
+      activeTextId: currentTabs.some((tab) => tab.id === currentActive && tab.kind === 'text') ? currentActive : null,
       tabs: currentTabs.filter(isDocument).map((tab) => {
         const editor = currentEditors[tab.id]
         // Bozze e documenti mai salvati conservano il testo; gli altri si rileggono dal file.
@@ -278,7 +335,7 @@ export default function App() {
   const applySession = useCallback(async (session) => {
     const restored = await restoreTabs(session)
     setTabs(restored)
-    setActiveId(restored.some((tab) => tab.id === session?.activeBrowserId) ? session.activeBrowserId : restored.some((tab) => tab.id === session?.activeId) ? session.activeId : restored.find(isDocument)?.id ?? restored[0].id)
+    setActiveId(restored.some((tab) => tab.id === session?.activeBrowserId) ? session.activeBrowserId : restored.some((tab) => tab.id === session?.activeTextId) ? session.activeTextId : restored.some((tab) => tab.id === session?.activeId) ? session.activeId : restored.find(isDocument)?.id ?? restored[0].id)
     setSideTab(session && 'sideTab' in session ? session.sideTab : 'files')
     setExpandedPaths(new Set(session?.expanded || []))
     setAssistantOpen(Boolean(session?.assistantOpen))
@@ -423,11 +480,13 @@ export default function App() {
   }, [flushSession, applySession])
 
   const chooseProject = useCallback(() => switchProject(() => electronAPI.chooseProject()), [switchProject])
-  const openProject = useCallback((directory) => switchProject(() => electronAPI.openProject(directory)), [switchProject])
+  const openProject = useCallback((directory, options) => switchProject(() => electronAPI.openProject(directory, options)), [switchProject])
   openProjectRef.current = openProject
   // Scegliendo un progetto dal pannello Progetti si passa subito ai suoi file (se la scelta è annullata non cambia nulla).
   // Con la scheda Progetti attiva l'area centrale mostra la Home (la rete dei progetti) al posto dei documenti e della chat, che restano montati.
-  const homeOpen = sideTab === 'projects'
+  const homeOpen = homeMode
+  // Con la Home aperta il documento non si vede: il menu ne disattiva modifica, ricerca, salvataggio e stampa.
+  useEffect(() => { electronAPI?.setHomeOpen?.(homeOpen) }, [homeOpen])
   // Dopo la prima visita la Home resta montata (nascosta quando non serve): ricerca, risultati e posizione nell'elenco restano com'erano al ritorno.
   const [homeSeen, setHomeSeen] = useState(false)
   useEffect(() => { if (homeOpen) setHomeSeen(true) }, [homeOpen])
@@ -611,6 +670,8 @@ export default function App() {
     // Apre un documento già letto: se è grande, costruire l'editor blocca l'interfaccia per un po', quindi prima si mostra il riquadro di attesa e si lascia
     // dipingere (due fotogrammi) prima di cominciare; il riquadro sparisce quando l'editor è montato.
     async openLoaded(document, options) {
+      // Un file scelto con "Apri…" che non è un documento arriva già letto per il lettore testuale.
+      if (document?.format === 'text') { workspaceRef.current.openTextFile(document, options); return }
       const heavy = String(document?.content ?? '').length > HEAVY_DOCUMENT_CHARS
       if (heavy) {
         setLargeLoading(t('Opening “{name}”…', { name: document.title || baseName(document.filePath || document.sourcePath || '') }))
@@ -687,7 +748,7 @@ export default function App() {
           { value: 'cancel', label: t('Cancel') },
         ])
         if (!choice || choice === 'cancel') return
-        if (choice === 'save' && !(await workspaceRef.current.saveWithReview(id))) return
+        if (choice === 'save' && !(await (tab.kind === 'text' ? workspaceRef.current.saveText(id) : workspaceRef.current.saveWithReview(id)))) return
       }
       // Una scheda fissata con un file non sparisce: resta al suo posto senza documento, con il pulsante "Apri".
       if (tab.pinned && tab.sourcePath && !tab.closed) {
@@ -710,6 +771,10 @@ export default function App() {
           const imagePath = remapPath(tab.imagePath, from, to)
           return imagePath === tab.imagePath ? tab : { ...tab, imagePath, title: baseName(imagePath) }
         }
+        if (tab.kind === 'text') {
+          const textPath = remapPath(tab.textPath, from, to)
+          return textPath === tab.textPath ? tab : { ...tab, textPath, title: baseName(textPath) }
+        }
         const sourcePath = remapPath(tab.sourcePath, from, to)
         const filePath = remapPath(tab.filePath, from, to)
         if (sourcePath === tab.sourcePath && filePath === tab.filePath) return tab
@@ -729,6 +794,7 @@ export default function App() {
       setTabs((current) => {
         const remaining = current
           .filter((tab) => !(tab.kind === 'image' && isInside(tab.imagePath, target)))
+          .filter((tab) => !(tab.kind === 'text' && isInside(tab.textPath, target) && !tab.dirty))
           .filter((tab) => !(isDocument(tab) && inside(tab) && !hasWork(tab)))
           .map((tab) => (isDocument(tab) && inside(tab) ? { ...tab, sourcePath: null, filePath: null, dirty: true, closed: false } : tab))
         return remaining.some(isDocument) ? remaining : [...remaining, createTab()]
@@ -783,6 +849,60 @@ export default function App() {
     // Nella scheda di un'immagine si passa a un'altra immagine (frecce, pulsanti ai lati): la scheda resta la stessa.
     changeImage(id, imagePath) {
       setTabs((current) => current.map((tab) => (tab.id === id && tab.kind === 'image' ? { ...tab, imagePath, title: baseName(imagePath) } : tab)))
+    },
+    // Apre un file di testo (che non è un documento) nel lettore testuale, leggendolo dal disco; `preview` e `permanent` come per i documenti.
+    async openText(filePath, options = {}) {
+      const existing = latest.current.tabs.find((tab) => tab.kind === 'text' && samePath(tab.textPath, filePath))
+      if (!existing) {
+        try {
+          workspaceRef.current.openTextFile(await electronAPI.openTextFile(filePath), options)
+        } catch (error) {
+          console.error(error)
+          setStatus(t('Could not open the file'))
+          notify('error', String(error.message || '').replace(/^Error invoking remote method '[^']*': (Error: )?/, '') || t('Could not open the file'))
+        }
+        return
+      }
+      workspaceRef.current.openTextFile({ filePath }, options)
+    },
+    // Apre nel lettore testuale un file già letto (`file`: { filePath, content, eol, bom }): se è già aperto torna a quella scheda.
+    openTextFile(file, { preview = false, permanent = false } = {}) {
+      const existing = latest.current.tabs.find((tab) => tab.kind === 'text' && samePath(tab.textPath, file.filePath))
+      if (existing) {
+        if (permanent && existing.preview) setTabs((current) => current.map((tab) => (tab.id === existing.id ? { ...tab, preview: false } : tab)))
+        setActiveId(existing.id)
+        return
+      }
+      const tab = { ...createTextTab(file), ...(preview && !permanent ? { preview: true } : {}) }
+      setTabs((current) => {
+        if (tab.preview) {
+          const index = current.findIndex((item) => item.kind !== 'browser' && item.preview && !item.dirty && !item.pinned && !item.closed)
+          if (index !== -1) return current.map((item, position) => (position === index ? tab : item))
+        }
+        return [...current, tab]
+      })
+      setActiveId(tab.id)
+    },
+    // Salva una scheda del lettore testuale nel suo file (o, con "salva con nome", dove si sceglie): il testo, con i suoi a capo e la sua firma, com'è nel campo.
+    async saveText(id, { saveAs = false } = {}) {
+      const tab = latest.current.tabs.find((item) => item.id === id)
+      const buffer = textBuffers.current.get(id)
+      if (!tab || tab.kind !== 'text' || !buffer) return false
+      const text = buffer.getText()
+      try {
+        const savedPath = await electronAPI.saveTextFile({ filePath: tab.textPath, text, eol: tab.eol, bom: tab.bom, saveAs })
+        if (!savedPath) return false
+        buffer.markSaved(text)
+        setTabs((current) => current.map((item) => (item.id === id ? { ...item, textPath: savedPath, title: baseName(savedPath), dirty: false, preview: false } : item)))
+        setExplorerRefresh((value) => value + 1)
+        scheduleSave()
+        return true
+      } catch (error) {
+        console.error(error)
+        setStatus(t('The operation failed'))
+        notify('error', String(error.message || '').replace(/^Error invoking remote method '[^']*': (Error: )?/, '') || t('The operation failed'))
+        return false
+      }
     },
     // Apre un'immagine del progetto in una scheda di visualizzazione (sola lettura); `preview` e `permanent` come per i documenti.
     openImage(imagePath, { preview = false, permanent = false } = {}) {
@@ -1042,7 +1162,7 @@ export default function App() {
       else workspaceRef.current.pathRenamed(from, to)
       setExplorerRefresh((value) => value + 1)
     },
-    openFile: (absolutePath) => openFileRef.current?.(absolutePath),
+    openFile: (absolutePath) => openFileRef.current?.(absolutePath, { asDocument: true }),
     }
     return toolBridge
   }, [])
@@ -1059,7 +1179,7 @@ export default function App() {
           activate: setActiveId,
           notify: (title) => setStatus(t('An agent proposed changes to “{title}”: review them in the document', { title })),
           refreshNotes: () => setNotesVersion((value) => value + 1),
-          openProject: (directory) => latest.current.openProject(directory),
+          openProject: (directory, options) => latest.current.openProject(directory, options),
           setStatus,
           // La richiesta parte nella chat dell'assistente, firmata col nome dell'agente (messaggio riconoscibile come non scritto dall'utente);
           // si risponde quando il messaggio è salvato, con l'id della chat e l'indice del messaggio.
@@ -1274,22 +1394,23 @@ export default function App() {
   // Documenti aperti con modifiche da salvare e già associati a un file (gli altri chiederebbero dove salvare, uno per uno).
   // Un documento con modifiche dell'assistente ancora da rivedere conta come da salvare anche se il testo coincide col file: salvandolo si accettano.
   const hasPendingEdits = (tab) => { const editor = latest.current.editors[tab.id]; return Boolean(editor && !editor.isDestroyed && getPending(editor.state).length) }
-  const unsavedTabs = (currentTabs) => currentTabs.filter((tab) => isLive(tab) && tab.filePath && (tab.dirty || hasPendingEdits(tab)))
+  const unsavedTabs = (currentTabs) => currentTabs.filter((tab) => (isLive(tab) && tab.filePath && (tab.dirty || hasPendingEdits(tab))) || (tab.kind === 'text' && tab.dirty && tab.textPath))
 
   // Salva tutte le schede modificate. Le modifiche dell'assistente ancora da rivedere si accettano: con conferma, perché è una scelta irreversibile
   // per il segno "da rivedere" (il testo precedente resta comunque nella cronologia).
   async function saveAllTabs() {
     const { tabs: currentTabs, editors: currentEditors } = latest.current
-    const targets = unsavedTabs(currentTabs).filter((tab) => currentEditors[tab.id])
+    const targets = unsavedTabs(currentTabs).filter((tab) => tab.kind === 'text' || currentEditors[tab.id])
     const skipped = currentTabs.filter((tab) => isLive(tab) && tab.dirty && !tab.filePath).length
     if (!targets.length) { setStatus(t('No documents to save')); return }
-    const pending = targets.filter((tab) => getPending(currentEditors[tab.id].state).length)
+    const pending = targets.filter((tab) => tab.kind !== 'text' && getPending(currentEditors[tab.id].state).length)
     if (pending.length) {
       const message = t('Save {count} documents? {pending} of them have edits by the assistant still to review: saving accepts them all.', { count: targets.length, pending: pending.length })
       if (!(await dialogsRef.current.confirm(message, { confirmLabel: t('Save and accept all') }))) return
     }
     let saved = 0
     for (const tab of targets) {
+      if (tab.kind === 'text') { if (await workspaceRef.current.saveText(tab.id)) saved += 1; continue }
       const editor = latest.current.editors[tab.id]
       if (!editor) continue
       if (getPending(editor.state).length) acceptAll(editor)
@@ -1303,9 +1424,11 @@ export default function App() {
 
   // `options`: { preview, permanent } valgono per le schede (vedi openDocument); il resto (es. { original }) va al processo principale.
   async function openFromExplorer(filePath, options) {
-    const { preview, permanent, ...ipcOptions } = options || {}
+    const { preview, permanent, asDocument, ...ipcOptions } = options || {}
     // Un'immagine si apre nella scheda di visualizzazione, senza passare dal lettore dei documenti.
     if (isImageFile(filePath)) { workspace.openImage(filePath, { preview, permanent }); return }
+    // Un file che non è un documento si apre nel lettore testuale; chi lavora sui documenti (l'assistente, gli agenti: `asDocument`) lo apre come prima.
+    if (!asDocument && !DOCUMENT_FILE.test(filePath)) { await workspace.openText(filePath, { preview, permanent }); return }
     // Se la lettura (o la conversione di un DOCX/PDF) richiede tempo, dopo un attimo compare il riquadro di attesa.
     const timer = setTimeout(() => setLargeLoading(t('Opening “{name}”…', { name: baseName(filePath) })), 300)
     try {
@@ -1328,7 +1451,44 @@ export default function App() {
     if (!ready || !electronAPI?.onExternalDocument) return undefined
     const open = (document) => workspaceRef.current.openLoaded(document)
     electronAPI.takeExternalDocuments().then((list) => list.forEach(open)).catch((error) => console.error(error))
-    return electronAPI.onExternalDocument(open)
+    // Cartelle passate all'app (voce «Apri come progetto OpenWriter»): si apre il progetto e si passa ai suoi file.
+    // Con uno spazio di lavoro attivo di cui il progetto non fa parte, si chiede dove aggiungerlo: lo spazio attuale (predefinito), un altro (lo aggiunge e passa a quello),
+    // o nessuno (resta solo tra tutti i progetti). Annullare vale «nessuno»: il progetto si apre lo stesso.
+    const openFolder = async (directory) => {
+      let state = null
+      try { state = await electronAPI.listWorkspaces() } catch { /* senza spazi di lavoro si apre e basta */ }
+      const current = state?.workspaces.find((item) => item.id === state.active)
+      if (!current || current.projects.some((known) => samePath(known, directory))) return showFiles(openProject(directory))
+      const picked = await dialogsRef.current.radio(t('Where do you want to add “{name}”?', { name: baseName(directory) }), [
+        { value: current.id, label: t('{name} (current)', { name: current.name }) },
+        ...state.workspaces.filter((item) => item.id !== current.id).map((item) => ({ value: item.id, label: item.name })),
+        { value: 'none', label: t('Only in All projects'), description: t('It will not belong to any workspace.') },
+      ], { initial: current.id, confirmLabel: t('Open') })
+      const choice = picked || 'none'
+      const opened = await showFiles(openProject(directory, { join: false }))
+      if (opened && choice !== 'none') {
+        try {
+          await electronAPI.addProjectToWorkspace(choice, directory)
+          if (choice !== current.id) await electronAPI.setActiveWorkspace(choice)
+        } catch (error) { console.error(error) }
+      }
+      return opened
+    }
+    electronAPI.takeExternalProjects?.().then((list) => list.forEach(openFolder)).catch((error) => console.error(error))
+    const stopProjects = electronAPI.onExternalProject?.(openFolder)
+    const stopDocuments = electronAPI.onExternalDocument(open)
+    return () => { stopDocuments?.(); stopProjects?.() }
+  }, [ready])
+
+  useEffect(() => {
+    if (!ready || !electronAPI?.getSemanticStatus || getPreference('openwriter.localModelsIntro')) return undefined
+    let cancelled = false
+    electronAPI.getSemanticStatus().then((status) => {
+      if (cancelled) return
+      if (status?.packs?.cpu?.state === 'ready' || status?.packs?.gpu?.state === 'ready' || status?.allowed === false) setPreference('openwriter.localModelsIntro', 'done')
+      else setModelsIntroOpen(true)
+    }).catch(() => {})
+    return () => { cancelled = true }
   }, [ready])
 
   const openDocuments = useMemo(() => tabs.filter(isLive).map((item) => ({ id: item.id, title: item.title })), [tabs])
@@ -1369,10 +1529,14 @@ export default function App() {
         {sideTab && (
           <aside style={{ width: widths.left }} className="relative flex shrink-0 flex-col border-r border-slate-800 bg-slate-900/60">
             <PanelResizer side="left" label={t('Side panel width')} width={widths.left} min={PANELS.left.min} max={maxWidthFor('left', resizeContext('left'))} defaultWidth={PANELS.left.default} onChange={resizePanel('left')} onCommit={commitLayout} />
-            <h2 className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{sideTabs.find((item) => item.id === sideTab)?.label}</h2>
-            {sideTab === 'projects' && <ProjectsPanel project={project} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onOpen={(directory) => showFiles(openProject(directory))} onChoose={() => showFiles(chooseProject())} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />}
+            <div className="flex items-center justify-between gap-2 pb-1 pr-3">
+              <h2 className="min-w-0 truncate px-3 pt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{sideTabs.find((item) => item.id === sideTab)?.label}</h2>
+              {/* Le azioni del pannello (per ora «Apri cartella» dei progetti) stanno a destra del titolo: vedi SettingsActions.jsx. */}
+              <div ref={setSideActions} className="flex shrink-0 items-center gap-1.5 pt-2 empty:hidden" />
+            </div>
+            {sideTab === 'projects' && <SettingsActionsContext.Provider value={sideActions}><ProjectsPanel project={project} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onOpen={(directory) => showFiles(openProject(directory))} onChoose={() => showFiles(chooseProject())} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} onListChanged={() => setProjectsVersion((value) => value + 1)} /></SettingsActionsContext.Provider>}
             {sideTab === 'files' && (
-              <FileExplorer project={project} activePath={activeTab?.kind === 'image' ? activeTab.imagePath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} />
+              <FileExplorer project={project} activePath={activeTab?.kind === 'image' ? activeTab.imagePath : activeTab?.kind === 'text' ? activeTab.textPath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} settingsVersion={settingsVersion} />
             )}
             {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} onJump={rememberPlace} />}
             {sideTab === 'anchors' && <AnchorsPanel editor={editors[contextTab?.id]} onJump={rememberPlace} />}
@@ -1405,6 +1569,8 @@ export default function App() {
             )}
             {tabs.map((tab) => (tab.kind === 'image'
               ? <ImagePane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onStatus={setStatus} onInteract={workspace.promoteTab} onNavigate={workspace.changeImage} />
+              : tab.kind === 'text'
+              ? <TextPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} findRequest={findRequest} lineNumbers={textLineNumbers} onToggleLineNumbers={toggleTextLineNumbers} onRegister={registerTextBuffer} onDirty={workspace.markDirty} onClean={workspace.markClean} onSave={async () => { if (await workspace.saveText(tab.id)) setStatus(t('Saved')) }} onInteract={workspace.promoteTab} onStatus={setStatus} />
               : tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} webRefsVersion={webRefsVersion} onWebRefsChanged={() => setWebRefsVersion((value) => value + 1)} />
               : (mountedTabs.current.has(tab.id) || tab.dirty || tab.pending)
@@ -1412,7 +1578,7 @@ export default function App() {
               : null))}
           </section>
           </div>
-          {(homeOpen || homeSeen) && <div className={homeOpen ? 'contents' : 'hidden'}><ProjectsHome project={project} visible={homeOpen} onOpenProject={openFromHome} onOpenResult={openHomeResult} /></div>}
+          {(homeOpen || homeSeen) && <div className={homeOpen ? 'contents' : 'hidden'}><ProjectsHome project={project} visible={homeOpen} projectsVersion={projectsVersion} onOpenProject={openFromHome} onOpenResult={openHomeResult} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} /></div>}
           <ToastHost />
           {largeLoading && (
             <div role="status" aria-live="polite" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -1463,6 +1629,7 @@ export default function App() {
           <button type="button" aria-label={t('Dismiss')} className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-50" onClick={() => setUpdateNoticeVisible(false)}>×</button>
         </div>
       )}
+      {modelsIntroOpen && <FirstRunModelsDialog onClose={closeModelsIntro} />}
       {aboutOpen && <AboutDialog version={appVersion} release={updateRelease} checkOnOpen={aboutCheck} onCheck={() => checkForUpdate(false)} onClose={() => setAboutOpen(false)} />}
       {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} onMoveProject={moveProject} version={appVersion} release={updateRelease} onCheckUpdate={() => checkForUpdate(false)} onOpenFile={(file) => { setScreen('editor'); setSettingsVersion((value) => value + 1); openFromExplorer(file) }} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
     </ContextMenuContext.Provider>

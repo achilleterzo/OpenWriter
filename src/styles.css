@@ -474,6 +474,20 @@ body {
   left: calc(var(--source-gutter) - 0.375rem);
   border-left: 1px solid rgb(var(--slate-800));
 }
+/* Lettore testuale senza numeri di riga: niente colonna né linea di separazione. */
+.document-source.source-plain { --source-gutter: 1.5rem; }
+.document-source.source-plain .source-wrap::before { display: none; }
+/* Corrispondenze della ricerca: il testo della copia invisibile è trasparente, ma lo sfondo del segno si vede dietro il campo. */
+.document-source .source-line-text .source-mark {
+  visibility: visible;
+  color: transparent;
+  background: rgb(250 204 21 / 0.28);
+  border-radius: 2px;
+}
+.document-source .source-line-text .source-mark-current {
+  background: rgb(245 158 11 / 0.6);
+  outline: 1px solid rgb(251 191 36);
+}
 
 /* Visualizza → Pagine: fogli A4 su un piano di lavoro. Il foglio ha i margini della stampa (2 cm); tra un foglio e l'altro c'è uno stacco.
    È una resa visiva: il testo scorre in modo continuo, non si divide in pagine vere. */

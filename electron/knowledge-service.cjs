@@ -103,6 +103,8 @@ function createKnowledgeService({ file, hiddenDirectories = [], createWorker, de
     // `project`: un progetto o un elenco (il progetto e le cartelle di riferimento): ogni risultato porta `project`, la chiave di quello da cui viene.
     search: (project, query, options) => request('search', { project: Array.isArray(project) ? project.map(projectKey) : projectKey(project), query, options }),
     stats: (project) => request('stats', { project: projectKey(project) }),
+    // Sinonimi dai testi (parole vicine per significato nel vocabolario dei progetti): [{ word, near: [{ word, similarity, z }] }].
+    synonyms: (words) => request('synonyms', { words }),
     // Vettore medio (normalizzato) dei frammenti di ogni progetto, col modello attivo: { [chiave]: { count, vector } }.
     centroids: (projects) => request('centroids', { projects: projects.map(projectKey) }),
     // Ricerca per significato: `device` ('cpu', 'gpu' o null = spenta), `model` l'id dei vettori, `directory` il pacchetto CPU, `projects` i progetti (e riferimenti)

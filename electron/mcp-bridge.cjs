@@ -13,9 +13,9 @@ const { samePath } = require('./path-compare.cjs')
  * Il server MCP legge quel file e chiama POST /call con il token. Ogni richiesta passa all'interfaccia (renderer), che esegue lo strumento
  * sull'editor e risponde. Si accettano solo gli strumenti elencati in ALLOWED e solo per il progetto aperto nell'app.
  */
-const ALLOWED = new Set(['read_open_document', 'replace_text', 'insert_text', 'replace_document', 'open_document', 'open_project', 'ask_agent', 'dirty_documents', 'search_knowledge', 'save_web_reference', 'refresh_web_reference'])
+const ALLOWED = new Set(['read_open_document', 'replace_text', 'insert_text', 'replace_document', 'open_document', 'open_project', 'ask_agent', 'dirty_documents', 'search_knowledge', 'open_workspace', 'save_web_reference', 'refresh_web_reference'])
 // Strumenti che l'app esegue da sé (`localTools`, nel processo principale: non passano dall'interfaccia) e che non toccano i documenti: valgono anche con le modifiche degli agenti spente.
-const LOCAL = new Set(['search_knowledge'])
+const LOCAL = new Set(['search_knowledge', 'open_workspace'])
 // Strumenti che non dipendono dal progetto aperto nell'app (anzi, lo cambiano).
 const ANY_PROJECT = new Set(['open_project'])
 const MAX_BODY_BYTES = 8 * 1024 * 1024
@@ -96,7 +96,7 @@ function createMcpBridge({ directory, getWindow, getProjectPath, isEnabled = () 
     try {
       const given = message.arguments && typeof message.arguments === 'object' ? message.arguments : {}
       if (LOCAL.has(message.tool) && !localTools[message.tool]) throw new Error(`Unknown tool: ${message.tool}`)
-      const text = LOCAL.has(message.tool) ? await localTools[message.tool](given, { project: message.project || null }) : await dispatch(message.tool, given)
+      const text = LOCAL.has(message.tool) ? await localTools[message.tool](given, { project: message.project || null, granted: Array.isArray(message.granted) ? message.granted.filter((item) => typeof item === 'string') : [] }) : await dispatch(message.tool, given)
       reply(response, 200, { ok: true, text })
     } catch (error) {
       reply(response, 200, { ok: false, error: error.message })

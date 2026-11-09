@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Cpu, Download, MonitorCog, Trash2 } from 'lucide-react'
 import { formatNumber, t } from '../i18n/index.js'
+import Switch from './Switch.jsx'
 
 const electronAPI = window.electronAPI
 const megabytes = (bytes) => formatNumber(Math.round((bytes || 0) / 1e6))
@@ -50,7 +51,8 @@ function PackRow({ device, pack, selected, disabled, title, description, extra, 
   )
 }
 
-export default function LocalModelsSettings() {
+// Scelta del modello della ricerca per significato (abilitazione, dispositivo, scaricamento): sta nelle impostazioni e nella finestra di prima configurazione.
+export function SemanticModelPicker() {
   const [status, setStatus] = useState(null)
   const [downloading, setDownloading] = useState({ cpu: false, gpu: false })
   const [error, setError] = useState('')
@@ -93,17 +95,10 @@ export default function LocalModelsSettings() {
   const inUse = status?.activeDevice ? t('In use: {device}', { device: status.activeDevice === 'gpu' ? t('Graphics card') : 'CPU' }) : ''
 
   return (
-    <div className="grid grid-cols-1 gap-6">
-      <p className="max-w-xl text-sm leading-6 text-slate-400">{t('Models that run on this computer, downloaded once.')}</p>
-      <section className="grid grid-cols-1 gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
-        <div className="flex items-center gap-2">
-          <Cpu className="text-accent-400" size={20} />
-          <h2 className="text-lg font-semibold">{t('Search by meaning')}</h2>
-        </div>
-        <p className="max-w-xl text-sm leading-6 text-slate-400">{t('Finds passages by meaning, not only by words. No text leaves the computer.')}</p>
+    <>
         {error && <span className="text-xs text-rose-400">{error}</span>}
         <label className="flex items-start gap-3 text-sm text-slate-300">
-          <input type="checkbox" checked={status?.allowed !== false} className="mt-1 accent-accent-500" onChange={(event) => run(() => electronAPI.setSemanticEnabled(event.target.checked))} />
+          <Switch checked={status?.allowed !== false} onChange={(value) => run(() => electronAPI.setSemanticEnabled(value))} />
           <span>{t('Use this model')}<span className="block text-xs text-slate-500">{t('If turned off, no project uses it.')}</span></span>
         </label>
         <div role="radiogroup" aria-label={t('Calculate with')} className="grid gap-2">
@@ -134,6 +129,21 @@ export default function LocalModelsSettings() {
           />
         </div>
         {inUse && <span className="text-xs text-slate-400">{inUse}</span>}
+    </>
+  )
+}
+
+export default function LocalModelsSettings() {
+  return (
+    <div className="grid grid-cols-1 gap-6">
+      <p className="max-w-xl text-sm leading-6 text-slate-400">{t('Models that run on this computer, downloaded once.')}</p>
+      <section className="grid grid-cols-1 gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+        <div className="flex items-center gap-2">
+          <Cpu className="text-accent-400" size={20} />
+          <h2 className="text-lg font-semibold">{t('Search by meaning')}</h2>
+        </div>
+        <p className="max-w-xl text-sm leading-6 text-slate-400">{t('Finds passages by meaning, not only by words. No text leaves the computer.')}</p>
+        <SemanticModelPicker />
       </section>
     </div>
   )

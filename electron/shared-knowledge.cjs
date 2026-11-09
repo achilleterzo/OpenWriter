@@ -23,7 +23,8 @@ function sharedProjects({ current, projects, references = [], isShared }) {
     let ok = false
     try { ok = Boolean(isShared(project.path)) } catch { ok = false }
     if (!ok) continue
-    const base = cleanName(path.basename(project.path) || project.name)
+    // La sigla viene dal nome del progetto (quello scelto nelle impostazioni, se c'è: l'elenco lo dà già così), altrimenti dalla cartella.
+    const base = cleanName(project.name || path.basename(project.path))
     let name = base
     for (let counter = 2; taken.has(name.toLowerCase()); counter += 1) name = `${base}-${counter}`
     taken.add(name.toLowerCase())
@@ -56,4 +57,15 @@ function outsideFolders({ current, references = [], projects = [], isShared, web
   return result
 }
 
-module.exports = { sharedProjects, outsideFolders }
+/**
+ * L'elenco di progetti limitato ai membri di uno spazio di lavoro (workspace-store.cjs): `members` null = nessun filtro (lo spazio «Tutti»); `extra`: altri percorsi concessi
+ * a chi chiede (i progetti che un agente ha aperto da sé). Si applica all'elenco che `sharedProjects` e `outsideFolders` ricevono: è il punto unico in cui un filtro agisce
+ * sulla conoscenza che l'assistente e gli agenti raggiungono.
+ */
+function limitToMembers(projects, members, extra = []) {
+  if (!members) return projects
+  const allowed = [...members, ...extra]
+  return projects.filter((item) => item && typeof item.path === 'string' && allowed.some((known) => samePath(known, item.path)))
+}
+
+module.exports = { sharedProjects, outsideFolders, limitToMembers }

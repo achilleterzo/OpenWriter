@@ -10,6 +10,8 @@ const { createAiProviders } = require('./ai-providers.cjs')
 const { createProjectFile } = require('./project-file.cjs')
 const { cleanTemperature } = require('./temperature.cjs')
 const { createProjectsStore } = require('./projects.cjs')
+const { execFile } = require('node:child_process')
+const { createSystemIntegration } = require('./system-integration.cjs')
 const { createChatStore } = require('./chat-store.cjs')
 const { createMemoryStore } = require('./memory-store.cjs')
 const { createMcpBridge } = require('./mcp-bridge.cjs')
@@ -25,6 +27,7 @@ const { findImages, rewriteImageDestinations } = require('./markdown-images.cjs'
 const { writeFileAtomic } = require('./atomic-write.cjs')
 const { createFontsStore } = require('./fonts.cjs')
 const { parsePdf, MARKER } = require('./pdf-import.cjs')
+const textFiles = require('./text-file.cjs')
 const { createBrowserHistory } = require('./browser-history.cjs')
 const { createReferencesStore } = require('./project-references.cjs')
 const { createWebReferencesStore, webFolderOf } = require('./web-references.cjs')
@@ -39,7 +42,9 @@ const { createKnowledgeService, formatKnowledgeResults } = require('./knowledge-
 const { createSemanticPack } = require('./semantic-pack.cjs')
 const { createGpuContext } = require('./gpu-context.cjs')
 const { outsideFolders: outsideFoldersOf } = require('./shared-knowledge.cjs')
-const { affinityEdges, uniformEdges, collectVectors } = require('./project-graph.cjs')
+const { createWorkspacesStore } = require('./workspaces-store.cjs')
+const { STOPWORDS } = require('./knowledge-index.cjs')
+const { affinityEdges, uniformEdges, collectVectors, parentProjects } = require('./project-graph.cjs')
 const { mergeSearches, cleanTerms } = require('./search-merge.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
 const MAX_SKILL_FILE_BYTES = MAX_SKILL_CHARS * 4
@@ -77,6 +82,8 @@ const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
 
 let projectPath = null
 const projectsStore = createProjectsStore({ filePath: () => path.join(app.getPath('userData'), 'projects.json') })
+// Gli spazi di lavoro (workspace): un filtro sull'elenco dei progetti e sulla conoscenza che l'assistente e gli agenti raggiungono (workspaces-store.cjs).
+const workspacesStore = createWorkspacesStore({ directory: () => app.getPath('userData') })
 // Progetto "main": una cartella con la sua `.ow` nei dati dell'app. Quando nessun progetto è aperto fa da progetto (chat, note, memoria,
 // contesto, skill) e tiene sempre cronologia e note dei documenti sparsi, cioè fuori dal progetto aperto.
 const mainDirectory = () => path.join(app.getPath('userData'), 'main')
@@ -141,6 +148,8 @@ const documentExtensions = ['.md', '.markdown', '.mdown', '.docx', '.pdf']
 // Quel che l'albero dei file mostra: i documenti e le immagini (che si aprono in una scheda di visualizzazione).
 const listedExtensions = [...documentExtensions, ...IMAGE_EXTENSIONS]
 const hiddenDirectories = new Set(['node_modules', 'dist', 'out'])
+// File di testo aperti nel lettore testuale fuori dal progetto: solo quelli che l'utente ha scelto con la finestra di apertura (o che erano nella sessione).
+const userTextPaths = new Set()
 
 // I pacchetti della ricerca per significato (semantic-pack.cjs): non sono nell'installer, si scaricano quando l'utente lo chiede (Impostazioni → Modelli locali) e
 // vivono nei dati dell'app. Ce n'è uno per dispositivo: 'cpu' (modello a 8 bit, WebAssembly in un thread di Node, circa 150 MB) e 'gpu' (modello fp16 su WebGPU
@@ -201,9 +210,11 @@ function activeDevice() {
 // c'è un modello installato e abilitato, quindi ogni ricerca può essere per parole e per significato.
 const semanticAvailable = () => Boolean(semanticAllowed() && activeDevice())
 // I testi da vettorizzare: il progetto aperto, le sue cartelle di riferimento, le pagine web salvate e gli altri progetti che condividono la conoscenza (con l'indice acceso).
+// Anche tutti gli altri progetti dell'elenco con l'indice acceso, aperti o no, condividano o no: la ricerca della Home è dell'utente e li cerca tutti.
 const semanticTargets = () => {
-  if (!projectPath || !knowledgeOn || !semanticAvailable()) return []
-  return [projectPath, ...outsideFolders().map((item) => item.path)]
+  if (!semanticAvailable()) return []
+  const open = projectPath && knowledgeOn ? [projectPath, ...outsideFolders().map((item) => item.path)] : []
+  return [...open, ...indexedProjects()]
 }
 // `purge`: identificativi dei modelli di cui buttare i vettori (si è tolto il loro pacchetto).
 // L'ultimo elenco di progetti configurato per i vettori: se ne cambia uno (un progetto aggiunto, che condivide da poco…) si riconfigura.
@@ -215,6 +226,28 @@ function configureSemantic({ purge = [] } = {}) {
   const device = projects.length ? activeDevice() : null
   return knowledge.semanticConfigure({ device, model: device ? semanticPacks[device].id : '', directory: device === 'cpu' ? semanticPacks.cpu.directory : null, projects, purge })
     .catch((error) => { console.error('Ricerca per significato non configurata:', error.message); return false })
+}
+// I progetti dell'elenco (esistenti) con l'indice di ricerca acceso, aperti o no.
+function indexedProjects() {
+  try {
+    return projectsStore.list().filter((item) => !item.missing && item.path).filter((item) => {
+      try { return createProjectFile({ getProjectPath: () => item.path }).searchIndexEnabled() } catch { return false }
+    }).map((item) => item.path)
+  } catch { return [] }
+}
+// Riallinea l'indice di questi progetti ai loro file, senza aprirli: legge solo i file nuovi o cambiati. Non più spesso di `every` ms per progetto, salvo `force`.
+// → quanti se ne sono avviati.
+function syncProjects(directories, { force = false, every = 600000 } = {}) {
+  if (!knowledge.available) return 0
+  let started = 0
+  for (const directory of directories) {
+    const key = knowledge.key(directory)
+    if (!force && Date.now() - (sharedSynced.get(key) || 0) < every) continue
+    sharedSynced.set(key, Date.now())
+    started += 1
+    knowledge.sync(directory).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
+  }
+  return started
 }
 function startKnowledge() {
   if (!projectPath) return
@@ -230,15 +263,18 @@ function startKnowledge() {
     sharedSynced.set(key, Date.now())
     knowledge.sync(other.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
   }
+  // Tutti gli altri progetti dell'elenco, anche mai aperti in questa sessione: si aggiornano in secondo piano (non più spesso di ogni dieci minuti).
+  syncProjects(indexedProjects().filter((directory) => !samePath(directory, projectPath)))
   watchReferences()
   configureSemantic()
 }
 const sharedSynced = new Map()
 // Tutto ciò che sta fuori dal progetto e si cerca insieme ad esso (`@sigla/…`, sempre in sola lettura): le cartelle di riferimento, le pagine web salvate (`@web`), gli altri progetti che
 // condividono la loro conoscenza (vedi shared-knowledge.cjs; chi ha spento l'indice o la condivisione non c'è) e le loro pagine web (`@nome-web`).
-const outsideFolders = () => {
+// `granted`: progetti concessi a chi chiede (quelli che un agente ha aperto da sé), visibili anche fuori dallo spazio di lavoro attivo.
+const outsideFolders = ({ granted = [], workspace } = {}) => {
   try {
-    return projectPath ? outsideFoldersOf({ current: projectPath, references: referencesStore.list(), projects: projectsStore.list(), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(), webFolderOf }) : []
+    return projectPath ? outsideFoldersOf({ current: projectPath, references: referencesStore.list(), projects: workspacesStore.visibleProjects(projectsStore.list(), { granted, workspace }), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(), webFolderOf }) : []
   } catch { return [] }
 }
 // Le cartelle di riferimento collegate e le pagine web salvate del progetto (`.ow/web`, automatica: `@web`).
@@ -300,15 +336,41 @@ async function readDocument(filePath) {
   return { filePath, content: buffer.toString('utf8'), contentType: 'markdown', format: 'markdown' }
 }
 
+// Il percorso di un file di testo che il lettore testuale può aprire o salvare: nel progetto, scelto dall'utente con una finestra, o già nella sessione.
+function resolveTextPath(target) {
+  const resolved = path.resolve(String(target || ''))
+  if ([...userTextPaths].some((known) => samePath(known, resolved))) return resolved
+  if ((loadSession()?.texts || []).some((saved) => samePath(path.resolve(String(saved.path || '')), resolved))) return resolved
+  return resolveInProject(target)
+}
+
+// Lettura per il lettore testuale, con messaggi tradotti per i due rifiuti attesi (binario, troppo grande).
+async function readTextForTab(target) {
+  try {
+    return await textFiles.readTextFile(target)
+  } catch (error) {
+    if (error.code === 'NOT_TEXT') throw new Error(t('This file does not look like text (it is binary or not UTF-8).'))
+    if (error.code === 'TEXT_TOO_LARGE') throw new Error(t('This file is too large to open here (the limit is {limit} MB).', { limit: textFiles.TEXT_LIMIT / 1048576 }))
+    throw error
+  }
+}
+
 async function openDocument() {
   const result = await dialog.showOpenDialog(mainWindow, {
     defaultPath: projectPath || undefined,
     properties: ['openFile'],
-    filters: [supportedDocumentsFilter(), markdownFilter, { name: 'Word', extensions: ['docx'] }, { name: 'PDF', extensions: ['pdf'] }],
+    filters: [supportedDocumentsFilter(), markdownFilter, { name: 'Word', extensions: ['docx'] }, { name: 'PDF', extensions: ['pdf'] }, { name: t('All files'), extensions: ['*'] }],
   })
 
   if (result.canceled) return null
-  return readDocument(result.filePaths[0])
+  const chosen = result.filePaths[0]
+  // Un file che non è un documento si apre nel lettore testuale: la scelta dell'utente lo rende apribile (e salvabile) anche fuori dal progetto.
+  if (!documentExtensions.includes(path.extname(chosen).toLowerCase()) && !IMAGE_EXTENSIONS.includes(path.extname(chosen).toLowerCase())) {
+    const text = await readTextForTab(chosen)
+    userTextPaths.add(path.resolve(chosen))
+    return { ...text, format: 'text' }
+  }
+  return readDocument(chosen)
 }
 
 function sessionsFilePath() {
@@ -403,6 +465,8 @@ function workspaceFilePath() {
 }
 
 async function loadProject() {
+  // I membri temporanei (progetti aperti da un agente) non sopravvivono a un riavvio.
+  try { workspacesStore.clearTemporary() } catch (error) { console.error('Membri temporanei non azzerati:', error.message) }
   try {
     const { project } = JSON.parse(await fs.readFile(workspaceFilePath(), 'utf8'))
     if (project && (await fs.stat(project)).isDirectory()) projectPath = project
@@ -422,12 +486,16 @@ function initializeProject() {
   startKnowledge()
 }
 
-async function setProject(directory) {
+// `join`: un progetto nuovo per l'elenco entra nello spazio di lavoro attivo (se non è «Tutti»). Chi apre da fuori lo chiede all'utente prima e passa `join: false`;
+// un agente che apre un progetto non lo fa entrare: diventa un membro temporaneo (vedi mcpRequests.js).
+async function setProject(directory, { join = true } = {}) {
+  const known = projectsStore.list().some((item) => samePath(item.path, directory))
   projectPath = directory
   initializeProject()
-  await fs.mkdir(app.getPath('userData'), { recursive: true })
-  await fs.writeFile(workspaceFilePath(), JSON.stringify({ project: projectPath }, null, 2))
+  // `workspace.json` porta anche lo spazio di lavoro attivo: si scrive unendo i campi, altrimenti ogni apertura di un progetto lo cancellerebbe.
+  workspacesStore.setLastProject(projectPath)
   projectsStore.touch(projectPath)
+  if (join && !known) { try { if (workspacesStore.joinActive(projectPath)) notifyWorkspaces() } catch (error) { console.error('Spazio di lavoro non aggiornato:', error.message) } }
   applySpellcheck()
   return projectPath
 }
@@ -714,7 +782,8 @@ async function listDirectory(directory) {
       isDirectory: entry.isDirectory(),
       isProject: entry.isDirectory() && fsSync.existsSync(path.join(resolved, entry.name, projectFile.directoryName)),
       ...(entry.isDirectory() && states.get(entry.name) ? { emptiness: states.get(entry.name) } : {}),
-      ...(!entry.isDirectory() ? { openable: listedExtensions.includes(path.extname(entry.name).toLowerCase()) } : {}),
+      // Documenti e immagini si aprono come sempre; ogni altro file che non sia di un tipo noto come binario si apre nel lettore testuale (se poi non è testo lo dice).
+      ...(!entry.isDirectory() ? { openable: listedExtensions.includes(path.extname(entry.name).toLowerCase()) || !textFiles.isBinaryName(entry.name) } : {}),
       ...(isMarkdown(entry) && originals.has(stem(entry)) ? { originals: originals.get(stem(entry)) } : {}),
     }))
     .sort((left, right) => Number(right.isDirectory) - Number(left.isDirectory) || left.name.localeCompare(right.name, 'it', { sensitivity: 'base' }))
@@ -897,6 +966,19 @@ function createWindow() {
 }
 
 ipcMain.handle('document:open', openDocument)
+// Lettore testuale: apre e salva file di testo qualsiasi, senza interpretarli (text-file.cjs).
+ipcMain.handle('text:open', async (_event, filePath) => readTextForTab(resolveTextPath(filePath)))
+ipcMain.handle('text:save', async (_event, { filePath, text, eol, bom, saveAs }) => {
+  let target = filePath && !saveAs ? resolveTextPath(filePath) : null
+  if (!target) {
+    const result = await dialog.showSaveDialog(mainWindow, { defaultPath: filePath || startingPath(t('New text file.txt')), filters: [{ name: t('All files'), extensions: ['*'] }] })
+    if (result.canceled) return null
+    target = result.filePath
+    userTextPaths.add(path.resolve(target))
+  }
+  textFiles.writeTextFile(target, String(text ?? ''), { eol: eol === 'crlf' ? 'crlf' : 'lf', bom: Boolean(bom) })
+  return target
+})
 ipcMain.handle('document:open-path', async (_event, filePath, { original = false } = {}) => {
   // Un documento collegato al progetto sta fuori dalla sua cartella ma si apre (e si modifica) lì dov'è.
   const target = linksStore.has(filePath) ? path.resolve(filePath) : resolveInProject(filePath)
@@ -1214,17 +1296,17 @@ ipcMain.handle('project:knowledge-rebuild', async (_event, directory) => {
 // per un altro progetto (un agente esterno che lavora altrove) si leggono i suoi riferimenti. Senza progetto: tutti i progetti che condividono.
 // `everything` (la ricerca della Home, che è dell'utente e non di un assistente): tutti i progetti con l'indice acceso, anche quelli che non condividono la loro conoscenza. Condividere
 // decide solo cosa vedono gli ALTRI progetti e i loro assistenti; le informazioni, nel proprio indice, ci sono comunque.
-function outsideFor(base, { everything = false } = {}) {
-  if (base && projectPath && samePath(base, projectPath)) return outsideFolders()
+function outsideFor(base, { everything = false, granted = [], workspace } = {}) {
+  if (base && projectPath && samePath(base, projectPath)) return outsideFolders({ granted, workspace })
   let references = []
   try { references = base ? createReferencesStore({ getProjectPath: () => base }).list() : [] } catch { references = [] }
   try {
-    return outsideFoldersOf({ current: base, references, projects: projectsStore.list(), isShared: (directory) => { const file = createProjectFile({ getProjectPath: () => directory }); return everything ? file.searchIndexEnabled() : file.sharedKnowledgeEnabled() }, webFolderOf })
+    return outsideFoldersOf({ current: base, references, projects: workspacesStore.visibleProjects(projectsStore.list(), { granted, workspace }), isShared: (directory) => { const file = createProjectFile({ getProjectPath: () => directory }); return everything ? file.searchIndexEnabled() : file.sharedKnowledgeEnabled() }, webFolderOf })
   } catch { return [] }
 }
 // Ricerca per rilevanza (e per significato, se c'è il modello) nel progetto, nei suoi riferimenti e negli altri progetti. Non dipende dal progetto aperto: `project` (un agente
 // esterno) indica da quale progetto si cerca; senza, si usa quello aperto, e senza nessuno si cerca in tutti i progetti che condividono la loro conoscenza.
-async function runKnowledgeSearch(args = {}, { project: asked = null, home = false } = {}) {
+async function runKnowledgeSearch(args = {}, { project: asked = null, home = false, granted = [] } = {}) {
   const known = (directory) => Boolean((projectPath && samePath(directory, projectPath)) || projectsStore.list().some((item) => samePath(item.path, directory)))
   // `home`: la ricerca della Home non parte da nessun progetto, anche se uno è aperto: cerca in tutti quelli che condividono la conoscenza.
   const base = home ? null : asked && known(path.resolve(String(asked))) ? path.resolve(String(asked)) : (asked ? null : projectPath)
@@ -1239,7 +1321,8 @@ async function runKnowledgeSearch(args = {}, { project: asked = null, home = fal
   // `others` (o il vecchio `references`): tutto ciò che sta fuori dal progetto, cioè gli altri progetti e le cartelle di riferimento.
   const wanted = String(args.scope || '').toLowerCase()
   const scope = wanted === 'project' ? 'project' : (wanted === 'others' || wanted === 'references') ? 'others' : 'all'
-  const outside = outsideFor(base, { everything: home })
+  // `workspace` (un agente esterno): non indicato = lo spazio di lavoro attivo; false = tutti i progetti; un nome = quello spazio. Il resto vale come nell'interfaccia.
+  const outside = outsideFor(base, { everything: home, granted, workspace: args.workspace })
   const sourceOf = (item) => ({ key: knowledge.key(item.path), prefix: `@${item.name}`, item })
   let sources
   let folder = ''
@@ -1278,14 +1361,31 @@ async function searchKnowledgeTool(args = {}, readTool = 'read_file', context = 
   return formatKnowledgeResults(query, { ...found, results: found.results.map(({ source: _source, relative: _relative, ...entry }) => entry) }, { files }, readTool)
 }
 // Ricerca della Home: gli stessi passaggi che vedrebbe l'assistente, ma strutturati (con il progetto di ogni passaggio e il file da aprire).
+// Sinonimi dai propri testi per una domanda: per ogni parola significativa (4+ lettere, non una parola funzionale), le parole del vocabolario dei progetti più vicine per
+// significato (vedi knowledge-worker.cjs, operazione `synonyms`). Funziona solo con la ricerca per significato attiva e il vocabolario già vettorizzato; altrimenti [].
+async function localSynonyms(query) {
+  if (!knowledge.available || !semanticAvailable()) return []
+  const fold = (value) => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+  const words = [...new Set((String(query).match(/\p{L}+/gu) || []).map(fold).filter((word) => word.length >= 4 && !STOPWORDS.has(word)))].slice(0, 6)
+  if (!words.length) return []
+  try {
+    const found = await knowledge.synonyms(words)
+    return [...new Set(found.flatMap((entry) => entry.near.map((item) => item.word)))].slice(0, 6)
+  } catch { return [] }
+}
+
 async function searchProjectsForHome(args = {}) {
   const maxResults = Math.min(30, Math.max(1, Number(args.maxResults) || 20))
   const query = String(args.query || '').trim()
   // `terms`: sinonimi e termini affini chiesti dall'interfaccia al modello linguistico; ognuno si cerca a parte (parole e significato) e i risultati si uniscono.
-  const terms = cleanTerms(args.terms, query)
+  // Ai sinonimi dell'IA (se ci sono) si aggiungono sempre quelli locali: le parole dei testi più vicine per significato a quelle cercate (`local: false` li esclude).
+  const localTerms = args.local === false ? [] : await localSynonyms(query)
+  const terms = cleanTerms([...(Array.isArray(args.terms) ? args.terms : []), ...localTerms], query, 12)
   // `includeWeak`: anche i passaggi che il filtro di pertinenza scarta ("meno pertinenti"), con `weak: true`, ordinati per pertinenza.
   const includeWeak = args.includeWeak === true
-  const base = await runKnowledgeSearch({ query, maxResults, includeWeak }, { home: true })
+  // `workspace`: dove cerca la Home: non indicato = lo spazio di lavoro attivo; 'all' = tutti i progetti; un id = quello spazio (lo sceglie l'utente accanto al campo di ricerca).
+  const workspace = typeof args.workspace === 'string' && args.workspace ? args.workspace : undefined
+  const base = await runKnowledgeSearch({ query, maxResults, includeWeak, workspace }, { home: true })
   const { found, files, outside } = base
   // Le pagine web salvate di un progetto (`@nome-web`) appartengono a quel progetto.
   const ownerOf = (item) => (item.web ? outside.find((other) => other.project && (item.name === `${other.name}-web` || item.name.startsWith(`${other.name}-web-`))) || null : item)
@@ -1309,7 +1409,7 @@ async function searchProjectsForHome(args = {}) {
   if (terms.length) {
     const extra = await Promise.all(terms.map(async (term) => {
       try {
-        const { found: termFound } = await runKnowledgeSearch({ query: term, maxResults: 10, includeWeak }, { home: true })
+        const { found: termFound } = await runKnowledgeSearch({ query: term, maxResults: 10, includeWeak, workspace }, { home: true })
         weakCount += termFound.weakCount || 0
         return { term, original: false, results: shape(termFound.results) }
       } catch { return { term, original: false, results: [] } }
@@ -1317,19 +1417,40 @@ async function searchProjectsForHome(args = {}) {
     results = mergeSearches([{ term: query, original: true, results }, ...extra], { limit: maxResults + 10 })
   }
   // `partial`: nessun passaggio contiene tutte le parole (si mostrano quelli che ne hanno qualcuna).
-  return { query, terms, mode: found.mode, partial: found.mode === 'or' || Boolean(found.partial), weakCount, files, results }
+  return { query, terms, localTerms: terms.filter((term) => localTerms.includes(term)), mode: found.mode, partial: found.mode === 'or' || Boolean(found.partial), weakCount, files, results }
 }
 ipcMain.handle('projects:search', (_event, args) => searchProjectsForHome(args))
 
+// Spazi di lavoro (workspace): le definizioni, quello attivo e i membri temporanei. Ogni modifica avvisa l'interfaccia (`workspaces:changed`).
+function notifyWorkspaces() {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('workspaces:changed')
+}
+const workspacesState = () => ({ active: workspacesStore.active(), workspaces: workspacesStore.list(), temporary: workspacesStore.temporary() })
+const changesWorkspaces = (action) => (_event, ...args) => { const result = action(...args); notifyWorkspaces(); return result }
+ipcMain.handle('workspaces:list', () => workspacesState())
+ipcMain.handle('workspaces:create', changesWorkspaces((input = {}) => workspacesStore.create({ name: input.name, projects: Array.isArray(input.projects) ? input.projects.map(String) : [] })))
+ipcMain.handle('workspaces:rename', changesWorkspaces((id, name) => workspacesStore.rename(String(id), name)))
+ipcMain.handle('workspaces:set-members', changesWorkspaces((id, projects) => workspacesStore.setMembers(String(id), Array.isArray(projects) ? projects.map(String) : [])))
+ipcMain.handle('workspaces:add-project', changesWorkspaces((id, project) => workspacesStore.addProject(String(id), String(project))))
+ipcMain.handle('workspaces:remove-project', changesWorkspaces((id, project) => workspacesStore.removeProject(String(id), String(project))))
+ipcMain.handle('workspaces:remove', changesWorkspaces((id) => workspacesStore.remove(String(id))))
+ipcMain.handle('workspaces:set-active', changesWorkspaces((id) => workspacesStore.setActive(String(id))))
+ipcMain.handle('workspaces:add-temporary', changesWorkspaces((project) => workspacesStore.addTemporary(String(project))))
+ipcMain.handle('workspaces:dismiss-temporary', changesWorkspaces((project) => workspacesStore.dismissTemporary(String(project))))
+ipcMain.handle('workspaces:adopt-temporary', changesWorkspaces((project) => workspacesStore.adoptTemporary(String(project))))
 // Dati del grafo della Home: ogni progetto (con le sue opzioni) e le connessioni per affinità. I vettori medi si ricalcolano solo se l'indice del progetto è cambiato.
 const centroidCache = new Map() // chiave → { signature, vector }
-ipcMain.handle('projects:graph', async () => {
-  const list = projectsStore.list().filter((item) => item && item.path)
+ipcMain.handle('projects:graph', async (_event, options = {}) => {
+  // Il grafo mostra i progetti dello spazio di lavoro attivo (e i membri temporanei, segnati dall'interfaccia).
+  const temporaryMembers = workspacesStore.temporary()
+  // Lo spazio di lavoro di questi dati: l'interfaccia dà a ogni spazio la sua disposizione delle bolle.
+  const workspace = workspacesStore.active()
+  const list = workspacesStore.visibleProjects(projectsStore.list(), { temporary: true }).filter((item) => item && item.path)
   const device = semanticAllowed() ? activeDevice() : null
   const model = device ? semanticPacks[device].id : ''
   const nodes = []
   for (const item of list) {
-    const base = { path: item.path, name: item.name, missing: Boolean(item.missing), openedAt: item.openedAt || null }
+    const base = { path: item.path, name: item.name, missing: Boolean(item.missing), openedAt: item.openedAt || null, ...(temporaryMembers.some((known) => samePath(known, item.path)) ? { temporary: true } : {}) }
     if (item.missing) { nodes.push({ ...base, indexed: false, shared: false, files: 0, chunks: 0, updatedAt: null }); continue }
     let file = null
     try { file = createProjectFile({ getProjectPath: () => item.path }) } catch { file = null }
@@ -1340,13 +1461,12 @@ ipcMain.handle('projects:graph', async () => {
     nodes.push({ ...base, indexed, shared, files: stats.files, chunks: stats.chunks, updatedAt: stats.updatedAt })
   }
   // Un progetto che condivide e ha l'indice acceso ma nessun passaggio (appena aggiunto): si indicizza (non più spesso di ogni due minuti), senza aspettare l'apertura.
-  for (const node of nodes) {
-    if (!node.shared || !node.indexed || node.chunks > 0 || !knowledge.available) continue
-    const key = knowledge.key(node.path)
-    if (Date.now() - (sharedSynced.get(key) || 0) < 120000) continue
-    sharedSynced.set(key, Date.now())
-    knowledge.sync(node.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
-  }
+  // `options.refresh` (il pulsante Aggiorna della Home): tutti i progetti con l'indice acceso si riallineano ai file, aperti o no. Altrimenti solo quelli senza ancora
+  // alcun passaggio (appena aggiunti) ogni due minuti e gli altri ogni dieci.
+  const force = options?.refresh === true
+  const live = nodes.filter((node) => node.indexed && !node.missing)
+  syncProjects(live.filter((node) => node.chunks === 0).map((node) => node.path), { force, every: 120000 })
+  syncProjects(live.filter((node) => node.chunks > 0).map((node) => node.path), { force })
   // I vettori si calcolano per i progetti dell'elenco corrente: se è cambiato dall'ultima configurazione, si riconfigura.
   if (knowledge.available && semanticAvailable()) {
     const wanted = semanticTargets().map((item) => knowledge.key(item)).sort().join('|')
@@ -1365,13 +1485,19 @@ ipcMain.handle('projects:graph', async () => {
     } catch (error) { console.error('Vettori medi dei progetti non calcolati:', error.message) }
   }
   for (const node of nodes) node.pendingVectors = pending.has(node.path)
+  // Un sotto-progetto sta dentro la cartella di un altro progetto dell'elenco: `parent` è quello più vicino (il più interno), altrimenti null. Nel grafo è un satellite del padre.
+  const parents = parentProjects(nodes, { isSameOrInside, samePath })
+  for (const node of nodes) node.parent = parents.get(node.path) || null
   let edges = []
   let approximate = false
   if (vectors.size > 1) edges = affinityEdges(sharing.filter((node) => vectors.has(node.path)).map((node) => ({ id: node.path, vector: vectors.get(node.path) })))
   else if (sharing.length > 1) { edges = uniformEdges(sharing.map((node) => node.path)); approximate = true }
   // `busy`: l'indice sta ancora lavorando (scansione o vettori): l'interfaccia riguarda il grafo finché non ha finito.
+  // Un satellite si lega solo al padre: niente sinapsi di affinità da o verso i sotto-progetti.
+  const satellites = new Set(nodes.filter((node) => node.parent).map((node) => node.path))
+  edges = edges.filter((edge) => !satellites.has(edge.a) && !satellites.has(edge.b))
   const busy = pending.size > 0 || (knowledge.available && knowledge.syncing)
-  return { nodes, edges, approximate, busy, semantic: vectors.size > 1 }
+  return { nodes, edges, approximate, busy, semantic: vectors.size > 1, workspace }
 })
 ipcMain.handle('tools:search-knowledge', (_event, args) => searchKnowledgeTool(args))
 // Gli strumenti di lettura valgono anche per le cartelle di riferimento: un percorso `@sigla/…` si legge dentro quella cartella (e solo lì).
@@ -1580,11 +1706,18 @@ ipcMain.handle('workspace:choose-project', async () => {
   const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openDirectory', 'createDirectory'] })
   return result.canceled ? projectPath : setProject(result.filePaths[0])
 })
-ipcMain.handle('workspace:list-projects', () => projectsStore.list())
-ipcMain.handle('workspace:open-project', async (_event, directory) => {
+// L'elenco dei progetti dello spazio attivo; i membri temporanei (aperti da un agente) sono segnati.
+const listedProjects = () => {
+  const temporary = workspacesStore.temporary()
+  return workspacesStore.visibleProjects(projectsStore.list(), { temporary: true }).map((item) => (temporary.some((known) => samePath(known, item.path)) ? { ...item, temporary: true } : item))
+}
+ipcMain.handle('workspace:list-projects', () => listedProjects())
+// Tutti i progetti dell'elenco, senza filtro: per scegliere i membri di uno spazio di lavoro.
+ipcMain.handle('workspaces:all-projects', () => projectsStore.list())
+ipcMain.handle('workspace:open-project', async (_event, directory, options = {}) => {
   const target = path.resolve(String(directory || ''))
   if (!(await fs.stat(target).then((stat) => stat.isDirectory(), () => false))) throw new Error(t('The project folder no longer exists'))
-  return setProject(target)
+  return setProject(target, { join: options?.join !== false })
 })
 // Crea una cartella di progetto con il nome dato: la posizione si sceglie con la finestra di sistema.
 ipcMain.handle('workspace:create-project', async (_event, name) => {
@@ -1703,7 +1836,12 @@ ipcMain.handle('links:reveal', (_event, target) => {
   shell.showItemInFolder(path.resolve(String(target)))
 })
 ipcMain.handle('chat:copy-to-project', (_event, { id, target } = {}) => chatStore.copyTo(String(id || ''), String(target || '')))
-ipcMain.handle('workspace:remove-project', (_event, directory) => { projectsStore.remove(String(directory || '')); return projectsStore.list() })
+ipcMain.handle('workspace:remove-project', (_event, directory) => {
+  projectsStore.remove(String(directory || ''))
+  // Tolto dall'elenco, esce da tutti gli spazi di lavoro.
+  try { workspacesStore.removeEverywhere(String(directory || '')); notifyWorkspaces() } catch (error) { console.error('Spazi di lavoro non aggiornati:', error.message) }
+  return listedProjects()
+})
 // Per l'assistente: sposta nel cestino (con la conferma dell'utente) o sposta/rinomina dentro il progetto.
 ipcMain.handle('memory:list', () => memoryStore.list())
 ipcMain.handle('memory:add', (_event, entry) => memoryStore.add(entry))
@@ -1854,6 +1992,7 @@ ipcMain.handle('workspace:move-project-in', async (_event, directory) => {
   await moveDirectory(source, target)
   try { setInheritance(target, true) } catch (error) { console.error('Eredità non aggiornata:', error) }
   projectsStore.remove(source)
+  try { workspacesStore.removeEverywhere(source); notifyWorkspaces() } catch (error) { console.error('Spazi di lavoro non aggiornati:', error.message) }
   return target
 })
 // Sposta un progetto (anche non aperto) in un'altra cartella: l'elenco dei progetti e le sessioni seguono la nuova posizione.
@@ -1877,6 +2016,8 @@ ipcMain.handle('workspace:move-project', async (_event, directory) => {
   const wasOpen = Boolean(projectPath) && path.resolve(projectPath).toLowerCase() === source.toLowerCase()
   await moveDirectory(source, target)
   projectsStore.replace(source, target)
+  // Un progetto spostato conserva il suo posto negli spazi di lavoro.
+  try { workspacesStore.replacePath(source, target); notifyWorkspaces() } catch (error) { console.error('Spazi di lavoro non aggiornati:', error.message) }
   try { moveSessions(source, target) } catch (error) { console.error('Sessioni non aggiornate:', error) }
   if (wasOpen) await setProject(target)
   return { path: target, wasOpen }
@@ -2072,12 +2213,19 @@ function loadLanguage() {
 
 // Modalità di visualizzazione dei documenti (la sceglie l'interfaccia): serve al menu Visualizza per mostrare la voce attiva.
 let viewMode = 'endless'
+// La Home dei progetti è aperta: il menu disattiva le voci che agiscono sul documento (che non si vede).
+let homeOpen = false
+ipcMain.on('home:changed', (_event, open) => {
+  if (Boolean(open) === homeOpen) return
+  homeOpen = Boolean(open)
+  buildMenu()
+})
 
 function buildMenu() {
   createApplicationMenu((command) => {
     if (['settings', 'open-project', 'about', 'check-updates', 'view-endless', 'view-pages'].includes(command)) mainWindow?.webContents.send('app:command', command)
     else mainWindow?.webContents.send('document:command', command)
-  }, { view: viewMode })
+  }, { view: viewMode, home: homeOpen })
 }
 
 ipcMain.on('view:changed', (_event, mode) => {
@@ -2243,7 +2391,18 @@ const mcpBridge = createMcpBridge({
   getProjectPath: () => projectPath,
   isEnabled: () => loadPreferences()['openwriter.mcpEdit'] !== 'off',
   // Con l'app aperta la ricerca per conoscenza di un agente esterno passa da qui: stessa ricerca dell'assistente, quindi anche per significato (se acceso).
-  localTools: { search_knowledge: (args, context) => searchKnowledgeTool(args, 'read_document', { project: context?.project }) },
+  localTools: {
+    search_knowledge: (args, context) => searchKnowledgeTool(args, 'read_document', { project: context?.project, granted: context?.granted || [] }),
+    // Un agente cambia lo spazio di lavoro attivo (come l'utente dal selettore): l'interfaccia si aggiorna.
+    open_workspace: (args) => {
+      const wanted = String(args.name ?? '').trim()
+      const found = /^all$/i.test(wanted) ? null : workspacesStore.find(wanted)
+      if (!/^all$/i.test(wanted) && !found) throw new Error(`Workspace "${wanted}" not found. Available: ${['All', ...workspacesStore.list().map((item) => item.name)].join(', ')}`)
+      workspacesStore.setActive(found ? found.id : 'all')
+      notifyWorkspaces()
+      return `The workspace "${found ? found.name : 'All'}" is now active in OpenWriter.`
+    },
+  },
 })
 ipcMain.on('mcp:response', (_event, id, payload) => mcpBridge.answer(id, payload))
 
@@ -2315,6 +2474,19 @@ const MARKDOWN_PATTERN = /\.(md|markdown|mdown)$/i
 const pendingExternalDocuments = []
 let externalDocumentsReady = false
 
+// Cartelle passate all'app (la voce «Apri come progetto OpenWriter» del file manager, o la riga di comando): si aprono come progetto.
+const folderArguments = (argv) => argv.slice(app.isPackaged ? 1 : 2).filter((argument) => {
+  if (argument.startsWith('-') || MARKDOWN_PATTERN.test(argument)) return false
+  try { return fsSync.statSync(argument).isDirectory() } catch { return false }
+})
+const pendingExternalProjects = []
+function openExternalProject(directory) {
+  const resolved = path.resolve(directory)
+  if (externalDocumentsReady && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('project:external', resolved)
+  else pendingExternalProjects.push(resolved)
+}
+ipcMain.handle('project:take-external', () => pendingExternalProjects.splice(0))
+
 const markdownArguments = (argv) => argv.slice(app.isPackaged ? 1 : 2).filter((argument) => !argument.startsWith('-') && MARKDOWN_PATTERN.test(argument) && fsSync.existsSync(argument))
 
 async function openExternalDocument(filePath) {
@@ -2332,6 +2504,23 @@ ipcMain.handle('document:take-external', () => {
   return pendingExternalDocuments.splice(0)
 })
 
+// Integrazione con il sistema (Impostazioni → Associazioni): file Markdown associati all'app e voce «Apri come progetto OpenWriter» nel file manager, per piattaforma
+// (vedi system-integration.cjs). Solo nella versione installata.
+const systemIntegration = createSystemIntegration({
+  platform: process.platform,
+  exePath: process.execPath,
+  packaged: app.isPackaged,
+  label: () => t('Open as OpenWriter project'),
+  run: (file, args) => new Promise((resolve) => {
+    execFile(file, args, { windowsHide: true, timeout: 15000 }, (error, stdout) => resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, stdout: String(stdout || '') }))
+  }),
+})
+ipcMain.handle('integration:status', () => systemIntegration.status())
+ipcMain.handle('integration:set-markdown', (_event, on) => systemIntegration.setMarkdown(on === true))
+ipcMain.handle('integration:set-folder-menu', (_event, on) => systemIntegration.setFolderMenu(on === true))
+// Windows non permette di imporre l'app predefinita: si apre la pagina delle App predefinite, dove l'utente sceglie.
+ipcMain.handle('integration:open-default-apps', () => (process.platform === 'win32' ? shell.openExternal('ms-settings:defaultapps').then(() => true, () => false) : false))
+
 if (app.isPackaged && !app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -2341,6 +2530,7 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
       mainWindow.focus()
     }
     for (const filePath of markdownArguments(argv)) openExternalDocument(filePath)
+    for (const directory of folderArguments(argv)) openExternalProject(directory)
   })
 }
 
@@ -2348,6 +2538,7 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
 app.on('open-file', (event, filePath) => {
   event.preventDefault()
   if (MARKDOWN_PATTERN.test(filePath)) openExternalDocument(filePath)
+  else { try { if (fsSync.statSync(filePath).isDirectory()) openExternalProject(filePath) } catch { /* non esiste */ } }
 })
 
 app.whenReady().then(async () => {
@@ -2366,6 +2557,7 @@ app.whenReady().then(async () => {
   buildMenu()
   mcpBridge.start()
   for (const filePath of markdownArguments(process.argv)) openExternalDocument(filePath)
+  for (const directory of folderArguments(process.argv)) openExternalProject(directory)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

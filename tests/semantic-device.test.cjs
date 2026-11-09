@@ -18,12 +18,13 @@ const fakeVector = (text) => {
   return new Float32Array([sea / norm, land / norm, 0.1 / norm])
 }
 
-async function setup({ gpuEmbed, onSemanticError }) {
+async function setup({ gpuEmbed, onSemanticError, extra = {} }) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ow-device-'))
   const project = path.join(directory, 'progetto')
   fs.mkdirSync(project)
   fs.writeFileSync(path.join(project, 'costa.md'), '# Costa\n\nLa nebbia sul mare nascondeva il faro.\n')
   fs.writeFileSync(path.join(project, 'cucina.md'), '# Cucina\n\nLa ricetta del pane richiede lievito.\n')
+  for (const [name, text] of Object.entries(extra)) fs.writeFileSync(path.join(project, name), text)
   const keepAlive = setInterval(() => {}, 1000)
   const service = createKnowledgeService({ file: path.join(directory, 'k.db'), hiddenDirectories: [], createWorker: (workerData) => new Worker(path.join(__dirname, '../electron/knowledge-worker.cjs'), { workerData }), gpuEmbed, onSemanticError })
   const done = async () => { await service.close(); clearInterval(keepAlive); fs.rmSync(directory, { recursive: true, force: true }) }
@@ -53,7 +54,7 @@ test('dispositivo GPU: il worker chiede i vettori al processo principale; la ric
 
 test("dispositivi separati: cambiare modello non butta i vettori dell'altro e calcola solo ciò che manca", async () => {
   let gpuCalls = 0
-  const { service, project, done, waitFor } = await setup({ gpuEmbed: async (texts) => { gpuCalls += texts.length; return texts.map(fakeVector) } })
+  const { service, project, done, waitFor } = await setup({ gpuEmbed: async (texts, kind) => { if (kind === 'passage') gpuCalls += texts.length; return texts.map(fakeVector) } })
   try {
     await service.semanticConfigure({ device: 'gpu', model: 'gpu-fake', projects: [project] })
     await waitFor((value) => value.embedded === 2 && !value.running)
@@ -122,4 +123,31 @@ test('riconfigurare mentre i vettori si calcolano: nessun errore e il calcolo ri
     const status = await waitFor((value) => value.model === 'gpu-fake-2' && value.embedded === 2 && !value.running)
     assert.equal(status.error, null)
   } finally { release?.(); await done() }
+})
+
+test('sinonimi dai testi: il vocabolario si vettorizza e le parole vicine per significato si trovano senza modello linguistico', async () => {
+  // Un vocabolario abbastanza grande perché un gruppo di parole si stacchi dalle altre (il punteggio z ha bisogno di una popolazione).
+  const filler = Array.from({ length: 120 }, (_, i) => `zeta${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))}`).join(' ')
+  const { service, project, done, waitFor } = await setup({ gpuEmbed: async (texts) => texts.map(fakeVector), extra: { 'riempitivo.md': `# Elenco
+
+${filler}
+` } })
+  try {
+    // Senza vettori delle parole non c'è nulla da proporre.
+    assert.deepEqual(await service.synonyms(['faro']), [])
+    await service.semanticConfigure({ device: 'gpu', model: 'gpu-fake', projects: [project] })
+    await waitFor((value) => !value.running && value.embedded === value.total && value.total === 3)
+    // Il vocabolario è questo: costa, cucina, nebbia, mare, faro, ricetta, pane, lievito, richiede, nascondeva… (le parole del mare si somigliano tra loro).
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const found = await service.synonyms(['faro'])
+      if (found.length) {
+        const near = found[0].near.map((item) => item.word)
+        assert.ok(near.length > 0 && near.every((word) => /^(costa|nebbia|mare)$/.test(word)), `vicine a faro: ${near}`)
+        assert.ok(!near.includes('faro'), 'la parola stessa non è un sinonimo')
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    assert.fail('nessun sinonimo trovato')
+  } finally { await done() }
 })

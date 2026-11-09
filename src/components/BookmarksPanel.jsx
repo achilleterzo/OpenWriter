@@ -4,6 +4,7 @@ import { Bookmark, BookmarkPlus, Bot, Check, Copy, Flag, Link as LinkIcon, Penci
 import { anchorContext, buildTextIndex, locateQuote } from '../lib/anchoring.js'
 import { relativeLink } from '../lib/bookmarkLinks.js'
 import { t } from '../i18n/index.js'
+import Switch from './Switch.jsx'
 
 const electronAPI = window.electronAPI
 const snippet = (text, length = 90) => (text.length > length ? `${text.slice(0, length)}…` : text)
@@ -149,7 +150,7 @@ export default function BookmarksPanel({ tab, editor, project, bookmarks, active
           <div className="grid gap-1.5">
             <input value={draft.label} placeholder={t('Name of the bookmark (optional)')} aria-label={t('Name of the bookmark (optional)')} className={field} onChange={(event) => setDraft({ ...draft, label: event.target.value })} />
             <textarea value={draft.note} rows={2} placeholder={t('Note (optional): for you or for the assistant')} aria-label={t('Note (optional): for you or for the assistant')} className={`${field} resize-none`} onChange={(event) => setDraft({ ...draft, note: event.target.value })} />
-            <label className="flex items-center gap-1.5 text-xs text-slate-400"><input type="checkbox" className="accent-accent-500" checked={draft.flagged} onChange={(event) => setDraft({ ...draft, flagged: event.target.checked })} /> {t('Point it out to the assistant')}</label>
+            <label className="flex items-center gap-1.5 text-xs text-slate-400"><Switch checked={draft.flagged} onChange={(value) => setDraft({ ...draft, flagged: value })} className="!mt-0" /> {t('Point it out to the assistant')}</label>
             <button type="button" className="flex w-fit items-center gap-1.5 rounded-md bg-accent-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-accent-500" onClick={add}><BookmarkPlus size={14} /> {t('Add a bookmark here')}</button>
             <span className="text-[11px] text-slate-500">{t('It marks the selected text, or the start of the paragraph where the cursor is. Link to it with file.md#name.')}</span>
           </div>

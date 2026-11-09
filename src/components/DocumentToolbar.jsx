@@ -106,7 +106,6 @@ export default function DocumentToolbar({ editor, onImage, onFind, findOpen, onL
         {saveButton}
         <ToolbarDivider />
         <ToolbarButton label={copied ? t('Copied') : t('Copy all')} onClick={() => { onCopySource(); setCopied(true); setTimeout(() => setCopied(false), 1500) }}>{copied ? <Check size={17} /> : <Copy size={17} />}</ToolbarButton>
-        <span className="ml-2 text-xs text-slate-500">{t('Markdown source: changes are applied to the document as you type.')}</span>
         <span className="ml-auto"><ToolbarButton label={t('Back to the formatted view')} active onClick={onToggleSource}><FileCode size={17} /></ToolbarButton></span>
       </div>
     )

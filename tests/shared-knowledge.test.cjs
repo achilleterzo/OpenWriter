@@ -7,7 +7,8 @@ const { sharedProjects } = require('../electron/shared-knowledge.cjs')
 const { createProjectFile } = require('../electron/project-file.cjs')
 
 const R = path.resolve('/lavoro')
-const entry = (name, extra = {}) => ({ path: path.join(R, name), name, missing: false, ...extra })
+// Come l'elenco dei progetti: il nome è quello della cartella (o quello scelto nelle impostazioni).
+const entry = (name, extra = {}) => ({ path: path.join(R, name), name: path.basename(name), missing: false, ...extra })
 
 test('sharedProjects: tutti gli altri progetti che condividono, con sigla unica', () => {
   const found = sharedProjects({ current: path.join(R, 'a'), projects: [entry('a'), entry('b'), entry('Saggio Uno')], isShared: () => true })
@@ -53,4 +54,11 @@ test('options.sharedKnowledge: acceso di default, serve anche l\'indice, resta s
     file.saveSettings({ ...base, options: { searchIndex: false, sharedKnowledge: true } })
     assert.equal(file.sharedKnowledgeEnabled(), false)
   } finally { fs.rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('sharedProjects: la sigla viene dal nome scelto per il progetto, se c\'è', () => {
+  const projects = [entry('a'), entry('cartella-xyz', { name: 'Il mio romanzo' }), entry('altro')]
+  const found = sharedProjects({ current: path.join(R, 'a'), projects, isShared: () => true })
+  assert.deepEqual(found.map((item) => item.name), ['Il-mio-romanzo', 'altro'])
+  assert.equal(found[0].path, path.join(R, 'cartella-xyz'))
 })

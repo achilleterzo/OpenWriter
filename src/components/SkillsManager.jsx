@@ -3,6 +3,7 @@ import { AlertTriangle, Copy, FileUp, FolderOpen, Loader2, Pencil, Plus, Trash2,
 import { useDialogs } from './Dialogs.jsx'
 import { cleanGeneratedSkill, emptySkill, serializeSkill, skillGenerationMessages } from '../lib/skills.js'
 import { languageEnglishName, t } from '../i18n/index.js'
+import Switch from './Switch.jsx'
 
 const api = window.electronAPI
 const fieldClass = 'mt-1 w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400'
@@ -262,15 +263,7 @@ export default function SkillsManager({ scope, projectPath = null, onChanged }) 
           return (
             <li key={`${skill.scope}:${skill.base}:${skill.id}`} className="flex min-w-0 items-start gap-3 rounded-lg border border-slate-800 px-3 py-2">
               {project && (
-                <input
-                  type="checkbox"
-                  checked={active}
-                  disabled={Boolean(from)}
-                  title={from ? t('Active by default in “{name}”', { name: from }) : t('Active by default in every conversation')}
-                  aria-label={t('Active by default')}
-                  className="mt-1 accent-accent-500"
-                  onChange={(event) => toggleActive(skill.id, event.target.checked)}
-                />
+                <Switch checked={active} onChange={(value) => toggleActive(skill.id, value)} disabled={Boolean(from)} title={from ? t('Active by default in “{name}”', { name: from }) : t('Active by default in every conversation')} label={t('Active by default')} />
               )}
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm text-slate-200">{skill.name}{project && <span className="ml-2 text-xs text-slate-500">{origin(skill)}</span>}</p>

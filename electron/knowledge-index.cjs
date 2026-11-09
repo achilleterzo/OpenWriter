@@ -205,11 +205,15 @@ function createSchema(db) {
     -- Vettori (ricerca per significato): derivati come tutto il resto. Una riga per modello e per testo distinto: due modelli (CPU e GPU) convivono, e passare
     -- dall'uno all'altro calcola solo ciò che manca. Vuota finché non si attiva la ricerca semantica.
     create table if not exists embeddings (model text not null, hash text not null, vector blob not null, primary key (model, hash));
+    -- Vettori delle parole del vocabolario (le parole che compaiono nei testi): servono a trovare i sinonimi nei propri testi, senza modello linguistico.
+    create table if not exists word_embeddings (model text not null, word text not null, vector blob not null, primary key (model, word));
     create virtual table if not exists chunks_fts using fts5(
       text, heading,
       content='chunks', content_rowid='id',
       tokenize='unicode61 remove_diacritics 2', prefix='2 3'
     );
+    -- Il vocabolario: le parole (già senza maiuscole né accenti) con quante volte compaiono.
+    create virtual table if not exists chunks_vocab using fts5vocab(chunks_fts, 'row');
     create trigger if not exists chunks_ai after insert on chunks begin
       insert into chunks_fts(rowid, text, heading) values (new.id, new.text, new.heading);
     end;
@@ -233,6 +237,7 @@ function finishMigrationFrom2(db) {
 function dropAll(db) {
   db.exec(`
     drop trigger if exists chunks_ai; drop trigger if exists chunks_ad;
+    drop table if exists chunks_vocab; drop table if exists word_embeddings;
     drop table if exists chunks_fts; drop table if exists chunks; drop table if exists embeddings; drop table if exists embeddings_v2; drop table if exists files; drop table if exists meta;
   `)
 }
@@ -587,7 +592,71 @@ function createKnowledgeIndex({ file, readOnly = false }) {
 
     // Senza modello butta tutti i vettori; con un modello solo i suoi (si toglie il modello, non gli altri).
     clearEmbeddings(model = null) {
-      return model ? db.prepare('delete from embeddings where model = ?').run(model).changes : db.prepare('delete from embeddings').run().changes
+      if (model) { db.prepare('delete from word_embeddings where model = ?').run(model); return db.prepare('delete from embeddings where model = ?').run(model).changes }
+      db.exec('delete from word_embeddings')
+      return db.prepare('delete from embeddings').run().changes
+    },
+
+    // ----- Sinonimi dai propri testi: il vocabolario (parole di 4-24 lettere, senza cifre) con il vettore di ogni parola. -----
+
+    // Parole del vocabolario senza il vettore di questo modello, le più frequenti per prime.
+    pendingWords(model, limit = 32) {
+      if (!model) return []
+      return db.prepare(`
+        select v.term as word from chunks_vocab v
+        left join word_embeddings w on w.word = v.term and w.model = ?
+        where w.word is null and length(v.term) between 4 and 24 and v.term not glob '*[0-9_]*'
+        order by v.cnt desc, v.term limit ?
+      `).all(model, Math.max(1, Math.round(limit))).map((row) => row.word)
+    },
+
+    // items: [{ word, vector: Float32Array }]
+    storeWordVectors(model, items) {
+      if (!items.length || !model) return 0
+      return transaction(() => {
+        const insert = db.prepare('insert or replace into word_embeddings(model, word, vector) values (?, ?, ?)')
+        for (const item of items) insert.run(model, item.word, new Uint8Array(item.vector.buffer, item.vector.byteOffset, item.vector.byteLength))
+        return items.length
+      })
+    },
+
+    wordCount(model) {
+      return model ? Number(db.prepare('select count(*) as n from word_embeddings where model = ?').get(model).n) : 0
+    },
+
+    // Toglie i vettori di parole che non compaiono più in nessun testo.
+    pruneWords() {
+      return db.prepare('delete from word_embeddings where word not in (select term from chunks_vocab)').run().changes
+    },
+
+    // Le parole del vocabolario più vicine a un vettore (il vettore di una parola cercata), con la somiglianza e il punteggio z rispetto a tutte le altre:
+    // → [{ word, similarity, z }] dal più vicino, al più `count`, senza le parole di `exclude`. Senza vettori di parole, [].
+    nearestWords(model, vector, { count = 6, exclude = [] } = {}) {
+      if (!model || !vector || !vector.length) return []
+      const skip = new Set(exclude)
+      const scratch = new Float32Array(vector.length)
+      const best = []
+      let n = 0
+      let mean = 0
+      let m2 = 0
+      for (const row of db.prepare('select word, vector from word_embeddings where model = ?').iterate(model)) {
+        if (row.vector.byteLength !== vector.length * 4) continue
+        new Uint8Array(scratch.buffer).set(row.vector)
+        let dot = 0
+        for (let k = 0; k < vector.length; k += 1) dot += scratch[k] * vector[k]
+        n += 1
+        const delta = dot - mean
+        mean += delta / n
+        m2 += delta * (dot - mean)
+        if (skip.has(row.word)) continue
+        if (best.length < count || dot > best[best.length - 1].similarity) {
+          best.push({ word: row.word, similarity: dot })
+          best.sort((a, b) => b.similarity - a.similarity)
+          if (best.length > count) best.pop()
+        }
+      }
+      const std = n > 1 ? Math.sqrt(m2 / (n - 1)) : 0
+      return best.map((item) => ({ word: item.word, similarity: item.similarity, z: std > 1e-9 ? (item.similarity - mean) / std : 0 }))
     },
 
     // Quanti testi distinti hanno i progetti e per quanti c'è già il vettore di questo modello.
@@ -644,4 +713,4 @@ function createKnowledgeIndex({ file, readOnly = false }) {
   }
 }
 
-module.exports = { createKnowledgeIndex, chunkMarkdown, buildMatchQuery, fuseRanked, relevantNeighbors, embeddingText, isAvailable, SCHEMA_VERSION }
+module.exports = { createKnowledgeIndex, chunkMarkdown, buildMatchQuery, fuseRanked, relevantNeighbors, embeddingText, isAvailable, STOPWORDS, SCHEMA_VERSION }

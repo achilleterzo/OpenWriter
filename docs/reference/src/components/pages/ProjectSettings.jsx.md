@@ -22,3 +22,13 @@ Saving goes through the project settings IPC and reports success or the error; i
 **Share with the other projects** (inside `SearchIndex`, shown when the index is on): a checkbox for `options.sharedKnowledge` (on by default). The assistant of the other projects (and external agents through MCP) can find passages of this one and read them read-only; what it finds can reach the AI model of those conversations, so it is turned off for reserved material. Turning the index off removes the project from every search anyway. See [shared-knowledge.cjs](../../../electron/shared-knowledge.cjs.md).
 
 **Search by meaning** (`SemanticStatus`, inside `SearchIndex`, shown when the index is on): one read-only line, no controls, because the search by meaning is decided only in Settings → Local models ([LocalModelsSettings.jsx](LocalModelsSettings.jsx.md)): the model, its download and removal, the device and the global switch. The line says "active (CPU or graphics card)" with the passages understood so far (`getSemanticStatus`), that the model is not installed (and where to download it), that it is turned off in Settings → Local models, or that the graphics card failed and the CPU is used. Every project with the index on has its own vectors; to leave a project out, turn its index off.
+
+The project name field is an input group with a decorative `@` prefix (purely aesthetic: it is not stored, a leading `@` that is typed is dropped). The name is shown in the projects list, the Home graph and the explorer header instead of the folder name.
+
+If no name has been chosen, the name field starts filled with the folder name. A name equal to the folder name is not saved (the project keeps following the folder if it is renamed or moved); any other name is saved and used in the lists, the graph, the explorer and by agents (`project_info`, and the `@alias` of the project in the searches of other projects).
+
+The "Save settings" button (on the right, after the "Saved" confirmation or any error) sits in a footer that stays at the bottom of the scrolling area (`sticky`), so it is always in view however long the settings are.
+
+Where the save button goes: inside the general settings window it is at the right of the window header ([SettingsActions.jsx](SettingsActions.jsx.md)); in the window of a single project, which has no such header, it stays in the footer of the window, outside the scrolling area (so the scrollbar stays in the body).
+
+`onSaved` is called after a successful save; whoever hosts the settings can close them (the single-project window does).

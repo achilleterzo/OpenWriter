@@ -6,8 +6,16 @@ const MAX_PROJECTS = 100
 
 /**
  * Elenco dei progetti conosciuti (cartelle di lavoro), salvato in userData/projects.json come
- * [{ path, openedAt }] dal più recente. Il nome mostrato è il nome della cartella.
+ * [{ path, openedAt }] dal più recente. Il nome mostrato è quello scelto nelle impostazioni del progetto (`name` in .ow/project.json), se c'è; altrimenti il nome della cartella.
  */
+// Il nome scelto per il progetto, o '' (nessun file, file rotto o nome vuoto).
+function customName(directory) {
+  try {
+    const name = JSON.parse(fs.readFileSync(path.join(directory, '.ow', 'project.json'), 'utf8')).name
+    return typeof name === 'string' ? name.trim() : ''
+  } catch { return '' }
+}
+
 function createProjectsStore({ filePath }) {
   const read = () => {
     try {
@@ -46,10 +54,10 @@ function createProjectsStore({ filePath }) {
 
   // `missing`: la cartella non esiste più (spostata o cancellata); resta nell'elenco finché non la si toglie.
   function list() {
-    return read().map((item) => ({ path: item.path, name: path.basename(item.path) || item.path, openedAt: item.openedAt, missing: !fs.existsSync(item.path) }))
+    return read().map((item) => ({ path: item.path, name: customName(item.path) || path.basename(item.path) || item.path, openedAt: item.openedAt, missing: !fs.existsSync(item.path) }))
   }
 
   return { touch, remove, replace, list }
 }
 
-module.exports = { createProjectsStore }
+module.exports = { createProjectsStore, customName }

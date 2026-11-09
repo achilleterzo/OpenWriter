@@ -22,3 +22,9 @@ Secure bridge between the renderer and the main process, exposed as `window.elec
 - The `ai` namespace: settings, status, provider login and code submission, model listing and accepted inputs per model (`listModelInputs`), encrypted API key presence and storage, non-streaming `chat`, `getCapabilities`, chat attachments (`pickAttachments`, `readAttachment`, `prepareImage`), and `chatStream` (per-request id, streamed `text`/`thinking`/`status`/`usage` events, and `cancel()`).
 - Events: `onEditContextMenu`, `onAppCommand`, `onDocumentCommand`, `onExternalDocument`, `onDialogAsk`.
 
+
+`takeExternalProjects` / `onExternalProject`: folders to open as a project (file manager entry, command line). `getIntegrationStatus`, `setMarkdownAssociation(on)`, `setFolderMenu(on)`, `openDefaultApps()`: system integration (see [system-integration.cjs](system-integration.cjs.md)).
+
+`openTextFile(path)` and `saveTextFile({ filePath, text, eol, bom, saveAs })`: the text reader (see [text-file.cjs](text-file.cjs.md)).
+
+Workspaces: `listWorkspaces`, `createWorkspace`, `renameWorkspace`, `setWorkspaceMembers`, `addProjectToWorkspace`, `removeProjectFromWorkspace`, `removeWorkspace`, `setActiveWorkspace`, `addTemporaryProject`, `dismissTemporaryProject`, `adoptTemporaryProject`, `onWorkspacesChanged(callback)` (see [workspaces-store.cjs](workspaces-store.cjs.md)).

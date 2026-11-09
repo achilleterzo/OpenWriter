@@ -19,12 +19,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('workspace:changed', listener)
   },
   setViewMode: (mode) => ipcRenderer.send('view:changed', mode),
+  // La Home dei progetti è aperta (il documento non si vede): il menu disattiva ciò che lo modifica o lo cerca.
+  setHomeOpen: (open) => ipcRenderer.send('home:changed', Boolean(open)),
   fonts: {
     catalog: () => ipcRenderer.invoke('fonts:catalog'),
     list: () => ipcRenderer.invoke('fonts:list'),
     install: (family) => ipcRenderer.invoke('fonts:install', family),
     remove: (family) => ipcRenderer.invoke('fonts:remove', family),
   },
+  listAllProjects: () => ipcRenderer.invoke('workspaces:all-projects'),
+  listWorkspaces: () => ipcRenderer.invoke('workspaces:list'),
+  createWorkspace: (input) => ipcRenderer.invoke('workspaces:create', input),
+  renameWorkspace: (id, name) => ipcRenderer.invoke('workspaces:rename', id, name),
+  setWorkspaceMembers: (id, projects) => ipcRenderer.invoke('workspaces:set-members', id, projects),
+  addProjectToWorkspace: (id, project) => ipcRenderer.invoke('workspaces:add-project', id, project),
+  removeProjectFromWorkspace: (id, project) => ipcRenderer.invoke('workspaces:remove-project', id, project),
+  removeWorkspace: (id) => ipcRenderer.invoke('workspaces:remove', id),
+  setActiveWorkspace: (id) => ipcRenderer.invoke('workspaces:set-active', id),
+  addTemporaryProject: (project) => ipcRenderer.invoke('workspaces:add-temporary', project),
+  dismissTemporaryProject: (project) => ipcRenderer.invoke('workspaces:dismiss-temporary', project),
+  adoptTemporaryProject: (project) => ipcRenderer.invoke('workspaces:adopt-temporary', project),
+  onWorkspacesChanged: (callback) => {
+    const listener = () => callback()
+    ipcRenderer.on('workspaces:changed', listener)
+    return () => ipcRenderer.removeListener('workspaces:changed', listener)
+  },
+  openTextFile: (filePath) => ipcRenderer.invoke('text:open', filePath),
+  saveTextFile: (payload) => ipcRenderer.invoke('text:save', payload),
   openDocument: () => ipcRenderer.invoke('document:open'),
   openDocumentPath: (filePath, options) => ipcRenderer.invoke('document:open-path', filePath, options),
   reopenDocument: (filePath) => ipcRenderer.invoke('document:reopen', filePath),
@@ -176,9 +197,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   copyProjectContext: (request) => ipcRenderer.invoke('projects:copy-context', request),
   getMainProject: () => ipcRenderer.invoke('workspace:get-main'),
   listProjects: () => ipcRenderer.invoke('workspace:list-projects'),
-  getProjectGraph: () => ipcRenderer.invoke('projects:graph'),
+  getProjectGraph: (options) => ipcRenderer.invoke('projects:graph', options),
   searchProjects: (args) => ipcRenderer.invoke('projects:search', args),
-  openProject: (directory) => ipcRenderer.invoke('workspace:open-project', directory),
+  openProject: (directory, options) => ipcRenderer.invoke('workspace:open-project', directory, options),
   createProject: (name) => ipcRenderer.invoke('workspace:create-project', name),
   removeProject: (directory) => ipcRenderer.invoke('workspace:remove-project', directory),
   chooseProject: () => ipcRenderer.invoke('workspace:choose-project'),
@@ -236,6 +257,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // Documenti aperti dal sistema: quelli arrivati prima che il renderer fosse pronto, poi quelli successivi.
   takeExternalDocuments: () => ipcRenderer.invoke('document:take-external'),
+  // Cartelle da aprire come progetto (voce del file manager, riga di comando).
+  takeExternalProjects: () => ipcRenderer.invoke('project:take-external'),
+  onExternalProject: (callback) => {
+    const listener = (_event, directory) => callback(directory)
+    ipcRenderer.on('project:external', listener)
+    return () => ipcRenderer.removeListener('project:external', listener)
+  },
+  // Integrazione con il sistema: stato per piattaforma e attivazione (vedi system-integration.cjs).
+  getIntegrationStatus: () => ipcRenderer.invoke('integration:status'),
+  setMarkdownAssociation: (on) => ipcRenderer.invoke('integration:set-markdown', Boolean(on)),
+  setFolderMenu: (on) => ipcRenderer.invoke('integration:set-folder-menu', Boolean(on)),
+  openDefaultApps: () => ipcRenderer.invoke('integration:open-default-apps'),
   // Errori e avvisi del processo principale, da mostrare come notifiche: { level, message, detail }.
   onAppNotice: (callback) => {
     const listener = (_event, notice) => callback(notice)

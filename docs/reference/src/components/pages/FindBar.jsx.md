@@ -11,3 +11,4 @@ Find and replace bar, drawn over the document in the top right corner (it fits i
 - In replace mode: the replacement field, "Replace" for the current match (Enter, then it moves to the next one) and "All", which replaces every match as a single undoable operation.
 
 Closing the bar clears the query, so the highlights disappear.
+The look of the bar moved to [FindPanel.jsx](FindPanel.jsx.md), shared with the text reader ([TextFindBar.jsx](TextFindBar.jsx.md)); `FindBar` keeps the state and the search in the editor.

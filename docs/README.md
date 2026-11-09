@@ -4,6 +4,14 @@ OpenWriter is a desktop Markdown editor with an integrated AI writing assistant.
 
 Documented source files have reference pages under [`docs/reference/`](reference/). The Project Structure section lists the documentation pages in their real directory hierarchy and links each page to the physical source file it documents.
 
+## Feature guides
+
+What each area does, written for the user and moved out of the root [README](../README.md) to keep it short: [Documents and the editor](guide/documents-and-editor.md), [The assistant](guide/assistant.md), [External agents (MCP)](guide/external-agents.md), [Projects and data](guide/projects.md), [Projects Home](guide/projects-home.md), [Workspaces](guide/workspaces.md), [Knowledge: search, sharing, saved pages](guide/knowledge.md), [The application and the system](guide/system.md), [Privacy](guide/privacy.md).
+
+## Design notes
+
+Designs agreed before they are built: [Workspaces](design/workspaces.md) (a filter that limits the project list, the Home and the knowledge reachable by the assistant and the agents).
+
 ## Technology Stack
 
 The project is built with Electron, React, Vite, Tailwind CSS, and Tiptap.
@@ -173,6 +181,9 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [shared-knowledge.cjs.md](reference/electron/shared-knowledge.cjs.md) ([shared-knowledge.cjs](../electron/shared-knowledge.cjs)) — Which other projects the relevance search also covers
   - [project-graph.cjs.md](reference/electron/project-graph.cjs.md) ([project-graph.cjs](../electron/project-graph.cjs)) — Which projects of the Home network are connected (affinity by meaning)
   - [search-merge.cjs.md](reference/electron/search-merge.cjs.md) ([search-merge.cjs](../electron/search-merge.cjs)) — Merges the searches of a question and its synonyms
+  - [workspaces-store.cjs.md](reference/electron/workspaces-store.cjs.md) ([workspaces-store.cjs](../electron/workspaces-store.cjs)) — Workspaces: a named set of projects that filters the list, the Home and the knowledge the assistant and agents reach
+  - [text-file.cjs.md](reference/electron/text-file.cjs.md) ([text-file.cjs](../electron/text-file.cjs)) — Reads and saves any text file faithfully (line endings, signature, size limit) for the text reader
+  - [system-integration.cjs.md](reference/electron/system-integration.cjs.md) ([system-integration.cjs](../electron/system-integration.cjs)) — Markdown file association and folder entry of the file manager, per platform
   - [private-address.mjs.md](reference/electron/private-address.mjs.md) ([private-address.mjs](../electron/private-address.mjs)) — Network addresses the agents' browser may not reach (local, private, service)
   - [gpu-context.cjs.md](reference/electron/gpu-context.cjs.md) ([gpu-context.cjs](../electron/gpu-context.cjs)) — Hidden WebGPU window that computes vectors on the graphics card
   - [semantic-pack.cjs.md](reference/electron/semantic-pack.cjs.md) ([semantic-pack.cjs](../electron/semantic-pack.cjs)) — Downloadable model and runtime for the search by meaning
@@ -244,6 +255,13 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [pendingChangesExtension.js.md](reference/src/lib/pendingChangesExtension.js.md) ([pendingChangesExtension.js](../src/lib/pendingChangesExtension.js)) — Assistant edits marked for review
     - [preferences.js.md](reference/src/lib/preferences.js.md) ([preferences.js](../src/lib/preferences.js)) — Interface preferences in the app data
     - [projectIcons.js.md](reference/src/lib/projectIcons.js.md) ([projectIcons.js](../src/lib/projectIcons.js)) — Project icons: reading, caching, choosing
+    - [animatedIcon.js.md](reference/src/lib/animatedIcon.js.md) ([animatedIcon.js](../src/lib/animatedIcon.js)) — Decodes animated GIF/WebP icons of the Home graph and picks the frame by time
+    - [snippetMarkdown.js.md](reference/src/lib/snippetMarkdown.js.md) ([snippetMarkdown.js](../src/lib/snippetMarkdown.js)) — Reads the Markdown of a search excerpt into styled pieces, keeping the found words highlighted
+    - [textSearch.js.md](reference/src/lib/textSearch.js.md) ([textSearch.js](../src/lib/textSearch.js)) — Search and replace in a plain text (text reader)
+    - [chatResume.js.md](reference/src/lib/chatResume.js.md) ([chatResume.js](../src/lib/chatResume.js)) — Resumes an interrupted assistant turn from its last saved step
+    - [graphLayoutStore.js.md](reference/src/lib/graphLayoutStore.js.md) ([graphLayoutStore.js](../src/lib/graphLayoutStore.js)) — Remembers the positions of the projects in the Home network between launches
+    - [graphProjection.js.md](reference/src/lib/graphProjection.js.md) ([graphProjection.js](../src/lib/graphProjection.js)) — Perspective projection of the project network, so it can be turned in space (yaw and pitch)
+    - [svgIcon.js.md](reference/src/lib/svgIcon.js.md) ([svgIcon.js](../src/lib/svgIcon.js)) — Gives SVG project icons an explicit size so the graph frames them like the list
     - [graphLayout.js.md](reference/src/lib/graphLayout.js.md) ([graphLayout.js](../src/lib/graphLayout.js)) — Physics of the Home network of projects
     - [graphRenderer.js.md](reference/src/lib/graphRenderer.js.md) ([graphRenderer.js](../src/lib/graphRenderer.js)) — WebGL2 drawing of the Home network
     - [queryExpansion.js.md](reference/src/lib/queryExpansion.js.md) ([queryExpansion.js](../src/lib/queryExpansion.js)) — Synonyms of a search asked to the language model

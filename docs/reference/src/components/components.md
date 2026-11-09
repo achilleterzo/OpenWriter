@@ -21,6 +21,11 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [FontPicker.jsx](pages/FontPicker.jsx.md) — Editor font choice and Google Fonts catalog
 - [GeneralSettings.jsx](pages/GeneralSettings.jsx.md) — General settings: language, project folder, spell check
 - [HistoryPanel.jsx](pages/HistoryPanel.jsx.md) — Document history: versions, labels, diff, restore
+- [WorkspaceSelector.jsx](pages/WorkspaceSelector.jsx.md) — Selector of the active workspace
+- [WorkspaceDialog.jsx](pages/WorkspaceDialog.jsx.md) — Creates or edits a workspace, with a switch for each project
+- [TextPane.jsx](pages/TextPane.jsx.md) — Text reader: edits any text file, with line numbers, find and replace
+- [TextFindBar.jsx](pages/TextFindBar.jsx.md) — Find and replace of the text reader
+- [FindPanel.jsx](pages/FindPanel.jsx.md) — Shared look of the find and replace bar
 - [ImagePane.jsx](pages/ImagePane.jsx.md) — Zoomable read-only tab for a project image
 - [InfoPanel.jsx](pages/InfoPanel.jsx.md) — Document info: last save, word and character counts, reading time, structure
 - [InlineMarkdown.jsx](pages/InlineMarkdown.jsx.md) — Inline Markdown drawn with its styles, for note quotations and proposals
@@ -33,6 +38,8 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [PanelResizer.jsx](pages/PanelResizer.jsx.md) — Draggable separator between panels
 - [ParameterSlider.jsx](pages/ParameterSlider.jsx.md) — Numeric model parameter slider with default state and info tips
 - [ProjectIcon.jsx](pages/ProjectIcon.jsx.md) — Project icon image and round avatar
+- [AssociationSettings.jsx](pages/AssociationSettings.jsx.md) — Settings section to associate Markdown files and add the folder entry of the file manager
+- [FirstRunModelsDialog.jsx](pages/FirstRunModelsDialog.jsx.md) — First-run window to choose and download the local model
 - [ProjectSettings.jsx](pages/ProjectSettings.jsx.md) — Project settings: name, icon, context, languages, skills
 - [ProjectSettingsDialog.jsx](pages/ProjectSettingsDialog.jsx.md) — Window holding the settings of a project
 - [ProjectsPanel.jsx](pages/ProjectsPanel.jsx.md) — Projects view with avatars and context menu
@@ -42,10 +49,12 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [QuickActionsSettings.jsx](pages/QuickActionsSettings.jsx.md) — Settings section for the chat quick actions
 - [Segmented.jsx](pages/Segmented.jsx.md) — Group of buttons for a single choice
 - [SelectionToolbar.jsx](pages/SelectionToolbar.jsx.md) — Floating bar of the selection: marks, links, images
+- [SettingsActions.jsx](pages/SettingsActions.jsx.md) — Actions of a settings section shown at the right of the settings header
 - [SettingsScreen.jsx](pages/SettingsScreen.jsx.md) — Settings window with its sections
 - [SkillsManager.jsx](pages/SkillsManager.jsx.md) — Writing skills manager: library, editor, generation
 - [SourceEditor.jsx](pages/SourceEditor.jsx.md) — Markdown source view with line numbers
 - [SpellcheckLanguages.jsx](pages/SpellcheckLanguages.jsx.md) — Spell-check language selection
+- [Switch.jsx](pages/Switch.jsx.md) — On/off switch used instead of check boxes
 - [TabBar.jsx](pages/TabBar.jsx.md) — Document, browser and image tabs
 - [ToolbarButton.jsx](pages/ToolbarButton.jsx.md) — Toolbar button, divider and group
 - [ToolbarMenu.jsx](pages/ToolbarMenu.jsx.md) — Toolbar button opening a menu of choices

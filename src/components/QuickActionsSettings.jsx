@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, Pencil, Plus, RotateCcw, X } from 'lucide-react
 import { useDialogs } from './Dialogs.jsx'
 import { MAX_CUSTOM_QUICK_ACTIONS, MAX_PROJECT_QUICK_ACTIONS, newProjectActionId, MAX_QUICK_LABEL, MAX_QUICK_PROMPT, defaultTextOf, newCustomId, quickActionsOf, resolveQuickActions, toEntry } from '../lib/quickActions.js'
 import { t } from '../i18n/index.js'
+import Switch from './Switch.jsx'
 
 const electronAPI = window.electronAPI
 const ai = electronAPI?.ai
@@ -197,7 +198,7 @@ function ProjectQuickActions({ project }) {
     <section className="grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
       <p className="max-w-xl text-sm leading-6 text-slate-400">{t('Actions that appear only in this project, in the chat before the general ones: for example to extract documentation from the source code, or to check a document against the code. They are saved in the project (.ow/project.json).')}</p>
       <label className="flex items-start gap-2 text-sm text-slate-300">
-        <input type="checkbox" className="mt-1 accent-accent-500" checked={state.general} onChange={(event) => save({ ...state, general: event.target.checked })} />
+        <Switch checked={state.general} onChange={(value) => save({ ...state, general: value })} />
         <span>{t('Also show the general actions')}<span className="block text-xs text-slate-500">{t('Turn off to show only the actions of this project.')}</span></span>
       </label>
 

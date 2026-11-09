@@ -9,6 +9,7 @@ import claudeCodeLogo from '../assets/provider-logos/claude-code.svg'
 import geminiLogo from '../assets/provider-logos/gemini.svg'
 import { t } from '../i18n/index.js'
 import ModelPicker from './ModelPicker.jsx'
+import Switch from './Switch.jsx'
 
 const ai = window.electronAPI?.ai
 
@@ -357,22 +358,10 @@ export default function AiProviderSettings() {
             <legend className="px-1 text-sm text-slate-300">{t('Assistant tools')}</legend>
             {toolOptions.map(({ key, label, help }) => (
               <label key={key} className="flex items-start gap-3 text-sm text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={Boolean(settings.tools?.[key])}
-                  className="mt-1 accent-accent-500"
-                  onChange={(event) => persist({ ...settings, tools: { ...settings.tools, [key]: event.target.checked } })}
-                />
+                <Switch checked={Boolean(settings.tools?.[key])} onChange={(value) => persist({ ...settings, tools: { ...settings.tools, [key]: value } })} />
                 <span>{label}<span className="block text-xs text-slate-500">{help}</span></span>
               </label>
             ))}
-            <label className="flex items-start justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
-              <span>{t('Maximum steps with the tools')}<span className="block text-xs text-slate-500">{t('How many tool calls the assistant can chain for each request. At the limit it asks whether to continue.')}</span>
-              </span>
-              <select className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-100 outline-none focus:border-accent-400" value={settings.maxToolSteps} onChange={(event) => persist({ ...settings, maxToolSteps: Number(event.target.value) })}>
-                {[...new Set([5, 8, 10, 15, 20, 30, 50, settings.maxToolSteps])].sort((left, right) => left - right).map((value) => <option key={value} value={value}>{value}</option>)}
-              </select>
-            </label>
             <label className="flex items-start justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
               <span>{t('Reasoning with the tools')}<span className="block text-xs text-slate-500">{t('After the result of a tool the plan is already made: reasoning less makes the work faster. The level set above applies to the first step of each request.')}</span>
               </span>
@@ -382,9 +371,16 @@ export default function AiProviderSettings() {
                 <option value="same">{t('Same as set')}</option>
               </select>
             </label>
+            <label className="flex items-start justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
+              <span>{t('Maximum steps with the tools')}<span className="block text-xs text-slate-500">{t('How many tool calls the assistant can chain for each request. At the limit it asks whether to continue.')}</span>
+              </span>
+              <select className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-100 outline-none focus:border-accent-400" value={settings.maxToolSteps} onChange={(event) => persist({ ...settings, maxToolSteps: Number(event.target.value) })}>
+                {[...new Set([5, 8, 10, 15, 20, 30, 50, settings.maxToolSteps])].sort((left, right) => left - right).map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
             <div className="grid gap-2 border-t border-slate-800 pt-3 text-sm text-slate-300">
               <label className="flex items-start gap-2">
-                <input type="checkbox" className="mt-1 accent-accent-500" checked={Boolean(settings.autoContinue)} onChange={(event) => persist({ ...settings, autoContinue: event.target.checked })} />
+                <Switch checked={Boolean(settings.autoContinue)} onChange={(value) => persist({ ...settings, autoContinue: value })} />
                 <span>{t('Continue automatically after a countdown')}<span className="block text-xs text-slate-500">{t('When the step limit is reached, the assistant continues by itself after the countdown, so unattended work does not stay waiting for you. Click the question to stop the countdown.')}</span></span>
               </label>
               {settings.autoContinue && (
@@ -405,8 +401,8 @@ export default function AiProviderSettings() {
           <fieldset className="grid gap-3 rounded-lg border border-slate-800 p-4">
             <legend className="px-1 text-sm font-medium text-slate-200">{t('Research assistant')}</legend>
             <label className="flex items-start gap-2 text-sm text-slate-300">
-              <input type="checkbox" className="mt-1 accent-accent-500" checked={researcher.enabled} onChange={(event) => updateResearcher({ enabled: event.target.checked })} />
-              <span>{t('Let the assistant delegate explorations to a second model')}<span className="block text-xs text-slate-500">{t('The research assistant searches and reads the project files on its own (it never changes anything) and returns a short report: the exploration stays out of the conversation, which keeps it small and fast. A model that is good with tools is enough.')}</span></span>
+              <Switch checked={researcher.enabled} onChange={(value) => updateResearcher({ enabled: value })} />
+              <span>{t('Delegate the research to another dedicated assistant')}</span>
             </label>
             {researcher.enabled && (
               <>

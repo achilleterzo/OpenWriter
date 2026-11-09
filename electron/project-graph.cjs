@@ -96,4 +96,21 @@ async function collectVectors({ nodes, model, cache, key, centroids, status }) {
   return { vectors, pending }
 }
 
-module.exports = { cosine, affinityEdges, uniformEdges, collectVectors }
+// Il padre di ogni progetto dell'elenco: il progetto più interno la cui cartella ne contiene un'altra (un sotto-progetto), altrimenti null. I progetti mancanti non contano.
+// → Map percorso → percorso del padre | null. `isSameOrInside(radice, destinazione)` e `samePath` vengono da path-compare.cjs.
+function parentProjects(projects, { isSameOrInside, samePath }) {
+  const parents = new Map()
+  for (const node of projects) {
+    let parent = null
+    if (!node.missing) {
+      for (const other of projects) {
+        if (other === node || other.missing || samePath(other.path, node.path) || !isSameOrInside(other.path, node.path)) continue
+        if (!parent || isSameOrInside(parent.path, other.path)) parent = other
+      }
+    }
+    parents.set(node.path, parent ? parent.path : null)
+  }
+  return parents
+}
+
+module.exports = { cosine, affinityEdges, uniformEdges, collectVectors, parentProjects }
