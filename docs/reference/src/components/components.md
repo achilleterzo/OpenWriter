@@ -54,6 +54,7 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [SkillsManager.jsx](pages/SkillsManager.jsx.md) — Writing skills manager: library, editor, generation
 - [SourceEditor.jsx](pages/SourceEditor.jsx.md) — Markdown source view with line numbers
 - [SpellcheckLanguages.jsx](pages/SpellcheckLanguages.jsx.md) — Spell-check language selection
+- [Switch.jsx](pages/Switch.jsx.md) — On/off switch used instead of check boxes
 - [TabBar.jsx](pages/TabBar.jsx.md) — Document, browser and image tabs
 - [ToolbarButton.jsx](pages/ToolbarButton.jsx.md) — Toolbar button, divider and group
 - [ToolbarMenu.jsx](pages/ToolbarMenu.jsx.md) — Toolbar button opening a menu of choices
