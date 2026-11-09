@@ -76,6 +76,7 @@ function writeTextFile(filePath, text, options) {
   let mode
   try { mode = fs.statSync(filePath).mode & 0o777 } catch { /* file nuovo */ }
   writeFileAtomic(filePath, encodeText(text, options), mode === undefined ? undefined : { mode })
+  if (mode !== undefined) fs.chmodSync(filePath, mode)
 }
 
 module.exports = { TEXT_LIMIT, BINARY_EXTENSIONS, isBinaryName, decodeText, encodeText, readTextFile, writeTextFile }
