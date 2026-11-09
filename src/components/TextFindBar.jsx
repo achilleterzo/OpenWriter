@@ -42,7 +42,7 @@ export default function TextFindBar({ text, onText, onMarks, onReveal, replaceMo
   }
 
   // La corrente appena trovata (digitando) si porta in vista: così si vede subito dove sta.
-  useEffect(() => { if (count) onReveal(matches[index].from) }, [query, options]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (count) onReveal(matches[index].from) }, [matches, index]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const replaceCurrent = () => {
     if (!count) return
