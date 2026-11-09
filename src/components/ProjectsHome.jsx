@@ -310,7 +310,7 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
           <input
             ref={input}
             value={query}
-            placeholder={t('Search all your projects by meaning…')}
+            placeholder={t('Search projects…')}
             aria-label={t('Search all your projects')}
             className="min-w-0 flex-1 bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
             onChange={(event) => setQuery(event.target.value)}
