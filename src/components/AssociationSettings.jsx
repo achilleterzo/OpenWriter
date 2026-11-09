@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FileSymlink, FolderOpen } from 'lucide-react'
 import { t } from '../i18n/index.js'
+import Switch from './Switch.jsx'
 
 const electronAPI = window.electronAPI
 
@@ -93,7 +94,7 @@ export default function AssociationSettings() {
         {folder && !folder.supported && <span className="max-w-xl text-xs text-amber-400">{folder.reason === 'mac-manual' ? t('Not available on macOS: the system does not let an app add an entry to the Finder menu.') : reasonText(folder.reason)}</span>}
         {folder?.supported && (
           <label className="flex items-start gap-3 text-sm text-slate-300">
-            <input type="checkbox" disabled={busy} checked={folder.enabled} className="mt-1 accent-accent-500" onChange={(event) => change(() => electronAPI.setFolderMenu(event.target.checked))} />
+            <Switch checked={folder.enabled} onChange={(value) => change(() => electronAPI.setFolderMenu(value))} disabled={busy} />
             <span>{folderLabel}</span>
           </label>
         )}

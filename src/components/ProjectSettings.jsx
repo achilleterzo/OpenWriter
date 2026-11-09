@@ -12,6 +12,7 @@ import { formatNumber } from '../i18n/index.js'
 import { samePath } from '../lib/pathCompare.js'
 import { SettingsHeaderActions } from './SettingsActions.jsx'
 import { t } from '../i18n/index.js'
+import Switch from './Switch.jsx'
 
 const electronAPI = window.electronAPI
 const languages = ['Italiano', 'English', 'Español', 'Français', 'Deutsch', 'Português']
@@ -171,7 +172,7 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
 
       {info.parent && (
         <label className="flex items-start gap-3 text-sm text-slate-300">
-          <input type="checkbox" checked={Boolean(form.inherit)} className="mt-1 accent-accent-500" onChange={(event) => update({ inherit: event.target.checked })} />
+          <Switch checked={Boolean(form.inherit)} onChange={(value) => update({ inherit: value })} />
           <span>{t('Inherit the context of the parent project “{name}”', { name: info.parent.name })}
             <span className="mt-1 block text-xs text-slate-500">{t('The assistant also receives the parent project\'s instructions, followed by this project\'s, which take precedence. When this project is worked on from the parent, it always inherits unless you turn this off.')}</span>
           </span>
@@ -227,7 +228,7 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
       </div>
 
       <label className="flex items-start gap-3 text-sm text-slate-300">
-        <input type="checkbox" checked={form.autoVersions} className="mt-1 accent-accent-500" onChange={(event) => update({ autoVersions: event.target.checked })} />
+        <Switch checked={form.autoVersions} onChange={(value) => update({ autoVersions: value })} />
         <span>{t('Save a version on every save')}<span className="block text-xs text-slate-500">{t('If the text changed. At most 100 versions are kept per document; the oldest automatic ones are discarded first.')}</span>
         </span>
       </label>
@@ -294,14 +295,14 @@ function SearchIndex({ directory, enabled, saved, onToggle, shared, savedShared,
   return (
     <div className="grid gap-2 rounded-lg border border-slate-800 p-3 text-sm text-slate-300">
       <label className="flex items-start gap-3">
-        <input type="checkbox" checked={enabled} className="mt-1 accent-accent-500" onChange={(event) => onToggle(event.target.checked)} />
+        <Switch checked={enabled} onChange={(value) => onToggle(value)} />
         <span>{t('Search index for the assistant')}<span className="block text-xs text-slate-500">{t('Lets the assistant and agents search the documents. It is a copy of the files, rebuilt whenever needed.')}</span>
         </span>
       </label>
       {summary && <span className="text-xs text-slate-400">{summary}</span>}
       {enabled && (
         <label className="flex items-start gap-3 border-t border-slate-800 pt-2">
-          <input type="checkbox" checked={shared} className="mt-1 accent-accent-500" onChange={(event) => onToggleShared(event.target.checked)} />
+          <Switch checked={shared} onChange={(value) => onToggleShared(value)} />
           <span>{t('Share with the other projects')}<span className="block text-xs text-slate-500">{t('Shares the information of this project globally. Exclude it from sharing for relevance or confidentiality.')}</span>
           </span>
         </label>
@@ -401,8 +402,8 @@ function ShareSetup({ target, onImported }) {
             <label className="flex items-center gap-1.5"><input type="radio" name="setup-mode" className="accent-accent-500" checked={mode === 'replace'} onChange={() => setMode('replace')} /> {t('Replace the current context')}</label>
             <label className="flex items-center gap-1.5"><input type="radio" name="setup-mode" className="accent-accent-500" checked={mode === 'append'} onChange={() => setMode('append')} /> {t('Add after the current context')}</label>
           </div>
-          <label className="flex items-center gap-1.5 text-xs text-slate-400"><input type="checkbox" className="accent-accent-500" checked={applySettings} onChange={(event) => setApplySettings(event.target.checked)} /> {t('Also apply the settings (languages, spell checker, editor font, default skills)')}</label>
-          <label className="flex items-center gap-1.5 text-xs text-slate-400"><input type="checkbox" className="accent-accent-500" checked={overwrite} onChange={(event) => setOverwrite(event.target.checked)} /> {t('Replace instruction files and skills that already exist')}</label>
+          <label className="flex items-center gap-1.5 text-xs text-slate-400"><Switch checked={applySettings} onChange={(value) => setApplySettings(value)} className="!mt-0" /> {t('Also apply the settings (languages, spell checker, editor font, default skills)')}</label>
+          <label className="flex items-center gap-1.5 text-xs text-slate-400"><Switch checked={overwrite} onChange={(value) => setOverwrite(value)} className="!mt-0" /> {t('Replace instruction files and skills that already exist')}</label>
           <div className="flex items-center gap-3">
             <button type="button" disabled={busy} className="rounded-md bg-accent-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-accent-500 disabled:opacity-50" onClick={applySetup}>{t('Import')}</button>
             <button type="button" disabled={busy} className="rounded-md px-3 py-1.5 text-xs text-slate-400 transition hover:bg-slate-800 hover:text-slate-50" onClick={() => setPending(null)}>{t('Cancel')}</button>

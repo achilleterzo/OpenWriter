@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Cpu, Download, MonitorCog, Trash2 } from 'lucide-react'
 import { formatNumber, t } from '../i18n/index.js'
+import Switch from './Switch.jsx'
 
 const electronAPI = window.electronAPI
 const megabytes = (bytes) => formatNumber(Math.round((bytes || 0) / 1e6))
@@ -97,7 +98,7 @@ export function SemanticModelPicker() {
     <>
         {error && <span className="text-xs text-rose-400">{error}</span>}
         <label className="flex items-start gap-3 text-sm text-slate-300">
-          <input type="checkbox" checked={status?.allowed !== false} className="mt-1 accent-accent-500" onChange={(event) => run(() => electronAPI.setSemanticEnabled(event.target.checked))} />
+          <Switch checked={status?.allowed !== false} onChange={(value) => run(() => electronAPI.setSemanticEnabled(value))} />
           <span>{t('Use this model')}<span className="block text-xs text-slate-500">{t('If turned off, no project uses it.')}</span></span>
         </label>
         <div role="radiogroup" aria-label={t('Calculate with')} className="grid gap-2">

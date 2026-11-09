@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { t } from '../i18n/index.js'
 import { getPreference, setPreference } from '../lib/preferences.js'
+import Switch from './Switch.jsx'
 
 const electronAPI = window.electronAPI
 
@@ -98,11 +99,11 @@ function HttpServer() {
       <h2 className="text-lg font-semibold">{t('HTTP server')}</h2>
       <p className="max-w-2xl text-sm leading-6 text-slate-400">{t('For agents that cannot start a program. The server listens only on this computer (127.0.0.1) and every request needs the token below. It works while OpenWriter is running.')}</p>
       <label className="flex items-start gap-2 text-sm text-slate-300">
-        <input type="checkbox" className="mt-1" disabled={busy || !status} checked={Boolean(status?.running)} onChange={(event) => apply({ enabled: event.target.checked })} />
+        <Switch checked={Boolean(status?.running)} onChange={(value) => apply({ enabled: value })} disabled={busy || !status} />
         <span>{t('Turn on the HTTP server')}</span>
       </label>
       <label className="flex items-start gap-2 text-sm text-slate-300">
-        <input type="checkbox" className="mt-1" checked={readOnly} onChange={(event) => changeReadOnly(event.target.checked)} />
+        <Switch checked={readOnly} onChange={(value) => changeReadOnly(value)} />
         <span>{t('Read-only: the agent cannot add notes, suggestions or bookmarks')}</span>
       </label>
       {status?.error && <p className="text-sm text-red-400">{status.error}</p>}
@@ -171,7 +172,7 @@ export default function McpSettings({ project }) {
       <section className="grid grid-cols-1 gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
         <h2 className="text-lg font-semibold">{t('Agent edits')}</h2>
         <label className="flex items-start gap-2 text-sm text-slate-300">
-          <input type="checkbox" className="mt-1" checked={allowEdits} onChange={(event) => changeAllowEdits(event.target.checked)} />
+          <Switch checked={allowEdits} onChange={(value) => changeAllowEdits(value)} />
           <span>{t('Let agents change the documents open in OpenWriter (the changes stay marked for you to accept or reject)')}</span>
         </label>
       </section>
@@ -179,12 +180,12 @@ export default function McpSettings({ project }) {
       <section className="grid grid-cols-1 gap-3 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
         <h2 className="text-lg font-semibold">{t('Add the server to your client')}</h2>
         <label className="flex items-start gap-2 text-sm text-slate-300">
-          <input type="checkbox" className="mt-1" checked={readOnly} onChange={(event) => setReadOnly(event.target.checked)} />
+          <Switch checked={readOnly} onChange={(value) => setReadOnly(value)} />
           <span>{t('Read-only: the agent cannot add notes, suggestions or bookmarks')}</span>
         </label>
         {project && (
           <label className="flex items-start gap-2 text-sm text-slate-300">
-            <input type="checkbox" className="mt-1" checked={pinProject} onChange={(event) => setPinProject(event.target.checked)} />
+            <Switch checked={pinProject} onChange={(value) => setPinProject(value)} />
             <span>{t('Always use this project, whatever the folder the agent starts in')}<span className="block break-all text-xs text-slate-500">{project}</span></span>
           </label>
         )}
