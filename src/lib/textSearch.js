@@ -44,9 +44,11 @@ function expand(replacement, match, text) {
     if (key === '&') return list[0]
     if (key === '`') return text.slice(0, match.from)
     if (key === "'") return text.slice(match.to)
-    if (key[0] === '<') return named[key.slice(1, -1)] ?? ''
+    if (key[0] === '<') return Object.keys(named).length ? (named[key.slice(1, -1)] ?? '') : token
     const index = Number(key)
-    return index >= 1 && index < list.length ? (list[index] ?? '') : token
+    if (index >= 1 && index < list.length) return list[index] ?? ''
+    const first = Number(key[0])
+    return key.length === 2 && first >= 1 && first < list.length ? `${list[first] ?? ''}${key[1]}` : token
   })
 }
 
