@@ -143,7 +143,7 @@ async function restoreTabs(session) {
   for (const saved of [...(Array.isArray(session?.browser) ? session.browser : [])].sort((left, right) => left.index - right.index)) {
     if (typeof saved?.id !== 'string') continue
     const url = /^https?:\/\//i.test(saved.url) ? saved.url : ''
-    result.splice(Math.min(Math.max(Number(saved.index) || 0, 0), result.length), 0, { ...createBrowserTab(), id: saved.id, title: String(saved.title || t('Browser')), initialUrl: url })
+    result.splice(Math.min(Math.max(Number(saved.index) || 0, 0), result.length), 0, { ...createBrowserTab(), id: saved.id, title: String(saved.title || t('Browser')), initialUrl: url, ...(saved.pinned ? { pinned: true } : {}) })
   }
   // Le schede del lettore testuale: rilette dal file, o con la bozza non salvata che avevano.
   for (const saved of [...(Array.isArray(session?.texts) ? session.texts : [])].sort((left, right) => left.index - right.index)) {
@@ -288,7 +288,7 @@ export default function App() {
       conversationId: latest.current.conversationId,
       chatContext: { includeActive: latest.current.contextPins.includeActive, pinnedIds: latest.current.contextPins.pinnedIds.filter((id) => currentTabs.some((tab) => tab.id === id)) },
       // Schede del browser: indirizzo attuale e posizione tra le schede. Si riaprono alla pagina dov'erano (non la cronologia di navigazione).
-      browser: currentTabs.map((tab, index) => ({ tab, index })).filter(({ tab }) => tab.kind === 'browser').map(({ tab, index }) => ({ id: tab.id, title: tab.title, url: browserControllers.current.get(tab.id)?.info().url || tab.initialUrl || '', index })),
+      browser: currentTabs.map((tab, index) => ({ tab, index })).filter(({ tab }) => tab.kind === 'browser').map(({ tab, index }) => ({ id: tab.id, title: tab.title, url: browserControllers.current.get(tab.id)?.info().url || tab.initialUrl || '', index, ...(tab.pinned ? { pinned: true } : {}) })),
       activeBrowserId: currentTabs.some((tab) => tab.id === currentActive && tab.kind === 'browser') ? currentActive : null,
       // Schede del lettore testuale: il file, la posizione tra le schede e, se ci sono modifiche non salvate, il testo (bozza).
       texts: currentTabs.map((tab, index) => ({ tab, index })).filter(({ tab }) => tab.kind === 'text').map(({ tab, index }) => ({
@@ -1331,6 +1331,13 @@ export default function App() {
     setChatRequest({ id: Date.now(), passage, newChat })
   }, [])
 
+  // "Riquadro" del browser: la parte di pagina tracciata dall'utente diventa un'immagine allegata alla chat dell'assistente (si apre se è chiusa), senza inviare nulla.
+  const sendRegionToChat = useCallback((shot) => {
+    setAssistantOpen(true)
+    setChatRequest({ id: Date.now(), image: shot })
+    setStatus(t('Region attached to the assistant chat'))
+  }, [])
+
   useDocumentFileCommands({ activeTab, getEditor, workspace, onStatusChange: setStatus })
 
   const openFileRef = useRef(null)
@@ -1619,7 +1626,7 @@ export default function App() {
               : tab.kind === 'text'
               ? <TextPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} findRequest={findRequest} lineNumbers={textLineNumbers} onToggleLineNumbers={toggleTextLineNumbers} onRegister={registerTextBuffer} onDirty={workspace.markDirty} onClean={workspace.markClean} onSave={async () => { if (await workspace.saveText(tab.id)) setStatus(t('Saved')) }} onInteract={workspace.promoteTab} onStatus={setStatus} />
               : tab.kind === 'browser'
-              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} webRefsVersion={webRefsVersion} onWebRefsChanged={() => setWebRefsVersion((value) => value + 1)} />
+              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onRegion={sendRegionToChat} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} webRefsVersion={webRefsVersion} onWebRefsChanged={() => setWebRefsVersion((value) => value + 1)} />
               : (mountedTabs.current.has(tab.id) || tab.dirty || tab.pending)
               ? <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onOpenFull={() => workspace.openFull(tab.id)} onExtractImages={() => workspace.extractImages(tab.sourcePath)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />
               : null))}

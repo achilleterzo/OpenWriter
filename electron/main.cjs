@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, nativeImage, net, protocol, safeStorage, screen, session, shell, webContents } = require('electron')
+const { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, net, protocol, safeStorage, screen, session, shell, webContents } = require('electron')
 const { pathToFileURL } = require('node:url')
 const { Worker } = require('node:worker_threads')
 const fs = require('node:fs/promises')
@@ -174,6 +174,7 @@ const gpuContext = createGpuContext({
   BrowserWindow,
   ipcMain,
   packDirectory: () => semanticPacks.gpu.directory,
+  power: () => wantedPower(),
   tokenizersFile: () => path.join(__dirname, '..', 'node_modules', '@huggingface', 'tokenizers', 'dist', 'tokenizers.mjs'),
 })
 // Ultima descrizione della scheda video (probe) e ultimo guasto della GPU in questa sessione: con un guasto si ripiega sulla CPU finché l'utente non riprova.
@@ -201,6 +202,10 @@ const EMBEDDINGS_PREFERENCE = 'openwriter.localModels.embeddings'
 const DEVICE_PREFERENCE = 'openwriter.localModels.device'
 const semanticAllowed = () => loadPreferences()[EMBEDDINGS_PREFERENCE] !== 'off'
 const wantedDevice = () => (loadPreferences()[DEVICE_PREFERENCE] === 'gpu' ? 'gpu' : 'cpu')
+// Quale scheda video usare per la GPU, nei portatili con due schede: 'auto' (decide il sistema), 'high-performance' (la dedicata), 'low-power' (l'integrata).
+const POWER_PREFERENCE = 'openwriter.localModels.gpuPower'
+const GPU_POWERS = ['auto', 'high-performance', 'low-power']
+const wantedPower = () => (GPU_POWERS.includes(loadPreferences()[POWER_PREFERENCE]) ? loadPreferences()[POWER_PREFERENCE] : 'auto')
 // Il dispositivo che calcola davvero: la GPU se scelta, installata e senza guasti; altrimenti la CPU se il suo modello c'è; altrimenti nessuno.
 function activeDevice() {
   if (wantedDevice() === 'gpu' && semanticPacks.gpu.ready && !gpuFailure) return 'gpu'
@@ -1214,7 +1219,7 @@ async function semanticStatus(directory) {
     packs: { cpu: semanticPacks.cpu.status(), gpu: semanticPacks.gpu.status() },
     device: wanted,
     activeDevice: using,
-    gpu: { info: gpuInfo, failure: gpuFailure },
+    gpu: { info: gpuInfo, failure: gpuFailure, power: wantedPower() },
     enabled,
     allowed: semanticAllowed(),
     progress: null,
@@ -1236,6 +1241,15 @@ ipcMain.handle('semantic:set-enabled', async (_event, enabled) => {
 ipcMain.handle('semantic:set-device', async (_event, device) => {
   setPreferenceValue(DEVICE_PREFERENCE, device === 'gpu' ? 'gpu' : 'cpu')
   gpuFailure = null
+  await configureSemantic()
+  return semanticStatus()
+})
+// Quale scheda video preferire: la finestra della GPU si chiude (si riapre alla prossima richiesta con la nuova scelta) e la scheda scelta si rilegge.
+ipcMain.handle('semantic:set-gpu-power', async (_event, power) => {
+  setPreferenceValue(POWER_PREFERENCE, GPU_POWERS.includes(power) ? power : 'auto')
+  gpuFailure = null
+  gpuContext.release()
+  try { gpuInfo = await gpuContext.probe() } catch (error) { gpuInfo = { webgpu: false, reason: error.message } }
   await configureSemantic()
   return semanticStatus()
 })
@@ -1559,10 +1573,20 @@ ipcMain.handle('images:capture-page', async (_event, rect) => {
   const area = { x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)), width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)) }
   return images.prepareImage(await mainWindow.webContents.capturePage(area))
 })
-ipcMain.handle('images:capture-webview', async (_event, contentsId) => {
+// `region` (facoltativo, il "Riquadro" tracciato dall'utente): { rect, viewport } con il rettangolo e la dimensione dell'area della pagina, in pixel dell'interfaccia.
+// Si fotografa la pagina intera e si ritaglia qui: l'immagine ha i pixel fisici (con la scala dello schermo al 125% o 150% è più grande dell'area), quindi il rettangolo si scala.
+ipcMain.handle('images:capture-webview', async (_event, contentsId, region) => {
   const contents = webContents.fromId(Number(contentsId))
   if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) throw new Error(t('Invalid browser tab'))
-  return images.prepareImage(await contents.capturePage())
+  const image = await contents.capturePage()
+  if (!region?.rect || !region?.viewport?.width) return images.prepareImage(image)
+  const size = image.getSize()
+  const scale = size.width / Number(region.viewport.width)
+  const left = Math.min(Math.max(0, Math.round(Number(region.rect.x) * scale)), size.width - 1)
+  const top = Math.min(Math.max(0, Math.round(Number(region.rect.y) * scale)), size.height - 1)
+  const width = Math.max(1, Math.min(Math.round(Number(region.rect.width) * scale), size.width - left))
+  const height = Math.max(1, Math.min(Math.round(Number(region.rect.height) * scale), size.height - top))
+  return images.prepareImage(image.crop({ x: left, y: top, width, height }))
 })
 // Le pagine del browser integrato seguono il tema del sistema operativo, non quello dell'app: con l'app in tema chiaro e il sistema scuro una pagina "scura" mostrava
 // testo chiaro su fondo bianco. Qui si fa sì che dichiarino lo stesso tema dell'app (prefers-color-scheme).
@@ -1624,6 +1648,34 @@ ipcMain.handle('browser:save-screenshot', async (_event, { contentsId, title } =
   for (let counter = 2; fsSync.existsSync(target); counter += 1) target = path.join(directory, `${label}-${stamp}-${counter}.png`)
   await fs.writeFile(target, image.toPNG())
   return target
+})
+// Immagine della chat (per esempio un Riquadro del browser): copiata negli appunti come immagine, o salvata in un file scelto dall'utente
+// (si propone la cartella screenshots del progetto). Il contenuto arriva in base64.
+const imageBuffer = (data) => {
+  const buffer = Buffer.from(String(data || ''), 'base64')
+  if (!buffer.length || buffer.length > 40 * 1024 * 1024) throw new Error(t('Empty image or unsupported format'))
+  return buffer
+}
+ipcMain.handle('images:copy', (_event, { data } = {}) => {
+  const image = nativeImage.createFromBuffer(imageBuffer(data))
+  if (image.isEmpty()) throw new Error(t('Empty image or unsupported format'))
+  clipboard.writeImage(image)
+  return true
+})
+ipcMain.handle('images:save', async (_event, { data, mime, label } = {}) => {
+  const buffer = imageBuffer(data)
+  const extension = mime === 'image/jpeg' ? 'jpg' : 'png'
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
+  const name = String(label || '').replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'image'
+  const screenshots = projectPath ? path.join(projectPath, 'screenshots') : null
+  const directory = screenshots && fsSync.existsSync(screenshots) ? screenshots : projectPath || app.getPath('pictures')
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: path.join(directory, `${name}-${stamp}.${extension}`),
+    filters: [{ name: extension === 'jpg' ? 'JPEG' : 'PNG', extensions: [extension] }],
+  })
+  if (result.canceled || !result.filePath) return null
+  await fs.writeFile(result.filePath, buffer)
+  return result.filePath
 })
 ipcMain.handle('browser-history:list', (_event, { agent } = {}) => historyFor(agent === true).list())
 ipcMain.handle('browser-history:add', (_event, { agent, ...entry } = {}) => historyFor(agent === true).add(entry))

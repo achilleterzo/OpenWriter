@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   installSemanticPack: (directory, device) => ipcRenderer.invoke('semantic:install', directory, device),
   removeSemanticPack: (directory, device) => ipcRenderer.invoke('semantic:remove', directory, device),
   setSemanticDevice: (device) => ipcRenderer.invoke('semantic:set-device', device),
+  setGpuPower: (power) => ipcRenderer.invoke('semantic:set-gpu-power', power),
   probeGpu: () => ipcRenderer.invoke('semantic:probe-gpu'),
   setSemanticEnabled: (enabled) => ipcRenderer.invoke('semantic:set-enabled', Boolean(enabled)),
   getIndexActivity: () => ipcRenderer.invoke('knowledge:activity'),
@@ -134,7 +135,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readImageDescription: (path) => ipcRenderer.invoke('images:read-description', path),
   writeImageDescription: (path, description) => ipcRenderer.invoke('images:write-description', path, description),
   captureRect: (rect) => ipcRenderer.invoke('images:capture-page', rect),
-  captureWebview: (contentsId) => ipcRenderer.invoke('images:capture-webview', contentsId),
+  copyImage: (image) => ipcRenderer.invoke('images:copy', image),
+  saveImage: (image) => ipcRenderer.invoke('images:save', image),
+  captureWebview: (contentsId, region) => ipcRenderer.invoke('images:capture-webview', contentsId, region),
   webRefs: {
     list: () => ipcRenderer.invoke('webrefs:list'),
     find: (url) => ipcRenderer.invoke('webrefs:find', url),

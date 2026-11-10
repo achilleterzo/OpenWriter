@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { subscribeAppearance } from '../appearance.js'
-import { ArrowLeft, ArrowRight, BookOpen, Camera, Clock, ExternalLink, FileDown, Loader2, Minus, Moon, Plus, RotateCw, Star, Sun, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BookOpen, Camera, Clock, Crop, ExternalLink, FileDown, Loader2, Minus, Moon, Plus, RotateCw, Star, Sun, X } from 'lucide-react'
 import { articleFileName, articleToMarkdown, extractArticle, readerDocument } from '../lib/readerMode.js'
 import { saveFromController } from '../lib/webReferences.js'
 import { isPrivateHost } from '../lib/webAddress.js'
@@ -56,7 +56,7 @@ function Suggestions({ items, highlight, hasQuery, hasHistory, onPick, onRemove,
 }
 
 // Scheda browser basata su <webview> isolato. Registra un controller con cui l'assistente può navigare e leggere la pagina.
-export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved, onScreenshot, onStatus, webRefsVersion = 0, onWebRefsChanged }) {
+export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved, onScreenshot, onRegion, onStatus, webRefsVersion = 0, onWebRefsChanged }) {
   const viewRef = useRef(null)
   // Una scheda ripristinata dopo un riavvio si apre alla pagina in cui era.
   const initialUrl = useRef(tab.initialUrl || 'about:blank')
@@ -308,6 +308,41 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
     }
   }
 
+  // "Riquadro": si traccia un rettangolo sulla pagina e solo quella parte va all'assistente, come immagine allegata alla chat.
+  const [framing, setFraming] = useState(false)
+  const [frame, setFrame] = useState(null) // { x0, y0, x1, y1 } in pixel dell'area della pagina
+  const [frameBusy, setFrameBusy] = useState(false)
+  const frameOverlay = useRef(null)
+  useEffect(() => { if (!active || reader) { setFraming(false); setFrame(null) } }, [active, reader])
+  useEffect(() => {
+    if (!framing) return undefined
+    const onKey = (event) => { if (event.key === 'Escape') { setFraming(false); setFrame(null) } }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [framing])
+  const framePoint = (event) => {
+    const box = frameOverlay.current.getBoundingClientRect()
+    return { x: Math.min(Math.max(event.clientX - box.left, 0), box.width), y: Math.min(Math.max(event.clientY - box.top, 0), box.height) }
+  }
+  async function finishFrame(box) {
+    const area = frameOverlay.current?.getBoundingClientRect()
+    setFrame(null)
+    setFraming(false)
+    const rect = { x: Math.min(box.x0, box.x1), y: Math.min(box.y0, box.y1), width: Math.abs(box.x1 - box.x0), height: Math.abs(box.y1 - box.y0) }
+    if (!area || rect.width < 8 || rect.height < 8) { onStatus?.(t('The frame is too small: drag over the part of the page to send')); return }
+    setFrameBusy(true)
+    try {
+      const view = viewRef.current
+      const shot = await window.electronAPI.captureWebview(view.getWebContentsId(), { rect, viewport: { width: area.width, height: area.height } })
+      onRegion?.({ ...shot, title: view.getTitle() || view.getURL() })
+    } catch (error) {
+      console.error(error)
+      onStatus?.(error.message || t('The operation failed'))
+    } finally {
+      setFrameBusy(false)
+    }
+  }
+
   const buttonClass = 'rounded p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-slate-50 disabled:opacity-30 disabled:hover:bg-transparent'
 
   // Se non è la scheda attiva il <webview> resta renderizzato fuori schermo, così l'assistente può continuare a usarlo.
@@ -336,6 +371,7 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
         <button type="button" aria-label={t('History')} title={t('History')} aria-expanded={suggestOpen} className={`${buttonClass} ${suggestOpen ? 'bg-slate-800 text-accent-400' : ''}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (suggestOpen) { closeSuggestions(); inputRef.current?.blur() } else { inputRef.current?.focus() } }}><Clock size={16} /></button>
         <button type="button" aria-label={t('Open in the system browser')} title={t('Open in the system browser')} className={buttonClass} onClick={() => { const url = viewRef.current?.getURL?.(); if (/^https?:\/\//i.test(url || '')) window.electronAPI.openLink(url) }}><ExternalLink size={16} /></button>
         <button type="button" aria-label={t('Save a screenshot')} title={t('Save a screenshot')} disabled={shotBusy || Boolean(reader)} className={buttonClass} onClick={saveScreenshot}>{shotBusy ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}</button>
+        <button type="button" aria-label={t('Frame a region for the assistant')} title={t('Frame a region for the assistant')} aria-pressed={framing} disabled={frameBusy || Boolean(reader) || !onRegion} className={`${buttonClass} ${framing ? 'bg-slate-800 text-accent-400' : ''}`} onClick={() => { setFrame(null); setFraming((value) => !value) }}>{frameBusy ? <Loader2 size={16} className="animate-spin" /> : <Crop size={16} />}</button>
         <button type="button" aria-label={savedPage ? t('Remove from the context') : t('Add to the context')} title={savedPage ? t('Remove from the context') : t('Add to the context')} aria-pressed={Boolean(savedPage)} disabled={!canSave || starBusy} className={`${buttonClass} ${savedPage ? 'text-amber-400 hover:text-amber-300' : ''}`} onClick={toggleStar}>{starBusy ? <Loader2 size={16} className="animate-spin" /> : <Star size={16} className={savedPage ? 'fill-amber-400' : ''} />}</button>
         <button type="button" aria-label={reader ? t('Exit reading view') : t('Reading view')} title={reader ? t('Exit reading view') : t('Reading view')} aria-pressed={Boolean(reader)} disabled={readerBusy} className={`${buttonClass} ${reader ? 'bg-slate-800 text-accent-400' : ''}`} onClick={toggleReader}>{readerBusy ? <Loader2 size={16} className="animate-spin" /> : <BookOpen size={16} />}</button>
         {reader && (
@@ -349,7 +385,27 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
         {suggestOpen && <Suggestions items={suggestions} highlight={highlight} hasQuery={Boolean(query.trim())} hasHistory={historyEntries.length > 0} onPick={openUrl} onRemove={removeFromHistory} onClear={clearHistory} />}
       </form>
       {reader && <iframe title={t('Reading view')} sandbox="" srcDoc={readerDocument(reader, { dark: readerDark, size: readerSize })} className="min-h-0 flex-1 border-0" />}
-      <webview ref={viewRef} partition="persist:openwriter-browser" src={initialUrl.current} className={`min-h-0 flex-1 bg-white ${reader ? 'hidden' : ''}`} />
+      <div className={`relative min-h-0 flex-1 ${reader ? 'hidden' : 'flex'}`}>
+        <webview ref={viewRef} partition="persist:openwriter-browser" src={initialUrl.current} className="min-h-0 flex-1 bg-white" />
+        {framing && (
+          <div
+            ref={frameOverlay}
+            role="presentation"
+            className="absolute inset-0 z-10 cursor-crosshair touch-none select-none bg-slate-950/20"
+            onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); const point = framePoint(event); setFrame({ x0: point.x, y0: point.y, x1: point.x, y1: point.y }) }}
+            onPointerMove={(event) => { if (frame) { const point = framePoint(event); setFrame({ ...frame, x1: point.x, y1: point.y }) } }}
+            onPointerUp={(event) => { if (frame) { const point = framePoint(event); finishFrame({ ...frame, x1: point.x, y1: point.y }) } }}
+          >
+            {!frame && <span className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-md bg-slate-900/90 px-3 py-1.5 text-xs text-slate-200 shadow">{t('Drag to frame a region · Esc to cancel')}</span>}
+            {frame && (
+              <div
+                className="pointer-events-none absolute border-2 border-accent-400"
+                style={{ left: Math.min(frame.x0, frame.x1), top: Math.min(frame.y0, frame.y1), width: Math.abs(frame.x1 - frame.x0), height: Math.abs(frame.y1 - frame.y0), boxShadow: '0 0 0 9999px rgba(2, 6, 23, 0.45)' }}
+              />
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
