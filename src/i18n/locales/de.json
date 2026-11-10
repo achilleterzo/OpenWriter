@@ -1339,5 +1339,7 @@
   "Workspace actions": "Aktionen des Arbeitsbereichs",
   "Edit workspace…": "Arbeitsbereich bearbeiten…",
   "Add project": "Projekt hinzufügen",
-  "Delegate the research to another dedicated assistant": "Die Recherche an einen anderen, eigenen Assistenten delegieren"
+  "Delegate the research to another dedicated assistant": "Die Recherche an einen anderen, eigenen Assistenten delegieren",
+  "\"{title}\" was changed outside OpenWriter; your unsaved edits were kept": "\"{title}\" wurde außerhalb von OpenWriter geändert; deine ungespeicherten Änderungen blieben erhalten",
+  "\"{title}\" reloaded: it was changed outside OpenWriter": "\"{title}\" neu geladen: wurde außerhalb von OpenWriter geändert"
 }
