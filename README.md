@@ -1,5 +1,7 @@
 # OpenWriter
 
+**English** · [Italiano](README.it.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português](README.pt.md)
+
 [![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/achilleterzo/badge.svg)](https://hub.xerj.org/contributors/achilleterzo)
 
 OpenWriter is a local-first writing workspace for Markdown. Your documents, notes, and the knowledge that builds up in your projects stay on your computer, and two kinds of agents can work on them together: the assistant built into the app and the external agents you already use (Claude Code, Codex, OpenCode, the clients in your IDE), connected through a built-in MCP server.
