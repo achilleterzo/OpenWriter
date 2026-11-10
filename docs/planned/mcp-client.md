@@ -10,12 +10,14 @@ OpenWriter already has an MCP **server** (`electron/mcp-server.cjs`, hand-writte
 
 ## Decisions
 
-| Topic | Choice |
-| --- | --- |
+
+| Topic          | Choice                                                                                        |
+| -------------- | --------------------------------------------------------------------------------------------- |
 | Implementation | Official SDK `@modelcontextprotocol/sdk` (stdio and HTTP transports, OAuth client for later). |
-| Scope | Servers are **global**; each project chooses which ones to use. |
-| Confirmation | Ask before a call only when the tool is not declared read-only (`readOnlyHint`). |
-| First version | stdio and HTTP servers with a token or key. OAuth (browser login) comes later. |
+| Scope          | Servers are **global**; each project chooses which ones to use.                               |
+| Confirmation   | Ask before a call only when the tool is not declared read-only (`readOnlyHint`).              |
+| First version  | stdio and HTTP servers with a token or key. OAuth (browser login) comes later.                |
+
 
 ## How it is today
 
@@ -68,3 +70,4 @@ OpenWriter already has an MCP **server** (`electron/mcp-server.cjs`, hand-writte
 - **Security.** A stdio server runs code with the user's permissions: say it clearly when one is added. Content read from the cloud is a prompt-injection channel, which is why writes ask for confirmation.
 - **CLI providers (Claude, Codex)** bring their own tools. Check at the start of phase 2 whether the app's MCP tools reach them or only the providers with native tool calls.
 - **Google Docs in the first version.** Without OAuth it only works with a server that accepts a token. Choose which server to try first.
+
