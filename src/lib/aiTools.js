@@ -1,6 +1,6 @@
 import { anchorContext, buildTextIndex, findAll, foldText, locateQuote, toRange } from './anchoring.js'
 import { t } from '../i18n/index.js'
-import { replaceRangeWithMarkdown } from './editorInsert.js'
+import { markdownFragment, replaceRangeWithMarkdown } from './editorInsert.js'
 import { trackEdit } from './pendingChangesExtension.js'
 import { pathKey } from './pathCompare.js'
 import { isPrivateHost } from './webAddress.js'
@@ -469,7 +469,7 @@ export function createToolRunner(context) {
 
   // Every direct edit goes through trackEdit: the changed blocks stay applied but are marked for the user to accept or reject.
   function rewriteMarkdown(editor, markdown) {
-    return trackEdit(editor, () => editor.chain().insertContentAt({ from: 0, to: editor.state.doc.content.size }, markdown, { contentType: 'markdown' }).run())
+    return trackEdit(editor, () => editor.chain().insertContentAt({ from: 0, to: editor.state.doc.content.size }, markdownFragment(editor, markdown) ?? markdown, { contentType: 'markdown' }).run())
   }
 
   const isNotFound = (error) => /not found in the document/.test(error.message)
