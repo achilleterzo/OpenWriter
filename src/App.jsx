@@ -83,6 +83,10 @@ function previewOf(markdown) {
   return (head.match(/^\s*(```|~~~)/gm) || []).length % 2 ? `${head}\n\n\`\`\`` : head
 }
 
+// Un salvataggio fatto da qui scatena la sorveglianza della cartella: per questo tempo quel documento non si rilegge dal disco.
+const OWN_SAVE_QUIET_MS = 2500
+const ownSaveTimes = new Map()
+
 function createTab(document = null, id = crypto.randomUUID()) {
   if (!document) {
     untitledCounter += 1
@@ -578,7 +582,49 @@ export default function App() {
   useEffect(() => {
     if (!electronAPI || !project) return undefined
     electronAPI.watchWorkspace().catch(() => {})
-    return electronAPI.onWorkspaceChanged(() => setExplorerRefresh((value) => value + 1))
+    let busy = false
+    let queued = null // { all, paths } richiesto mentre una rilettura è in corso
+    // Un documento aperto e modificato da fuori si rilegge dal disco, se qui non ha modifiche non salvate né da rivedere; altrimenti si avvisa e si tiene la versione dell'editor.
+    const reloadChanged = async (paths) => {
+      if (busy) {
+        queued = { all: !paths || queued?.all, paths: [...(queued?.paths || []), ...(paths || [])] }
+        return
+      }
+      busy = true
+      try {
+        const candidates = latest.current.tabs.filter((tab) => !tab.kind && tab.filePath && !tab.readOnly && !tab.largeFile && !tab.closed && tab.contentType === 'markdown'
+          && Date.now() - (ownSaveTimes.get(tab.id) || 0) > OWN_SAVE_QUIET_MS
+          && (!paths || paths.some((changed) => samePath(changed, tab.filePath))))
+        for (const candidate of candidates) {
+          let document
+          try { document = await electronAPI.reopenDocument(candidate.filePath) } catch { continue }
+          if (document?.format !== 'markdown') continue
+          const { tabs: currentTabs, editors: currentEditors } = latest.current
+          const tab = currentTabs.find((item) => item.id === candidate.id)
+          const editor = currentEditors[candidate.id]
+          if (!tab || tab.closed || Date.now() - (ownSaveTimes.get(tab.id) || 0) <= OWN_SAVE_QUIET_MS) continue
+          const live = editor && !editor.isDestroyed ? editor : null
+          const current = live ? live.getMarkdown() : tab.content
+          // Il file è com'era quando lo abbiamo letto (o coincide con l'editor): niente da rileggere. Il confronto con l'editor da solo non basta, perché il Markdown riscritto dall'editor può differire dal file anche senza modifiche.
+          const sameAsDisk = (left, right) => String(left).trimEnd() === String(right).trimEnd()
+          if (sameAsDisk(tab.content, document.content) || sameAsDisk(current, document.content)) continue
+          if (tab.dirty || (live && getPending(live.state).length)) {
+            setStatus(t('"{title}" was changed outside OpenWriter; your unsaved edits were kept', { title: tab.title }))
+            continue
+          }
+          if (live) live.commands.setContent(document.content, { contentType: 'markdown', emitUpdate: false })
+          setTabs((list) => list.map((item) => (item.id === tab.id && !item.dirty ? { ...item, content: document.content } : item)))
+          setStatus(t('"{title}" reloaded: it was changed outside OpenWriter', { title: tab.title }))
+        }
+      } finally {
+        busy = false
+        if (queued) { const next = queued; queued = null; reloadChanged(next.all ? null : next.paths) }
+      }
+    }
+    return electronAPI.onWorkspaceChanged((paths) => {
+      setExplorerRefresh((value) => value + 1)
+      reloadChanged(Array.isArray(paths) ? paths : null)
+    })
   }, [project])
 
   // Note e segnalibri scritti da fuori (l'agente, tramite il server MCP) compaiono subito, senza riaprire il documento.
@@ -936,6 +982,7 @@ export default function App() {
       scheduleSave()
     },
     markSaved(id, filePath) {
+      ownSaveTimes.set(id, Date.now())
       setTabs((current) => current.map((tab) => (tab.id === id ? { ...tab, filePath, sourcePath: filePath, title: baseName(filePath), dirty: false, convertTo: undefined } : tab)))
       setExplorerRefresh((value) => value + 1)
       setHistoryVersion((value) => value + 1)

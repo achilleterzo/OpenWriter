@@ -14,7 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('workspace:annotations-changed', listener)
   },
   onWorkspaceChanged: (callback) => {
-    const listener = () => callback()
+    const listener = (_event, paths) => callback(paths)
     ipcRenderer.on('workspace:changed', listener)
     return () => ipcRenderer.removeListener('workspace:changed', listener)
   },

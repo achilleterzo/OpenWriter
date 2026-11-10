@@ -2346,7 +2346,9 @@ ipcMain.handle('clipboard:paste-files', async (_event, { targetDirectory } = {})
 let workspaceWatcher = null
 let workspaceWatchTimer = null
 let annotationsWatchTimer = null
+let changedPaths = new Set()
 function stopWorkspaceWatch() {
+  changedPaths = new Set()
   clearTimeout(workspaceWatchTimer)
   clearTimeout(annotationsWatchTimer)
   try { workspaceWatcher?.close() } catch { /* già chiuso */ }
@@ -2369,8 +2371,15 @@ ipcMain.handle('workspace:watch', () => {
       if (parts.some((part) => CLIPBOARD_IGNORED.has(part))) return
       // Senza nome del file il sistema non dice cosa è cambiato: riscansione completa. Altrimenti si aggiorna solo quel percorso.
       if (knowledgeOn) knowledge.changed(projectPath, name ? [parts.join('/')] : null)
+      // I percorsi cambiati (assoluti) viaggiano con la notifica, così l'interfaccia può rileggere i documenti aperti; `null` = non si sa quali.
+      if (name && changedPaths) changedPaths.add(path.join(projectPath, String(name)))
+      else changedPaths = null
       clearTimeout(workspaceWatchTimer)
-      workspaceWatchTimer = setTimeout(() => mainWindow?.webContents.send('workspace:changed'), 400)
+      workspaceWatchTimer = setTimeout(() => {
+        const paths = changedPaths ? [...changedPaths] : null
+        changedPaths = new Set()
+        mainWindow?.webContents.send('workspace:changed', paths)
+      }, 400)
     })
     workspaceWatcher.on('error', () => stopWorkspaceWatch())
     watchReferences()
