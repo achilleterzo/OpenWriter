@@ -1341,5 +1341,15 @@
   "Add project": "Adicionar projeto",
   "Delegate the research to another dedicated assistant": "Delegar a pesquisa a outro assistente dedicado",
   "\"{title}\" was changed outside OpenWriter; your unsaved edits were kept": "\"{title}\" foi alterado fora do OpenWriter; as suas alterações não guardadas foram mantidas",
-  "\"{title}\" reloaded: it was changed outside OpenWriter": "\"{title}\" recarregado: foi alterado fora do OpenWriter"
+  "\"{title}\" reloaded: it was changed outside OpenWriter": "\"{title}\" recarregado: foi alterado fora do OpenWriter",
+  "Which graphics card to use": "Que placa gráfica usar",
+  "Default: {name}": "Predefinida: {name}",
+  "Default (the system decides)": "Predefinida (o sistema decide)",
+  "Frame a region for the assistant": "Moldura: enviar uma parte da página ao assistente",
+  "Drag to frame a region · Esc to cancel": "Arraste para traçar uma moldura · Esc para cancelar",
+  "Region of “{title}”": "Moldura de “{title}”",
+  "The frame is too small: drag over the part of the page to send": "A moldura é demasiado pequena: arraste sobre a parte da página a enviar",
+  "Region attached to the assistant chat": "Moldura anexada à conversa do assistente",
+  "Copy the image": "Copiar a imagem",
+  "Save the image": "Guardar a imagem"
 }
