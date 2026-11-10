@@ -21,18 +21,40 @@ const fetchPack = async (name, kind) => {
   return kind === 'json' ? response.json() : response.arrayBuffer()
 }
 
-async function adapterInfo() {
+// `power`: 'high-performance' (la scheda dedicata), 'low-power' (quella integrata) o 'auto' (sceglie il sistema).
+const powerOptions = (power) => (power === 'high-performance' || power === 'low-power' ? { powerPreference: power } : undefined)
+
+async function adapterInfo(power) {
   if (!navigator.gpu) return { webgpu: false, reason: 'WebGPU is not available in this system' }
-  const adapter = await navigator.gpu.requestAdapter()
+  const adapter = await navigator.gpu.requestAdapter(powerOptions(power))
   if (!adapter) return { webgpu: false, reason: 'No graphics adapter supports WebGPU' }
   const info = adapter.info || {}
   return { webgpu: true, vendor: info.vendor || '', architecture: info.architecture || '', device: info.device || '', description: info.description || '', fp16: adapter.features.has('shader-f16') }
 }
 
-function load() {
+// WebGPU non elenca le schede: ne dà una per ogni preferenza. Chiedendole entrambe (dedicata e integrata) e togliendo i doppioni si ottengono le schede
+// che si possono scegliere; con una sola scheda l'elenco ha un solo elemento.
+async function listAdapters() {
+  const found = []
+  const keyOf = (info) => [info.vendor, info.architecture, info.device, info.description].join('|')
+  // La scheda che il sistema sceglie senza preferenze: è quella «predefinita».
+  let defaultKey = null
+  try { const info = await adapterInfo('auto'); if (info.webgpu) defaultKey = keyOf(info) } catch { /* nessuna */ }
+  for (const power of ['high-performance', 'low-power']) {
+    try {
+      const info = await adapterInfo(power)
+      if (!info.webgpu) continue
+      const key = keyOf(info)
+      if (!found.some((item) => item.key === key)) found.push({ key, power, vendor: info.vendor, architecture: info.architecture, device: info.device, description: info.description })
+    } catch { /* quella preferenza non dà una scheda */ }
+  }
+  return found.map(({ key, ...adapter }) => ({ ...adapter, isDefault: key === defaultKey }))
+}
+
+function load(power) {
   if (!loading) {
     loading = (async () => {
-      const info = await adapterInfo()
+      const info = await adapterInfo(power)
       if (!info.webgpu) throw new Error(info.reason)
       ort = await import('./pack/ort.webgpu.bundle.min.mjs')
       // Una sola thread per il WebAssembly (senza isolamento cross-origin non esistono thread condivisi): il lavoro lo fa la GPU.
@@ -40,6 +62,8 @@ function load() {
       // Dalla 1.31 il backend WebGPU usa la variante «asyncify» del modulo WebAssembly (non la vecchia «jsep»).
       ort.env.wasm.wasmPaths = { mjs: new URL('./pack/ort-wasm-simd-threaded.asyncify.mjs', import.meta.url).href, wasm: new URL('./pack/ort-wasm-simd-threaded.asyncify.wasm', import.meta.url).href }
       ort.env.logLevel = 'error'
+      // onnxruntime sceglie la scheda da sé: gli si dice quale preferire (come nel probe).
+      if (powerOptions(power)) ort.env.webgpu.powerPreference = power
       tokenizer = new Tokenizer(await fetchPack('tokenizer.json', 'json'), await fetchPack('tokenizer_config.json', 'json'))
       session = await ort.InferenceSession.create(new Uint8Array(await fetchPack('model.onnx')), { executionProviders: ['webgpu'] })
     })().catch((error) => { loading = null; throw error })
@@ -57,8 +81,8 @@ function halfToFloat(half) {
   return sign * 2 ** (exponent - 15) * (1 + fraction / 1024)
 }
 
-async function embed(texts, kind) {
-  await load()
+async function embed(texts, kind, power) {
+  await load(power)
   const prefix = PREFIX[kind] || PREFIX.passage
   const encoded = texts.map((text) => {
     const ids = tokenizer.encode(prefix + String(text).slice(0, MAX_CHARS)).ids
@@ -101,12 +125,15 @@ async function embed(texts, kind) {
 
 // Una richiesta alla volta: il runtime lavora una sola sessione.
 let queue = Promise.resolve()
-bridge.onRequest(({ id, op, texts, kind }) => {
+bridge.onRequest(({ id, op, texts, kind, power }) => {
   queue = queue.then(async () => {
     try {
-      if (op === 'probe') bridge.reply(id, { info: await adapterInfo() })
-      else if (op === 'embed') bridge.reply(id, { vectors: await embed(texts, kind) })
-      else if (op === 'load') { await load(); bridge.reply(id, { loaded: true }) }
+      if (op === 'probe') {
+        const info = await adapterInfo(power)
+        bridge.reply(id, { info: info.webgpu ? { ...info, adapters: await listAdapters() } : info })
+      }
+      else if (op === 'embed') bridge.reply(id, { vectors: await embed(texts, kind, power) })
+      else if (op === 'load') { await load(power); bridge.reply(id, { loaded: true }) }
       else if (op === 'release') { session = null; loading = null; bridge.reply(id, { released: true }) }
       else bridge.reply(id, { error: `Unknown operation ${op}` })
     } catch (error) {
