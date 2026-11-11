@@ -1345,7 +1345,7 @@
   "Which graphics card to use": "Que placa gráfica usar",
   "Default: {name}": "Predefinida: {name}",
   "Default (the system decides)": "Predefinida (o sistema decide)",
-  "Frame a region for the assistant": "Moldura: enviar uma parte da página ao assistente",
+  "Frame a region": "Moldura: escolher o que fazer",
   "Drag to frame a region · Esc to cancel": "Arraste para traçar uma moldura · Esc para cancelar",
   "Region of “{title}”": "Moldura de “{title}”",
   "The frame is too small: drag over the part of the page to send": "A moldura é demasiado pequena: arraste sobre a parte da página a enviar",
@@ -1364,5 +1364,7 @@
   "Image from “{title}”": "Imagem de “{title}”",
   "Search the web for “{text}”": "Pesquisar na web “{text}”",
   "Ask the assistant about the selection": "Perguntar ao assistente sobre a seleção",
-  "Ask the assistant in a new chat": "Perguntar ao assistente numa nova conversa"
+  "Ask the assistant in a new chat": "Perguntar ao assistente numa nova conversa",
+  "Region actions": "Ações da moldura",
+  "Attach to chat": "Anexar ao chat"
 }

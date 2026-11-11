@@ -1,7 +1,8 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { ContextMenuContext, modKey } from './ContextMenu.jsx'
 import { subscribeAppearance } from '../appearance.js'
-import { ArrowLeft, ArrowRight, BookOpen, Camera, Clock, Crop, ExternalLink, FileDown, Loader2, Minus, Moon, Plus, RotateCw, Star, Sun, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BookOpen, Camera, Check, Clock, Copy, Crop, Download, ExternalLink, FileDown, Loader2, Minus, Moon, Paperclip, Plus, RotateCw, Star, Sun, X } from 'lucide-react'
+import { FloatingButton, FloatingDivider } from './FloatingToolbar.jsx'
 import { articleFileName, articleToMarkdown, extractArticle, readerDocument } from '../lib/readerMode.js'
 import { saveFromController } from '../lib/webReferences.js'
 import { rasterizeSvg } from '../lib/svgRaster.js'
@@ -314,11 +315,14 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
   const [framing, setFraming] = useState(false)
   const [frame, setFrame] = useState(null) // { x0, y0, x1, y1 } in pixel dell'area della pagina
   const [frameBusy, setFrameBusy] = useState(false)
+  const [frameSet, setFrameSet] = useState(false) // il rettangolo è tracciato: la barra offre cosa farne
+  const [frameDone, setFrameDone] = useState('') // ultima azione riuscita (copia, salva), per la spunta
   const frameOverlay = useRef(null)
-  useEffect(() => { if (!active || reader) { setFraming(false); setFrame(null) } }, [active, reader])
+  const closeFrame = () => { setFraming(false); setFrame(null); setFrameSet(false); setFrameDone('') }
+  useEffect(() => { if (!active || reader) { setFraming(false); setFrame(null); setFrameSet(false) } }, [active, reader])
   useEffect(() => {
     if (!framing) return undefined
-    const onKey = (event) => { if (event.key === 'Escape') { setFraming(false); setFrame(null) } }
+    const onKey = (event) => { if (event.key === 'Escape') { setFraming(false); setFrame(null); setFrameSet(false); setFrameDone('') } }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [framing])
@@ -326,17 +330,33 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
     const box = frameOverlay.current.getBoundingClientRect()
     return { x: Math.min(Math.max(event.clientX - box.left, 0), box.width), y: Math.min(Math.max(event.clientY - box.top, 0), box.height) }
   }
-  async function finishFrame(box) {
+  // Rilasciato il mouse il riquadro resta lì: si può ritracciare, oppure sceglierne l'uso dalla barra (copia, salva, invia all'assistente).
+  function finishFrame(box) {
+    const width = Math.abs(box.x1 - box.x0)
+    const height = Math.abs(box.y1 - box.y0)
+    if (width < 8 || height < 8) { setFrame(null); onStatus?.(t('The frame is too small: drag over the part of the page to send')); return }
+    setFrame(box)
+    setFrameSet(true)
+  }
+  async function useFrame(kind) {
     const area = frameOverlay.current?.getBoundingClientRect()
-    setFrame(null)
-    setFraming(false)
-    const rect = { x: Math.min(box.x0, box.x1), y: Math.min(box.y0, box.y1), width: Math.abs(box.x1 - box.x0), height: Math.abs(box.y1 - box.y0) }
-    if (!area || rect.width < 8 || rect.height < 8) { onStatus?.(t('The frame is too small: drag over the part of the page to send')); return }
+    if (!frame || !area) return
+    const rect = { x: Math.min(frame.x0, frame.x1), y: Math.min(frame.y0, frame.y1), width: Math.abs(frame.x1 - frame.x0), height: Math.abs(frame.y1 - frame.y0) }
     setFrameBusy(true)
     try {
       const view = viewRef.current
       const shot = await window.electronAPI.captureWebview(view.getWebContentsId(), { rect, viewport: { width: area.width, height: area.height } })
-      onRegion?.({ ...shot, title: view.getTitle() || view.getURL() })
+      if (kind === 'send') {
+        closeFrame()
+        onRegion?.({ ...shot, title: view.getTitle() || view.getURL() })
+        return
+      }
+      const payload = { data: shot.data, mime: shot.mime || 'image/png', label: 'frame' }
+      const result = kind === 'copy' ? await window.electronAPI.copyImage(payload) : await window.electronAPI.saveImage(payload)
+      if (result) {
+        setFrameDone(kind)
+        setTimeout(() => setFrameDone((value) => (value === kind ? '' : value)), 1500)
+      }
     } catch (error) {
       console.error(error)
       onStatus?.(error.message || t('The operation failed'))
@@ -344,6 +364,17 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
       setFrameBusy(false)
     }
   }
+  // La barra sta sotto il rettangolo (sopra se non c'è posto), allineata al suo bordo destro.
+  const frameBar = (() => {
+    if (!frameSet || !frame) return null
+    const area = frameOverlay.current?.getBoundingClientRect()
+    const right = Math.max(frame.x0, frame.x1)
+    const bottom = Math.max(frame.y0, frame.y1)
+    const top = Math.min(frame.y0, frame.y1)
+    const height = 40
+    const y = area && bottom + 8 + height > area.height ? Math.max(4, top - 8 - height) : bottom + 8
+    return { x: Math.max(8, right - 150), y }
+  })()
 
   // Tasto destro nella pagina (e clic centrale sui link, gestito dal processo principale): il menu si compone qui, secondo ciò che sta sotto il cursore.
   const openMenu = useContext(ContextMenuContext)
@@ -447,7 +478,7 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
         <button type="button" aria-label={t('History')} title={t('History')} aria-expanded={suggestOpen} className={`${buttonClass} ${suggestOpen ? 'bg-slate-800 text-accent-400' : ''}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (suggestOpen) { closeSuggestions(); inputRef.current?.blur() } else { inputRef.current?.focus() } }}><Clock size={16} /></button>
         <button type="button" aria-label={t('Open in the system browser')} title={t('Open in the system browser')} className={buttonClass} onClick={() => { const url = viewRef.current?.getURL?.(); if (/^https?:\/\//i.test(url || '')) window.electronAPI.openLink(url) }}><ExternalLink size={16} /></button>
         <button type="button" aria-label={t('Save a screenshot')} title={t('Save a screenshot')} disabled={shotBusy || Boolean(reader)} className={buttonClass} onClick={saveScreenshot}>{shotBusy ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}</button>
-        <button type="button" aria-label={t('Frame a region for the assistant')} title={t('Frame a region for the assistant')} aria-pressed={framing} disabled={frameBusy || Boolean(reader) || !onRegion} className={`${buttonClass} ${framing ? 'bg-slate-800 text-accent-400' : ''}`} onClick={() => { setFrame(null); setFraming((value) => !value) }}>{frameBusy ? <Loader2 size={16} className="animate-spin" /> : <Crop size={16} />}</button>
+        <button type="button" aria-label={t('Frame a region')} title={t('Frame a region')} aria-pressed={framing} disabled={frameBusy || Boolean(reader) || !onRegion} className={`${buttonClass} ${framing ? 'bg-slate-800 text-accent-400' : ''}`} onClick={() => { setFrame(null); setFrameSet(false); setFrameDone(''); setFraming((value) => !value) }}>{frameBusy ? <Loader2 size={16} className="animate-spin" /> : <Crop size={16} />}</button>
         <button type="button" aria-label={savedPage ? t('Remove from the context') : t('Add to the context')} title={savedPage ? t('Remove from the context') : t('Add to the context')} aria-pressed={Boolean(savedPage)} disabled={!canSave || starBusy} className={`${buttonClass} ${savedPage ? 'text-amber-400 hover:text-amber-300' : ''}`} onClick={toggleStar}>{starBusy ? <Loader2 size={16} className="animate-spin" /> : <Star size={16} className={savedPage ? 'fill-amber-400' : ''} />}</button>
         <button type="button" aria-label={reader ? t('Exit reading view') : t('Reading view')} title={reader ? t('Exit reading view') : t('Reading view')} aria-pressed={Boolean(reader)} disabled={readerBusy} className={`${buttonClass} ${reader ? 'bg-slate-800 text-accent-400' : ''}`} onClick={toggleReader}>{readerBusy ? <Loader2 size={16} className="animate-spin" /> : <BookOpen size={16} />}</button>
         {reader && (
@@ -468,9 +499,9 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
             ref={frameOverlay}
             role="presentation"
             className="absolute inset-0 z-10 cursor-crosshair touch-none select-none bg-slate-950/20"
-            onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); const point = framePoint(event); setFrame({ x0: point.x, y0: point.y, x1: point.x, y1: point.y }) }}
-            onPointerMove={(event) => { if (frame) { const point = framePoint(event); setFrame({ ...frame, x1: point.x, y1: point.y }) } }}
-            onPointerUp={(event) => { if (frame) { const point = framePoint(event); finishFrame({ ...frame, x1: point.x, y1: point.y }) } }}
+            onPointerDown={(event) => { if (frameBusy) return; event.currentTarget.setPointerCapture(event.pointerId); setFrameSet(false); setFrameDone(''); const point = framePoint(event); setFrame({ x0: point.x, y0: point.y, x1: point.x, y1: point.y }) }}
+            onPointerMove={(event) => { if (frame && !frameSet) { const point = framePoint(event); setFrame({ ...frame, x1: point.x, y1: point.y }) } }}
+            onPointerUp={(event) => { if (frame && !frameSet) { const point = framePoint(event); finishFrame({ ...frame, x1: point.x, y1: point.y }) } }}
           >
             {!frame && <span className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-md bg-slate-900/90 px-3 py-1.5 text-xs text-slate-200 shadow">{t('Drag to frame a region · Esc to cancel')}</span>}
             {frame && (
@@ -478,6 +509,23 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
                 className="pointer-events-none absolute border-2 border-accent-400"
                 style={{ left: Math.min(frame.x0, frame.x1), top: Math.min(frame.y0, frame.y1), width: Math.abs(frame.x1 - frame.x0), height: Math.abs(frame.y1 - frame.y0), boxShadow: '0 0 0 9999px rgba(2, 6, 23, 0.45)' }}
               />
+            )}
+            {frameBar && (
+              <div
+                role="toolbar"
+                aria-label={t('Region actions')}
+                style={{ left: frameBar.x, top: frameBar.y }}
+                className="absolute z-20 flex cursor-default items-center gap-0.5 rounded-lg border border-slate-700 bg-slate-900 p-1 text-sm text-slate-200 shadow-xl"
+                onPointerDown={(event) => event.stopPropagation()}
+                onPointerUp={(event) => event.stopPropagation()}
+              >
+                <FloatingButton label={t('Attach to chat')} disabled={frameBusy} active onClick={() => useFrame('send')}>{frameBusy ? <Loader2 size={15} className="animate-spin" /> : <Paperclip size={15} />}</FloatingButton>
+                <FloatingDivider />
+                <FloatingButton label={t('Copy the image')} disabled={frameBusy} onClick={() => useFrame('copy')}>{frameDone === 'copy' ? <Check size={15} /> : <Copy size={15} />}</FloatingButton>
+                <FloatingButton label={t('Save the image')} disabled={frameBusy} onClick={() => useFrame('save')}>{frameDone === 'save' ? <Check size={15} /> : <Download size={15} />}</FloatingButton>
+                <FloatingDivider />
+                <FloatingButton label={t('Cancel')} danger onClick={closeFrame}><X size={15} /></FloatingButton>
+              </div>
             )}
           </div>
         )}

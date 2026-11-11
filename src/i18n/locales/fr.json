@@ -1345,7 +1345,7 @@
   "Which graphics card to use": "Carte graphique à utiliser",
   "Default: {name}": "Par défaut : {name}",
   "Default (the system decides)": "Par défaut (le système décide)",
-  "Frame a region for the assistant": "Cadre : envoyer une partie de la page à l’assistant",
+  "Frame a region": "Cadre : choisir quoi en faire",
   "Drag to frame a region · Esc to cancel": "Faites glisser pour tracer un cadre · Échap pour annuler",
   "Region of “{title}”": "Cadre de « {title} »",
   "The frame is too small: drag over the part of the page to send": "Le cadre est trop petit : faites glisser sur la partie de la page à envoyer",
@@ -1364,5 +1364,7 @@
   "Image from “{title}”": "Image de « {title} »",
   "Search the web for “{text}”": "Rechercher « {text} » sur le Web",
   "Ask the assistant about the selection": "Interroger l’assistant sur la sélection",
-  "Ask the assistant in a new chat": "Interroger l’assistant dans une nouvelle conversation"
+  "Ask the assistant in a new chat": "Interroger l’assistant dans une nouvelle conversation",
+  "Region actions": "Actions du cadre",
+  "Attach to chat": "Joindre au chat"
 }

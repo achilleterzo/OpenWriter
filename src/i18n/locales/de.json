@@ -1345,7 +1345,7 @@
   "Which graphics card to use": "Welche Grafikkarte verwendet werden soll",
   "Default: {name}": "Standard: {name}",
   "Default (the system decides)": "Standard (das System entscheidet)",
-  "Frame a region for the assistant": "Ausschnitt: einen Teil der Seite an den Assistenten senden",
+  "Frame a region": "Ausschnitt: Aktion wählen",
   "Drag to frame a region · Esc to cancel": "Ziehen, um einen Ausschnitt aufzuziehen · Esc zum Abbrechen",
   "Region of “{title}”": "Ausschnitt aus „{title}“",
   "The frame is too small: drag over the part of the page to send": "Der Ausschnitt ist zu klein: ziehe über den Teil der Seite, der gesendet werden soll",
@@ -1364,5 +1364,7 @@
   "Image from “{title}”": "Bild von „{title}“",
   "Search the web for “{text}”": "Im Web nach „{text}“ suchen",
   "Ask the assistant about the selection": "Den Assistenten zur Auswahl fragen",
-  "Ask the assistant in a new chat": "Den Assistenten in einem neuen Chat fragen"
+  "Ask the assistant in a new chat": "Den Assistenten in einem neuen Chat fragen",
+  "Region actions": "Aktionen für den Ausschnitt",
+  "Attach to chat": "An den Chat anhängen"
 }

@@ -1345,7 +1345,7 @@
   "Which graphics card to use": "Quale scheda video usare",
   "Default: {name}": "Predefinita: {name}",
   "Default (the system decides)": "Predefinita (decide il sistema)",
-  "Frame a region for the assistant": "Riquadro: invia una parte della pagina all’assistente",
+  "Frame a region": "Riquadro: scegli cosa farne",
   "Drag to frame a region · Esc to cancel": "Trascina per tracciare un riquadro · Esc per annullare",
   "Region of “{title}”": "Riquadro di “{title}”",
   "The frame is too small: drag over the part of the page to send": "Il riquadro è troppo piccolo: trascina sulla parte di pagina da inviare",
@@ -1364,5 +1364,7 @@
   "Image from “{title}”": "Immagine da “{title}”",
   "Search the web for “{text}”": "Cerca sul web “{text}”",
   "Ask the assistant about the selection": "Chiedi all’assistente sulla selezione",
-  "Ask the assistant in a new chat": "Chiedi all’assistente in una nuova chat"
+  "Ask the assistant in a new chat": "Chiedi all’assistente in una nuova chat",
+  "Region actions": "Azioni sul riquadro",
+  "Attach to chat": "Allega in chat"
 }
