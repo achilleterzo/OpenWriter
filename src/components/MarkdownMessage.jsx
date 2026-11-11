@@ -1,8 +1,12 @@
-import { memo, useState } from 'react'
+import { createContext, memo, useContext, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, Copy } from 'lucide-react'
 import { t } from '../i18n/index.js'
+
+// Dentro un collegamento un'immagine non può essere a sua volta un collegamento (<a> dentro <a> non è HTML valido): ne resta il testo alternativo.
+const InLink = createContext(false)
+const linkClass = 'text-accent-400 underline underline-offset-2 hover:text-accent-300'
 
 // react-markdown passa anche `node`: non va inoltrato al DOM.
 const styled = (Tag, className) => function Styled({ node: _node, ...props }) {
@@ -56,9 +60,12 @@ const components = {
   th: styled('th', 'border border-slate-700 bg-slate-900/60 px-2 py-1 text-left font-semibold'),
   td: styled('td', 'border border-slate-700 px-2 py-1 align-top'),
   table: ({ node: _node, ...props }) => <div className="my-2 overflow-x-auto"><table className="w-full border-collapse text-xs" {...props} /></div>,
-  a: ({ node: _node, href, children }) => <a href={href} target="_blank" rel="noreferrer noopener" className="text-accent-400 underline underline-offset-2 hover:text-accent-300">{children}</a>,
-  // Niente immagini remote da una risposta del modello: si mostra il testo alternativo come collegamento.
-  img: ({ node: _node, src, alt }) => <a href={src} target="_blank" rel="noreferrer noopener" className="text-accent-400 underline underline-offset-2">{alt || src}</a>,
+  a: ({ node: _node, href, children }) => <a href={href} target="_blank" rel="noreferrer noopener" className={linkClass}><InLink.Provider value>{children}</InLink.Provider></a>,
+  // Niente immagini remote da una risposta del modello: si mostra il testo alternativo come collegamento (come semplice testo se è già dentro un collegamento).
+  img: function Img({ node: _node, src, alt }) {
+    const inLink = useContext(InLink)
+    return inLink ? <span>{alt || src}</span> : <a href={src} target="_blank" rel="noreferrer noopener" className="text-accent-400 underline underline-offset-2">{alt || src}</a>
+  },
   code({ node: _node, className, children, ...props }) {
     const block = /language-/.test(className || '') || String(children).includes('\n')
     return block
@@ -71,7 +78,7 @@ const components = {
 // dall'utente) e `inline` (nessun blocco: per le etichette dentro i pulsanti).
 const onAccentComponents = {
   ...components,
-  a: ({ node: _node, href, children }) => <a href={href} target="_blank" rel="noreferrer noopener" className="text-white underline underline-offset-2 hover:opacity-80">{children}</a>,
+  a: ({ node: _node, href, children }) => <a href={href} target="_blank" rel="noreferrer noopener" className="text-white underline underline-offset-2 hover:opacity-80"><InLink.Provider value>{children}</InLink.Provider></a>,
   strong: styled('strong', 'font-semibold'),
   code({ node: _node, className, children, ...props }) {
     const block = /language-/.test(className || '') || String(children).includes('\n')
