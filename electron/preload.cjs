@@ -68,6 +68,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setSemanticEnabled: (enabled) => ipcRenderer.invoke('semantic:set-enabled', Boolean(enabled)),
   getIndexActivity: () => ipcRenderer.invoke('knowledge:activity'),
   setProjectQuickActions: (value) => ipcRenderer.invoke('project:set-quick-actions', value),
+  setProjectAiOptions: (value) => ipcRenderer.invoke('project:set-ai-options', value),
   getContextChain: (filePath) => ipcRenderer.invoke('project:context-chain', filePath),
   moveIntoDirectory: (request) => ipcRenderer.invoke('workspace:move-path', request),
   saveProjectSettings: (settings) => ipcRenderer.invoke('project:save-settings', settings),

@@ -7,6 +7,17 @@ const { writeFileAtomic } = require('./atomic-write.cjs')
 const { ownerRoot, parentOwner, looseKey } = require('./project-owner.cjs')
 const { cleanTemperature } = require('./temperature.cjs')
 
+// Gruppi di strumenti dell'assistente che un progetto può accendere o spegnere (gli stessi delle impostazioni generali).
+const TOOL_GROUPS = ['files', 'create', 'memory', 'notes', 'edit', 'ask', 'vision', 'web']
+// Approvazione delle modifiche: '' = come nelle impostazioni generali, 'on' = approvate in automatico, 'off' = da rivedere.
+const cleanAutoApprove = (value) => (value === 'on' || value === 'off' ? value : '')
+// Solo le scelte esplicite del progetto: ciò che manca eredita le impostazioni generali.
+const cleanTools = (value) => {
+  const out = {}
+  if (value && typeof value === 'object' && !Array.isArray(value)) for (const group of TOOL_GROUPS) if (typeof value[group] === 'boolean') out[group] = value[group]
+  return out
+}
+
 const DIRECTORY_NAME = '.ow'
 const FORMAT_VERSION = 1
 const MAX_VERSIONS_PER_DOCUMENT = 100
@@ -222,7 +233,7 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
       // Sopra questo progetto c'è un altro progetto (`.ow`)? Se sì, si può scegliere di ereditarne il contesto.
       parent: parentProject(),
       inherit: settings.inherit === true,
-      ai: { context, extraContext: readExtraContext(), language: String(settings.ai.language || ''), documentLanguage: String(settings.ai.documentLanguage || ''), temperature: cleanTemperature(settings.ai.temperature) },
+      ai: { context, extraContext: readExtraContext(), language: String(settings.ai.language || ''), documentLanguage: String(settings.ai.documentLanguage || ''), temperature: cleanTemperature(settings.ai.temperature), autoApprove: cleanAutoApprove(settings.ai.autoApprove), tools: cleanTools(settings.ai.tools) },
       options: { autoVersions: settings.options.autoVersions !== false, searchIndex: settings.options.searchIndex !== false, sharedKnowledge: settings.options.sharedKnowledge !== false },
       spellcheck: { languages: cleanLanguages(settings.spellcheck.languages) },
       editor: cleanEditor(settings.editor),
@@ -239,6 +250,9 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     settings.ai = { ...settings.ai, language: String(ai?.language || '').slice(0, 50), documentLanguage: String(ai?.documentLanguage || '').slice(0, 50) }
     // Come `skills` e `editor`: chi non lo passa (es. la copia del contesto) lascia intatta la temperatura.
     if (ai && 'temperature' in ai) settings.ai.temperature = cleanTemperature(ai.temperature)
+    // Idem per l'approvazione delle modifiche e per gli strumenti dell'assistente.
+    if (ai && 'autoApprove' in ai) settings.ai.autoApprove = cleanAutoApprove(ai.autoApprove)
+    if (ai && 'tools' in ai) settings.ai.tools = cleanTools(ai.tools)
     // Come `skills` e `editor`: chi non passa `searchIndex` (es. la copia del contesto) lascia intatta la scelta sull'indice di ricerca.
     settings.options = { ...settings.options, autoVersions: options?.autoVersions !== false }
     if (options && 'searchIndex' in options) settings.options.searchIndex = options.searchIndex !== false
@@ -252,6 +266,15 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     writeAtomic(settingsFile(), JSON.stringify(settings, null, 2))
     writeAtomic(contextFile(), String(ai?.context || '').slice(0, MAX_CONTEXT_CHARS))
     return getSettings()
+  }
+
+  // Approvazione delle modifiche e strumenti dell'assistente: si salvano da soli (dalla chat), senza toccare il resto delle impostazioni.
+  function setAiOptions({ autoApprove, tools } = {}) {
+    const settings = readSettings()
+    if (autoApprove !== undefined) settings.ai.autoApprove = cleanAutoApprove(autoApprove)
+    if (tools !== undefined) settings.ai.tools = cleanTools(tools)
+    writeAtomic(settingsFile(), JSON.stringify(settings, null, 2))
+    return { autoApprove: cleanAutoApprove(settings.ai.autoApprove), tools: cleanTools(settings.ai.tools) }
   }
 
   // Azioni rapide del progetto: si salvano da sole, senza toccare il resto delle impostazioni.
@@ -360,7 +383,7 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     try { return getProjectPath() ? cleanTemperature(readSettings().ai.temperature) : '' } catch { return '' }
   }
 
-  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, getTemperature, getContextChain, saveSettings, setQuickActions, setActiveSkills, autoVersionsEnabled, searchIndexEnabled, sharedKnowledgeEnabled, addVersion, listVersions, getVersion, deleteVersion }
+  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, getTemperature, getContextChain, saveSettings, setQuickActions, setAiOptions, setActiveSkills, autoVersionsEnabled, searchIndexEnabled, sharedKnowledgeEnabled, addVersion, listVersions, getVersion, deleteVersion }
 }
 
 module.exports = { createProjectFile }

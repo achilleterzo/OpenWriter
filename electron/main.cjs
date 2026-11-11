@@ -1161,6 +1161,7 @@ ipcMain.handle('skills:set-active', (_event, { directory, active } = {}) => {
 ipcMain.handle('project:get-settings', () => projectFile.getSettings())
 // Azioni rapide del progetto aperto (vedi project-file.cjs).
 ipcMain.handle('project:set-quick-actions', (_event, value) => projectFile.setQuickActions(value))
+ipcMain.handle('project:set-ai-options', (_event, value) => projectFile.setAiOptions(value))
 // Contesto dell'assistente per il documento attivo: le istruzioni di tutti i progetti coinvolti, dal più esterno al più vicino.
 ipcMain.handle('project:context-chain', (_event, filePath) => projectFile.getContextChain(filePath))
 ipcMain.handle('project:save-settings', (_event, settings) => {
