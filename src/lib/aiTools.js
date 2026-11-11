@@ -12,6 +12,8 @@ import { describeSavedReference, refreshReference, saveFromUrl } from './webRefe
 // Everything the model reads (descriptions, hints, results, errors) is English; only what the user sees goes through t().
 
 const NO_CHANGE_MESSAGE = 'No change made: the result is identical to the current document (the text is already as requested). Read the document again with read_file to check it before trying again.'
+// The tab named in a navigation tool was the user's: it was left alone and the work happened in the assistant's own tab.
+const ownTabNote = (target) => (target.skippedUserTab ? 'Note: the tab you named is the user\'s and was left untouched; this is your own working tab.\n' : '')
 const READ_ONLY_MESSAGE = 'This document is the read-only original of a converted file and cannot be edited. Edit the Markdown (.md) file with the same name instead.'
 const optionSchema = { anyOf: [{ type: 'string' }, { type: 'object', properties: { label: { type: 'string' }, description: { type: 'string' } }, required: ['label'] }] }
 
@@ -43,8 +45,8 @@ export const TOOL_DEFINITIONS = [
   { group: 'edit', name: 'replace_document', required: ['content'], description: 'Replaces the WHOLE content of the open document with the given Markdown (a full rewrite). The user can undo it with Ctrl+Z and a version of the previous text is archived; the edit stays marked for the user to accept or reject, and nothing is written to the file until the user saves. For small changes prefer replace_text.', parameters: { content: 'the complete new text of the document, in Markdown', allow_shrink: { type: 'boolean', description: 'optional: true only if the new text is meant to be much shorter than the current one' }, path: 'optional: document (default: the active one)' } },
   { group: 'edit', name: 'replace_text', required: ['find', 'replace'], description: 'Replaces a passage of the open document. The user can undo the change with Ctrl+Z; the edit stays marked for the user to accept or reject, and nothing is written to the file until the user saves (a version of the previous text is archived).', parameters: { find: 'EXACT text to replace, as shown by read_file (plain text or Markdown source, e.g. a whole link [text](url)); it must appear only once', replace: 'new text, empty to delete; may contain Markdown', path: 'optional: document (default: the active one)' } },
   { group: 'edit', name: 'insert_text', required: ['text'], description: 'Inserts text into the open document, in an undoable way.', parameters: { text: 'text to insert; may contain Markdown', position: 'optional (default: end): after | before | start | end', anchor: 'only for after/before: EXACT text next to which to insert, as shown by read_file (plain text or Markdown source); it must appear only once', path: 'optional: document (default: the active one)' } },
-  { group: 'web', name: 'browser_tabs', required: [], description: 'Lists the browser tabs of the app (including those opened by the user) with their current number, address and title.', parameters: {} },
-  { group: 'web', name: 'browser_read', required: [], description: 'Reads the CURRENT content of a browser tab (even if the user opened or moved it): text and links. It does not change page. A long page comes in chunks: continue with offset (given at the end of the previous result).', parameters: { tab: 'optional: tab number or id (default: the foreground one or the last used)', offset: 'optional: character to continue from, to keep reading the same page' } },
+  { group: 'web', name: 'browser_tabs', required: [], description: 'Lists the browser tabs of the app with their current number, address and title: the ones the user opened (the user\'s own, in which they are reading: you can read them, never navigate them) and your own working tab, if you have one.', parameters: {} },
+  { group: 'web', name: 'browser_read', required: [], description: 'Reads the CURRENT content of a browser tab (even if the user opened or moved it): text and links. It does not change page. A long page comes in chunks: continue with offset (given at the end of the previous result).', parameters: { tab: 'optional: tab number or id, also one of the user\'s (default: your own working tab if you have one, otherwise the foreground one)', offset: 'optional: character to continue from, to keep reading the same page' } },
   { group: 'web', name: 'web_open', required: ['url'], description: 'Opens an http(s) address in a browser tab and returns its text and links.', parameters: { url: 'full address', tab: 'optional: number or id of the tab to navigate (default: the foreground one)', new_tab: 'optional: true to use your own working tab (opened once, reused, and closed automatically when you finish your answer: never close it yourself)' } },
   { group: 'web', name: 'save_web_reference', required: ['url'], description: 'Saves a web page as a REFERENCE of the project: a Markdown copy kept in the project (.ow/web, read it later as @web/…) that stays available in future conversations and can be searched with search_knowledge. Use it for pages that matter for the work (a source, documentation, an article the user will need again), not for every page you visit. The page is opened in a background browser tab and its main text is stored with a header (address, dates, who saved it). If it is already saved, it is refreshed instead.', parameters: { url: 'full http(s) address of the page' } },
   { group: 'web', name: 'refresh_web_reference', required: ['reference'], description: 'Checks whether a saved web page has changed and, unless check_only is true, updates the saved copy with the current content. Each saved copy has a header (read it with read_file @web/…) and the list of saved pages shows when it was saved and last checked: use this when a copy may be out of date or the work depends on it being current. Answers "up to date" (only the check date is updated) or what changed.', parameters: { reference: 'id, @web/file name, address or part of the title of the saved page', check_only: 'true to only compare, without touching the saved copy (default false)' } },
@@ -124,7 +126,7 @@ export function toolsPrompt(enabled, { documentPath, native = false, maxSteps = 
   const memoryHint = enabled.memory ? 'The project memory (listed in the conversation) holds lasting information saved by the user or by you: take it into account. Save new important information with remember when you learn it (a decision, a term, a style rule, a fact about the project), linking the files it applies to; refine your own entries with update_memory instead of duplicating them. Keep entries few and short.' : ''
   const bookmarksHint = enabled.notes ? 'The user can set bookmarks in documents (named anchors, linked as file.md#name) and flag some to point things out to you: when the user mentions flagged points, or when you start working on a document, look at list_bookmarks (only_flagged=true) — a flagged bookmark\'s note is a remark or instruction for you. To create a link target use add_bookmark, then link with [text](relative/path.md#name).' : ''
   const notesHint = enabled.notes ? "If the user asks to review or reconsider the notes: read them with list_notes, update YOUR still-open notes with update_note (text and proposed correction) and answer the user's notes by adding new ones with add_note. Accepting or rejecting a suggestion is always up to the user. When reviewing, add few, meaningful notes, all in ONE add_note call (\"notes\"), and give each correction as the complete rewritten passage in \"replacement\". If the user asks you to fix or rewrite the text, edit it directly with replace_text instead of leaving notes. Notes you have dealt with must not stay open: replace_text closes the open notes on the passage it replaces, and for any other note you have addressed (for example after replace_document or a different edit) call update_note with status \"resolved\"." : ''
-  const webHint = enabled.web ? 'To know what the user is looking at in the browser use browser_tabs and then browser_read on the tab concerned; to search or open pages use web_search and web_open, choosing the tab with the tab parameter. To follow a link of a page use browser_follow_link (link number or text). To find again a page you already opened in this project use browser_history.' : ''
+  const webHint = enabled.web ? 'To know what the user is looking at in the browser use browser_tabs and then browser_read on the tab concerned; to search or open pages use web_search and web_open, choosing the tab with the tab parameter. The tabs the user opened are theirs, where they are reading: you may look at and read them (browser_tabs, browser_read, a screenshot) whenever it helps, but you never navigate them: web_open, web_search and browser_follow_link always work in your own working tab, which is opened when you need it and closed when you finish your answer (never close it yourself, never ask to use the tabs of the user). To follow a link of a page use browser_follow_link (link number or text). To find again a page you already opened in this project use browser_history.' : ''
   const visionHint = enabled.vision ? 'You can look at images and screenshots with view_image, screenshot_document and screenshot_browser: use them when the visual look matters (layout, charts, images in pages). Images arrive as attachments: describe only what you really see. Only the last few images stay attached to the conversation, older ones are dropped: right after looking at an image, if its details may be needed later (for example to write a new document), save a description with describe_image (the project files only) and never view the same image again: view_image returns the saved description. Images listed as having a saved description were already looked at, possibly in another conversation: read the description with view_image instead of looking at them again.' : ''
   const askHint = enabled.ask ? 'When you need a decision or a piece of information that boils down to a few alternatives (which topic to cover, which way to go, which variant to prefer), use ask_choice instead of listing the options in the text, then go on according to the answer. Do not ask for needless confirmations.' : ''
   const activeDocument = documentPath === undefined ? '' : `Active document: ${documentPath || 'not saved yet'}.`
@@ -994,7 +996,7 @@ export function createToolRunner(context) {
     async browser_tabs() {
       const tabs = await context.listBrowserTabs()
       if (!tabs.length) return 'No browser tab open.'
-      return [WEB_WARNING, ...tabs.map((tab) => `${tab.number}. [${tab.id}]${tab.active ? ' (foreground)' : ''} ${tab.title || '(untitled)'} — ${tab.url || 'about:blank'}`)].join('\n')
+      return [WEB_WARNING, ...tabs.map((tab) => `${tab.number}. [${tab.id}]${tab.own ? ' (yours)' : ' (the user\'s)'}${tab.active ? ' (foreground)' : ''} ${tab.title || '(untitled)'} — ${tab.url || 'about:blank'}`)].join('\n')
     },
 
     async browser_history(args) {
@@ -1018,10 +1020,10 @@ export function createToolRunner(context) {
     async web_search(args) {
       const query = text(args.query).trim()
       if (!query) throw new Error('Missing parameter "query"')
-      const target = await context.getBrowser({ tab: args.tab, newTab: isTrue(args.new_tab) })
+      const target = await context.getBrowser({ tab: args.tab, newTab: isTrue(args.new_tab), navigate: true })
       await target.controller.navigate(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`)
       const { results, sample } = await target.controller.evaluate(SEARCH_SCRIPT)
-      const where = `[Tab ${target.number} (${target.shortId})]`
+      const where = `${ownTabNote(target)}[Tab ${target.number} (${target.shortId})]`
       if (!results.length) return `${WEB_WARNING}\n${where} No readable results (the page may require a verification). Preview: ${sample}`
       return [WEB_WARNING, where, ...results.map((item, index) => `${index + 1}. ${item.title}\n   ${item.url}\n   ${item.snippet}`)].join('\n')
     },
@@ -1041,15 +1043,17 @@ export function createToolRunner(context) {
       try { url = new URL(text(args.url)) } catch { throw new Error('Invalid address') }
       if (!/^https?:$/.test(url.protocol)) throw new Error('Only http and https addresses are allowed')
       if (isPrivateHost(url.hostname)) throw new Error('Local and private-network addresses are not allowed')
-      const target = await context.getBrowser({ tab: args.tab, newTab: isTrue(args.new_tab) })
+      const target = await context.getBrowser({ tab: args.tab, newTab: isTrue(args.new_tab), navigate: true })
       await target.controller.navigate(url.href)
-      return showPage(target, await target.controller.evaluate(PAGE_SCRIPT), 0)
+      return `${ownTabNote(target)}${await showPage(target, await target.controller.evaluate(PAGE_SCRIPT), 0)}`
     },
 
     async browser_navigate(args) {
       const action = text(args.action)
       if (!['back', 'forward', 'reload'].includes(action)) throw new Error('"action" must be back, forward or reload')
-      const target = await context.getBrowser({ tab: args.tab, create: false })
+      const target = await context.getBrowser({ tab: args.tab, create: false, activate: false })
+      if (!target.own) throw new Error('That tab is the user\'s: you can read it, but you cannot move through its history. Open the address in your own working tab with web_open instead.')
+      await context.getBrowser({ tab: target.id, create: false })
       await target.controller[action]()
       return showPage(target, await target.controller.evaluate(PAGE_SCRIPT), 0)
     },
@@ -1182,7 +1186,7 @@ ${saved}`
     async browser_follow_link(args) {
       const wanted = text(args.link).trim()
       if (!wanted) throw new Error('Missing parameter "link"')
-      const target = await context.getBrowser({ tab: args.tab, create: false })
+      const target = await context.getBrowser({ tab: args.tab, create: false, activate: false })
       const sameUrl = (left, right) => String(left).split('#')[0] === String(right).split('#')[0]
       let page = pages.get(target.id)
       const currentUrl = target.controller.info().url
@@ -1206,9 +1210,11 @@ ${saved}`
       const url = new URL(href)
       if (!/^https?:$/.test(url.protocol)) throw new Error('Only http and https links are allowed')
       if (isPrivateHost(url.hostname)) throw new Error('Local and private-network addresses are not allowed')
-      await context.getBrowser({ tab: target.id, create: false })
-      await target.controller.navigate(url.href)
-      return showPage(target, await target.controller.evaluate(PAGE_SCRIPT), 0)
+      // The link is followed in the assistant's own tab: the page the user is reading is never moved (if the page came from the user's tab, the link opens in the working tab).
+      const destination = target.own ? await context.getBrowser({ tab: target.id, create: false }) : await context.getBrowser({ navigate: true })
+      await destination.controller.navigate(url.href)
+      return `${target.own ? '' : `The link was opened in your own working tab, the user's tab was left as it is.
+`}${await showPage(destination, await destination.controller.evaluate(PAGE_SCRIPT), 0)}`
     },
 
     async web_read(args) {
