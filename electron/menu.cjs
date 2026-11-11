@@ -49,7 +49,7 @@ function createApplicationMenu(sendCommand, state = {}) {
         { role: 'cut', label: t('Cut') },
         { role: 'copy', label: t('Copy') },
         { role: 'paste', label: t('Paste') },
-        { role: 'selectAll', label: t('Select all') },
+        { label: t('Select all'), accelerator: 'CmdOrCtrl+A', click: command('select-all') },
         { type: 'separator' },
         { label: t('Find…'), accelerator: 'CmdOrCtrl+F', click: command('find'), enabled: onDocument },
         { label: t('Replace…'), accelerator: 'CmdOrCtrl+H', click: command('replace'), enabled: onDocument },

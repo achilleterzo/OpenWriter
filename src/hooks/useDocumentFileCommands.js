@@ -5,12 +5,13 @@ import { exportableHtml } from '../lib/exportHtml.js'
 const electronAPI = window.electronAPI
 
 // Gestisce i comandi di menu relativi ai documenti, applicandoli alla scheda attiva.
-export default function useDocumentFileCommands({ activeTab, getEditor, workspace, onStatusChange }) {
+export default function useDocumentFileCommands({ activeTab, getEditor, workspace, onStatusChange, onSelectAll }) {
   useEffect(() => {
     if (!electronAPI) return undefined
 
     return electronAPI.onDocumentCommand(async (command) => {
       try {
+        if (command === 'select-all') return onSelectAll?.()
         if (command === 'find' || command === 'replace') return workspace.requestFind(command === 'replace')
         if (command === 'new') return workspace.newTab()
         if (command === 'close-tab') return activeTab && workspace.closeTab(activeTab.id)
@@ -61,5 +62,5 @@ export default function useDocumentFileCommands({ activeTab, getEditor, workspac
       }
       return undefined
     })
-  }, [activeTab, getEditor, workspace, onStatusChange])
+  }, [activeTab, getEditor, workspace, onStatusChange, onSelectAll])
 }
