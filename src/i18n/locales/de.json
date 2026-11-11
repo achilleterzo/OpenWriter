@@ -1351,5 +1351,18 @@
   "The frame is too small: drag over the part of the page to send": "Der Ausschnitt ist zu klein: ziehe über den Teil der Seite, der gesendet werden soll",
   "Region attached to the assistant chat": "Ausschnitt an den Chat des Assistenten angehängt",
   "Copy the image": "Bild kopieren",
-  "Save the image": "Bild speichern"
+  "Save the image": "Bild speichern",
+  "Open link in a new tab": "Link in neuem Tab öffnen",
+  "Open link in a new background tab": "Link in neuem Tab im Hintergrund öffnen",
+  "Copy link address": "Linkadresse kopieren",
+  "Copy image": "Bild kopieren",
+  "Copy image address": "Bildadresse kopieren",
+  "Save image to the project": "Bild im Projekt speichern",
+  "Ask the assistant about this image": "Den Assistenten zu diesem Bild fragen",
+  "Image saved: {name}": "Bild gespeichert: {name}",
+  "Open a project folder to save images": "Öffne einen Projektordner, um Bilder zu speichern",
+  "Image from “{title}”": "Bild von „{title}“",
+  "Search the web for “{text}”": "Im Web nach „{text}“ suchen",
+  "Ask the assistant about the selection": "Den Assistenten zur Auswahl fragen",
+  "Ask the assistant in a new chat": "Den Assistenten in einem neuen Chat fragen"
 }

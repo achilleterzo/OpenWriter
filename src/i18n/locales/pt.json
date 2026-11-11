@@ -1351,5 +1351,18 @@
   "The frame is too small: drag over the part of the page to send": "A moldura é demasiado pequena: arraste sobre a parte da página a enviar",
   "Region attached to the assistant chat": "Moldura anexada à conversa do assistente",
   "Copy the image": "Copiar a imagem",
-  "Save the image": "Guardar a imagem"
+  "Save the image": "Guardar a imagem",
+  "Open link in a new tab": "Abrir o link num novo separador",
+  "Open link in a new background tab": "Abrir o link num novo separador em segundo plano",
+  "Copy link address": "Copiar o endereço do link",
+  "Copy image": "Copiar imagem",
+  "Copy image address": "Copiar o endereço da imagem",
+  "Save image to the project": "Guardar a imagem no projeto",
+  "Ask the assistant about this image": "Perguntar ao assistente sobre esta imagem",
+  "Image saved: {name}": "Imagem guardada: {name}",
+  "Open a project folder to save images": "Abra uma pasta de projeto para guardar imagens",
+  "Image from “{title}”": "Imagem de “{title}”",
+  "Search the web for “{text}”": "Pesquisar na web “{text}”",
+  "Ask the assistant about the selection": "Perguntar ao assistente sobre a seleção",
+  "Ask the assistant in a new chat": "Perguntar ao assistente numa nova conversa"
 }

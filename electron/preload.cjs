@@ -135,6 +135,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readImageDescription: (path) => ipcRenderer.invoke('images:read-description', path),
   writeImageDescription: (path, description) => ipcRenderer.invoke('images:write-description', path, description),
   captureRect: (rect) => ipcRenderer.invoke('images:capture-page', rect),
+  onBrowserContextMenu: (callback) => {
+    const listener = (_event, info) => callback(info)
+    ipcRenderer.on('browser:context-menu', listener)
+    return () => ipcRenderer.removeListener('browser:context-menu', listener)
+  },
+  onBrowserOpenTab: (callback) => {
+    const listener = (_event, info) => callback(info)
+    ipcRenderer.on('browser:open-tab', listener)
+    return () => ipcRenderer.removeListener('browser:open-tab', listener)
+  },
+  onBrowserPointerDown: (callback) => {
+    const listener = (_event, contentsId) => callback(contentsId)
+    ipcRenderer.on('browser:pointer-down', listener)
+    return () => ipcRenderer.removeListener('browser:pointer-down', listener)
+  },
+  browserContextAction: (request) => ipcRenderer.invoke('browser:context-action', request),
+  saveBrowserImage: (request) => ipcRenderer.invoke('browser:save-image', request),
+  fetchBrowserImage: (request) => ipcRenderer.invoke('browser:fetch-image', request),
   copyImage: (image) => ipcRenderer.invoke('images:copy', image),
   saveImage: (image) => ipcRenderer.invoke('images:save', image),
   captureWebview: (contentsId, region) => ipcRenderer.invoke('images:capture-webview', contentsId, region),

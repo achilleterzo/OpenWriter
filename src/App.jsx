@@ -248,7 +248,9 @@ export default function App() {
   const lastDocumentId = useRef(null)
   const lastBrowserId = useRef(null)
   // Schede del browser aperte dall'assistente/agenti: se ne riusa una sola e si chiudono a fine risposta. `previous`: la scheda che l'utente aveva davanti.
-  const agentBrowsers = useRef({ ids: new Set(), previous: null })
+  // Le schede del browser dell'assistente (`ids`) sono sue: ci naviga solo lì. Quelle dell'utente le può leggere e vedere, mai usare per navigare.
+  // `touched`: schede che ha portato in primo piano; `previous`: quella che l'utente aveva davanti.
+  const agentBrowsers = useRef({ ids: new Set(), previous: null, touched: new Set() })
 
   // Le schede documento si montano (e costruiscono il loro editor) solo quando si guardano la prima volta, o se hanno modifiche da conservare: riaprire un progetto
   // con molte schede pesanti non le costruisce tutte insieme.
@@ -871,11 +873,15 @@ export default function App() {
       setFindRequest((current) => ({ nonce: current.nonce + 1, replace }))
     },
     // Con un indirizzo (da «Riferimenti web») la scheda si apre su quella pagina; il pulsante «nuovo browser» chiama senza (e passa l'evento: non è un indirizzo).
-    openBrowser(url) {
+    // `background`: la scheda si apre senza passarci sopra (come il clic centrale su un link); `afterId`: accanto alla scheda da cui parte, non in fondo.
+    openBrowser(url, { background = false, afterId = null } = {}) {
       const tab = createBrowserTab(typeof url === 'string' ? url : undefined)
-      lastBrowserId.current = tab.id
-      setTabs((current) => [...current, tab])
-      setActiveId(tab.id)
+      if (!background) lastBrowserId.current = tab.id
+      setTabs((current) => {
+        const index = afterId ? current.findIndex((item) => item.id === afterId) : -1
+        return index === -1 ? [...current, tab] : keepPinnedFirst([...current.slice(0, index + 1), tab, ...current.slice(index + 1)])
+      })
+      if (!background) setActiveId(tab.id)
     },
     setTitle(id, title) {
       setTabs((current) => current.map((tab) => (tab.id === id && title ? { ...tab, title } : tab)))
@@ -1059,40 +1065,51 @@ export default function App() {
         number: index + 1,
         id: tab.id.slice(0, 6),
         active: tab.id === current,
+        own: agentBrowsers.current.ids.has(tab.id),
         ...(browserControllers.current.get(tab.id)?.info() || { url: '', title: tab.title }),
       }))
     },
-    // Sceglie la scheda su cui lavorare: quella indicata (numero o id), altrimenti la scheda browser in primo piano,
-    // l'ultima usata o la prima. `create` ne apre una nuova se non ce n'è (o se `newTab`); `activate` la porta in primo piano.
-    async getBrowser({ tab: reference, newTab = false, create = true, activate = true } = {}) {
+    // Sceglie la scheda su cui lavorare. `agent` (le chiamate dell'assistente): la navigazione (`navigate`, o `newTab`) avviene sempre in una sua scheda di lavoro,
+    // riusata o aperta una volta e chiusa a fine risposta, mai in una scheda dell'utente, nemmeno se la indica; la lettura può riguardare qualsiasi scheda (indicata,
+    // altrimenti la sua, altrimenti quella in primo piano, l'ultima usata o la prima). Senza `agent` (l'utente) si usa la scheda in primo piano o l'ultima, o una nuova con `newTab`.
+    // `create` ne apre una nuova se non ce n'è; `activate` la porta in primo piano. Il risultato dice se la scheda è dell'assistente (`own`) e se quella indicata è stata lasciata stare (`skippedUserTab`).
+    async getBrowser({ tab: reference, newTab = false, create = true, activate = true, agent = false, navigate = false } = {}) {
       const list = latest.current.tabs.filter((item) => item.kind === 'browser')
+      const isOwn = (item) => agentBrowsers.current.ids.has(item.id)
+      const ownTab = () => list.find(isOwn) || null
+      const userChoice = () => list.find((item) => item.id === latest.current.activeId) || list.find((item) => item.id === lastBrowserId.current) || list[0] || null
+      const working = agent && (navigate || newTab)
       let target = null
+      let skippedUserTab = false
       if (!newTab && reference !== undefined && reference !== null && String(reference).trim() !== '') {
         const key = String(reference).trim().toLowerCase().replace(/^(scheda|tab)\s*#?/, '')
         target = (/^\d+$/.test(key) ? list[Number(key) - 1] : null) || list.find((item) => item.id.toLowerCase().startsWith(key)) || null
         if (!target) throw new Error(t('Browser tab "{reference}" not found: use browser_tabs to see the open ones', { reference }))
+        if (working && !isOwn(target)) { target = ownTab(); skippedUserTab = true }
+      } else if (working) {
+        target = ownTab()
       } else if (!newTab) {
-        target = list.find((item) => item.id === latest.current.activeId) || list.find((item) => item.id === lastBrowserId.current) || list[0] || null
-      } else {
-        // Una "nuova scheda" richiesta dall'agente riusa quella che ha già aperto, invece di accumularne.
-        target = list.find((item) => agentBrowsers.current.ids.has(item.id)) || null
+        target = (agent && ownTab()) || userChoice()
       }
       let number = target ? list.indexOf(target) + 1 : 0
       if (!target) {
-        if (!create && !newTab) throw new Error(t('No browser tab is open: the user can open one (globe icon) or you can with web_open or web_search, if web browsing is enabled'))
+        if (!create && !newTab && !working) throw new Error(t('No browser tab is open: the user can open one (globe icon) or you can with web_open or web_search, if web browsing is enabled'))
         target = createBrowserTab()
         number = list.length + 1
-        agentBrowsers.current.ids.add(target.id)
+        if (agent) agentBrowsers.current.ids.add(target.id)
         setTabs((current) => [...current, target])
       }
       lastBrowserId.current = target.id
       if (activate) {
-        if (agentBrowsers.current.ids.has(target.id) && agentBrowsers.current.previous === null) agentBrowsers.current.previous = latest.current.activeId
+        if (agent) {
+          if (agentBrowsers.current.previous === null) agentBrowsers.current.previous = latest.current.activeId
+          agentBrowsers.current.touched.add(target.id)
+        }
         setActiveId(target.id)
       }
       for (let attempt = 0; attempt < 200; attempt += 1) {
         const controller = browserControllers.current.get(target.id)
-        if (controller) return { controller, id: target.id, shortId: target.id.slice(0, 6), number }
+        if (controller) return { controller, id: target.id, shortId: target.id.slice(0, 6), number, own: isOwn(target), skippedUserTab }
         await sleep(50)
       }
       throw new Error(t('The browser is not ready'))
@@ -1111,14 +1128,14 @@ export default function App() {
     },
     // Schermata di una scheda del browser; se la scheda è fuori schermo e il risultato è vuoto la porta in primo piano e riprova.
     async captureBrowser(reference) {
-      let target = await toolBridge.getBrowser({ tab: reference, create: false, activate: false })
+      let target = await toolBridge.getBrowser({ tab: reference, create: false, activate: false, agent: true })
       const info = target.controller.info()
       const capture = async () => electronAPI.captureWebview(await target.controller.webContentsId())
       let image
       try {
         image = await capture()
       } catch {
-        target = await toolBridge.getBrowser({ tab: target.id, create: false, activate: true })
+        target = await toolBridge.getBrowser({ tab: target.id, create: false, activate: true, agent: true })
         await sleep(600)
         image = await capture()
       }
@@ -1190,16 +1207,19 @@ export default function App() {
       workspaceRef.current.closeTab(id)
       return true
     },
-    // A fine risposta si chiudono le schede del browser aperte dall'agente (senza che lo chieda) e si torna alla scheda che l'utente aveva davanti.
+    // A fine risposta si chiudono le schede del browser aperte dall'agente (senza che lo chieda; una che l'utente ha fissato resta, ormai è sua)
+    // e si torna alla scheda che l'utente aveva davanti, anche se l'agente ne aveva portata in primo piano una sua.
     async closeAgentBrowsers() {
-      const { ids, previous } = agentBrowsers.current
-      if (!ids.size) return
-      const closing = [...ids]
+      const { ids, previous, touched } = agentBrowsers.current
+      if (!ids.size && !touched.size) return
+      const pinned = new Set(latest.current.tabs.filter((tab) => tab.pinned).map((tab) => tab.id))
+      const closing = [...ids].filter((id) => !pinned.has(id))
+      const wasTouched = touched.has(latest.current.activeId) || closing.includes(latest.current.activeId)
       ids.clear()
+      touched.clear()
       agentBrowsers.current.previous = null
-      const wasActive = closing.includes(latest.current.activeId)
       for (const id of closing) await workspaceRef.current.closeTab(id)
-      if (wasActive && previous && latest.current.tabs.some((tab) => tab.id === previous)) setActiveId(previous)
+      if (wasTouched && previous && latest.current.tabs.some((tab) => tab.id === previous)) setActiveId(previous)
     },
     onFilesChanged: () => setExplorerRefresh((value) => value + 1),
     onMemoryChanged: () => setMemoryVersion((value) => value + 1),
@@ -1332,13 +1352,62 @@ export default function App() {
   }, [])
 
   // "Riquadro" del browser: la parte di pagina tracciata dall'utente diventa un'immagine allegata alla chat dell'assistente (si apre se è chiusa), senza inviare nulla.
+  // `shot.label`: come si chiama l'immagine nella chat (altrimenti «Riquadro di …»).
   const sendRegionToChat = useCallback((shot) => {
     setAssistantOpen(true)
     setChatRequest({ id: Date.now(), image: shot })
     setStatus(t('Region attached to the assistant chat'))
   }, [])
 
-  useDocumentFileCommands({ activeTab, getEditor, workspace, onStatusChange: setStatus })
+  // «Seleziona tutto» (menu Modifica, Ctrl+A) agisce solo sul riquadro in uso, mai sull'intera finestra: in un campo di testo o nell'editor, il suo contenuto;
+  // dove c'è già una selezione, la zona di testo che la contiene (la chat); altrimenti la scheda in primo piano (pagina del browser o documento); altrove niente.
+  const selectAllInActivePane = useCallback(async () => {
+    const focused = document.activeElement
+    if (focused && (focused.isContentEditable || /^(INPUT|TEXTAREA)$/.test(focused.tagName))) { electronAPI.editAction('selectAll'); return }
+    const selection = window.getSelection()
+    const anchor = selection?.anchorNode
+    const scope = (anchor?.nodeType === 1 ? anchor : anchor?.parentElement)?.closest?.('[data-select-scope]') || focused?.closest?.('[data-select-scope]')
+    if (scope) {
+      const range = document.createRange()
+      range.selectNodeContents(scope)
+      selection.removeAllRanges()
+      selection.addRange(range)
+      return
+    }
+    // Il focus è su un controllo (albero dei file, pulsante, elenco): non c'è un testo da selezionare.
+    if (focused && focused !== document.body) return
+    const { tabs: currentTabs, activeId: currentActive, editors: currentEditors } = latest.current
+    const tab = currentTabs.find((item) => item.id === currentActive)
+    if (!tab) return
+    if (tab.kind === 'browser') {
+      const controller = browserControllers.current.get(tab.id)
+      if (controller) electronAPI.browserContextAction({ contentsId: await controller.webContentsId(), action: 'selectAll' }).catch(() => {})
+      return
+    }
+    if (isLive(tab) && currentEditors[tab.id] && !currentEditors[tab.id].isDestroyed) currentEditors[tab.id].chain().focus(null, { scrollIntoView: false }).selectAll().run()
+  }, [])
+
+  // Ctrl+A fuori dai campi di testo: Chromium selezionerebbe da solo l'intera pagina (albero dei file, chat, editor insieme), e il comando del menu
+  // arriverebbe a cose fatte. Il tasto si intercetta qui: la selezione nativa si ferma e decide selectAllInActivePane.
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || String(event.key).toLowerCase() !== 'a') return
+      const focused = document.activeElement
+      if (focused && (focused.isContentEditable || /^(INPUT|TEXTAREA)$/.test(focused.tagName))) return
+      event.preventDefault()
+      selectAllInActivePane()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [selectAllInActivePane])
+
+  // Un clic dentro una pagina del browser non arriva alla finestra: il menu contestuale aperto si chiude comunque.
+  useEffect(() => {
+    if (!electronAPI?.onBrowserPointerDown) return undefined
+    return electronAPI.onBrowserPointerDown(() => setContextMenu(null))
+  }, [])
+
+  useDocumentFileCommands({ activeTab, getEditor, workspace, onStatusChange: setStatus, onSelectAll: selectAllInActivePane })
 
   const openFileRef = useRef(null)
 
@@ -1572,7 +1641,7 @@ export default function App() {
 
   return (
     <ContextMenuContext.Provider value={setContextMenu}>
-      <div className="flex h-screen bg-slate-950 text-slate-100">
+      <div className="flex h-screen overflow-clip bg-slate-950 text-slate-100">
         <ActivityBar
           activeTab={sideTab}
           onSelect={(id) => setSideTab((current) => (current === id ? null : id))}
@@ -1626,7 +1695,7 @@ export default function App() {
               : tab.kind === 'text'
               ? <TextPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} findRequest={findRequest} lineNumbers={textLineNumbers} onToggleLineNumbers={toggleTextLineNumbers} onRegister={registerTextBuffer} onDirty={workspace.markDirty} onClean={workspace.markClean} onSave={async () => { if (await workspace.saveText(tab.id)) setStatus(t('Saved')) }} onInteract={workspace.promoteTab} onStatus={setStatus} />
               : tab.kind === 'browser'
-              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onRegion={sendRegionToChat} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} webRefsVersion={webRefsVersion} onWebRefsChanged={() => setWebRefsVersion((value) => value + 1)} />
+              ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onRegion={sendRegionToChat} onOpenTab={(url, options) => workspace.openBrowser(url, { ...options, afterId: tab.id })} onAskAboutText={(passage, newChat) => discussPassage(passage, { newChat })} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} webRefsVersion={webRefsVersion} onWebRefsChanged={() => setWebRefsVersion((value) => value + 1)} />
               : (mountedTabs.current.has(tab.id) || tab.dirty || tab.pending)
               ? <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onOpenFull={() => workspace.openFull(tab.id)} onExtractImages={() => workspace.extractImages(tab.sourcePath)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />
               : null))}

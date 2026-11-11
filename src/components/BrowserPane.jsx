@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { ContextMenuContext, modKey } from './ContextMenu.jsx'
 import { subscribeAppearance } from '../appearance.js'
 import { ArrowLeft, ArrowRight, BookOpen, Camera, Clock, Crop, ExternalLink, FileDown, Loader2, Minus, Moon, Plus, RotateCw, Star, Sun, X } from 'lucide-react'
 import { articleFileName, articleToMarkdown, extractArticle, readerDocument } from '../lib/readerMode.js'
 import { saveFromController } from '../lib/webReferences.js'
+import { rasterizeSvg } from '../lib/svgRaster.js'
 import { isPrivateHost } from '../lib/webAddress.js'
 import { t } from '../i18n/index.js'
 
@@ -56,7 +58,7 @@ function Suggestions({ items, highlight, hasQuery, hasHistory, onPick, onRemove,
 }
 
 // Scheda browser basata su <webview> isolato. Registra un controller con cui l'assistente può navigare e leggere la pagina.
-export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved, onScreenshot, onRegion, onStatus, webRefsVersion = 0, onWebRefsChanged }) {
+export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved, onScreenshot, onRegion, onOpenTab, onAskAboutText, onStatus, webRefsVersion = 0, onWebRefsChanged }) {
   const viewRef = useRef(null)
   // Una scheda ripristinata dopo un riavvio si apre alla pagina in cui era.
   const initialUrl = useRef(tab.initialUrl || 'about:blank')
@@ -342,6 +344,80 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
       setFrameBusy(false)
     }
   }
+
+  // Tasto destro nella pagina (e clic centrale sui link, gestito dal processo principale): il menu si compone qui, secondo ciò che sta sotto il cursore.
+  const openMenu = useContext(ContextMenuContext)
+  const menuProps = useRef({})
+  menuProps.current = { openMenu, onOpenTab, onAskAboutText, onRegion, onStatus, onScreenshot }
+  useEffect(() => {
+    const api = window.electronAPI
+    if (!api?.onBrowserContextMenu) return undefined
+    const mine = (contentsId) => { try { return viewRef.current?.getWebContentsId() === contentsId } catch { return false } }
+    const offMenu = api.onBrowserContextMenu((info) => {
+      if (!mine(info.contentsId)) return
+      const view = viewRef.current
+      const { openMenu: open, onOpenTab: openTab, onAskAboutText: askText, onRegion: askImage, onStatus: status, onScreenshot: refreshFiles } = menuProps.current
+      const fail = (error) => status?.(error.message || t('The operation failed'))
+      const act = (action) => api.browserContextAction({ contentsId: info.contentsId, action, x: info.x, y: info.y }).catch(fail)
+      const web = (value) => /^https?:\/\//i.test(value || '')
+      const title = view.getTitle() || view.getURL()
+      const groups = []
+
+      if (web(info.linkURL)) {
+        groups.push([
+          { label: t('Open link in a new tab'), onClick: () => openTab?.(info.linkURL, { background: false }) },
+          { label: t('Open link in a new background tab'), onClick: () => openTab?.(info.linkURL, { background: true }) },
+          { label: t('Copy link address'), onClick: () => navigator.clipboard.writeText(info.linkURL).catch(fail) },
+          { label: t('Open in the system browser'), onClick: () => api.openLink(info.linkURL) },
+        ])
+      }
+      if (info.mediaType === 'image' && (info.hasImageContents || info.srcURL)) {
+        const image = []
+        if (info.hasImageContents) image.push({ label: t('Copy image'), onClick: () => act('copyImage') })
+        if (info.srcURL) {
+          image.push(
+            { label: t('Save image to the project'), onClick: () => api.saveBrowserImage({ contentsId: info.contentsId, url: info.srcURL }).then((saved) => { status?.(t('Image saved: {name}', { name: `images/${saved.split(/[\\/]/).pop()}` })); refreshFiles?.(saved) }).catch(fail) },
+            { label: t('Ask the assistant about this image'), onClick: () => api.fetchBrowserImage({ contentsId: info.contentsId, url: info.srcURL }).then(async (shot) => ({ ...(shot.svg ? await rasterizeSvg(shot.svg) : shot), title })).then((shot) => askImage?.({ ...shot, title, label: t('Image from “{title}”', { title: title.replace(/\s+/g, ' ').slice(0, 40) }) })).catch(fail) },
+          )
+        }
+        if (web(info.srcURL)) image.push({ label: t('Copy image address'), onClick: () => navigator.clipboard.writeText(info.srcURL).catch(fail) })
+        groups.push(image)
+      }
+      const selected = info.selectionText.trim()
+      if (info.isEditable) {
+        groups.push([
+          { label: t('Cut'), hint: `${modKey}X`, disabled: !info.flags?.canCut, onClick: () => act('cut') },
+          { label: t('Copy'), hint: `${modKey}C`, disabled: !info.flags?.canCopy, onClick: () => act('copy') },
+          { label: t('Paste'), hint: `${modKey}V`, disabled: !info.flags?.canPaste, onClick: () => act('paste') },
+          { label: t('Select all'), hint: `${modKey}A`, onClick: () => act('selectAll') },
+        ])
+      } else if (selected) {
+        groups.push([{ label: t('Copy'), hint: `${modKey}C`, onClick: () => act('copy') }])
+      }
+      if (selected) {
+        const passage = { text: selected, title, filePath: null }
+        groups.push([
+          { label: t('Search the web for “{text}”', { text: selected.replace(/\s+/g, ' ').slice(0, 30) }), onClick: () => openTab?.(`https://duckduckgo.com/?q=${encodeURIComponent(selected.replace(/\s+/g, ' ').slice(0, 300))}`, { background: false }) },
+          { label: t('Ask the assistant about the selection'), onClick: () => askText?.(passage, false) },
+          { label: t('Ask the assistant in a new chat'), onClick: () => askText?.(passage, true) },
+        ])
+      }
+      if (!groups.length || (!info.isEditable && !selected && !web(info.linkURL) && info.mediaType !== 'image')) {
+        groups.push([
+          { label: t('Back'), disabled: !view.canGoBack(), onClick: () => view.goBack() },
+          { label: t('Forward'), disabled: !view.canGoForward(), onClick: () => view.goForward() },
+          { label: t('Reload'), onClick: () => view.reload() },
+        ], [{ label: t('Select all'), hint: `${modKey}A`, onClick: () => act('selectAll') }])
+      }
+      const box = view.getBoundingClientRect()
+      const items = groups.flatMap((group, index) => (index ? [{ separator: true }, ...group] : group))
+      // Il punto del clic nella finestra, se il processo principale lo ha dato; altrimenti la posizione della pagina più quella della sua cornice.
+      const exact = Number.isFinite(info.windowX) && Number.isFinite(info.windowY)
+      open({ x: exact ? info.windowX : box.left + info.x, y: exact ? info.windowY : box.top + info.y, items })
+    })
+    const offOpen = api.onBrowserOpenTab?.(({ contentsId, url, background }) => { if (mine(contentsId)) menuProps.current.onOpenTab?.(url, { background }) })
+    return () => { offMenu?.(); offOpen?.() }
+  }, [])
 
   const buttonClass = 'rounded p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-slate-50 disabled:opacity-30 disabled:hover:bg-transparent'
 

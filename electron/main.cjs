@@ -1677,6 +1677,77 @@ ipcMain.handle('images:save', async (_event, { data, mime, label } = {}) => {
   await fs.writeFile(result.filePath, buffer)
   return result.filePath
 })
+// Menu contestuale del browser: azioni sulla pagina (modifica del testo, copia di un'immagine) e immagini della pagina, salvate nel progetto o allegate alla chat.
+const webviewOf = (contentsId) => {
+  const contents = webContents.fromId(Number(contentsId))
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) throw new Error(t('Invalid browser tab'))
+  return contents
+}
+ipcMain.handle('browser:context-action', (_event, { contentsId, action, x, y } = {}) => {
+  const contents = webviewOf(contentsId)
+  contents.focus()
+  if (action === 'copy') contents.copy()
+  else if (action === 'cut') contents.cut()
+  else if (action === 'paste') contents.paste()
+  else if (action === 'selectAll') contents.selectAll()
+  else if (action === 'copyImage') contents.copyImageAt(Math.round(Number(x) || 0), Math.round(Number(y) || 0))
+  else throw new Error(`Unknown action ${action}`)
+  return true
+})
+const MAX_BROWSER_IMAGE_BYTES = 40 * 1024 * 1024
+const IMAGE_EXTENSIONS_BY_MIME = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/bmp': 'bmp', 'image/avif': 'avif', 'image/x-icon': 'ico' }
+// I byte di un'immagine della pagina: dall'indirizzo (con i cookie della scheda), da un data: URL o, per un blob:, dalla pagina stessa.
+async function pageImageBytes(contents, address) {
+  const url = String(address || '')
+  const fromDataUrl = (value) => {
+    const match = /^data:([^;,]*)((?:;[^;,]*)*),(.*)$/s.exec(value)
+    if (!match) throw new Error(t('Empty image or unsupported format'))
+    const buffer = /;base64/i.test(match[2]) ? Buffer.from(match[3], 'base64') : Buffer.from(decodeURIComponent(match[3]), 'utf8')
+    return { buffer, mime: (match[1] || 'image/png').toLowerCase() }
+  }
+  let result
+  if (/^data:/i.test(url)) result = fromDataUrl(url)
+  else if (/^blob:/i.test(url)) {
+    const dataUrl = await contents.executeJavaScript(`(async () => { const blob = await (await fetch(${JSON.stringify(url)})).blob(); return await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(blob) }) })()`)
+    result = fromDataUrl(String(dataUrl))
+  } else if (/^https?:/i.test(url)) {
+    const response = await contents.session.fetch(url, { headers: { Referer: contents.getURL() } })
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`.trim())
+    const mime = String(response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
+    if (mime && !mime.startsWith('image/')) throw new Error(t('Empty image or unsupported format'))
+    result = { buffer: Buffer.from(await response.arrayBuffer()), mime: mime || 'image/png' }
+  } else throw new Error(t('Empty image or unsupported format'))
+  if (!result.buffer.length || result.buffer.length > MAX_BROWSER_IMAGE_BYTES) throw new Error(t('Empty image or unsupported format'))
+  return result
+}
+// «Salva» dal tasto destro su un'immagine: scaricata nella cartella images/ del progetto, col nome che aveva (senza sovrascrivere). Restituisce il percorso.
+ipcMain.handle('browser:save-image', async (_event, { contentsId, url } = {}) => {
+  if (!projectPath) throw new Error(t('Open a project folder to save images'))
+  const contents = webviewOf(contentsId)
+  const { buffer, mime } = await pageImageBytes(contents, url)
+  let stem = ''
+  let extension = IMAGE_EXTENSIONS_BY_MIME[mime] || ''
+  try {
+    const name = decodeURIComponent(path.basename(new URL(String(url)).pathname))
+    const parsed = path.parse(name)
+    stem = parsed.name
+    if (!extension) extension = parsed.ext.replace('.', '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5)
+  } catch { /* data: o blob: senza nome */ }
+  stem = stem.replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^[-.]+|-+$/g, '').slice(0, 60) || `image-${new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)}`
+  const directory = path.join(projectPath, 'images')
+  await fs.mkdir(directory, { recursive: true })
+  let target = path.join(directory, `${stem}.${extension || 'png'}`)
+  for (let counter = 2; fsSync.existsSync(target); counter += 1) target = path.join(directory, `${stem}-${counter}.${extension || 'png'}`)
+  await fs.writeFile(target, buffer)
+  return target
+})
+// «Chiedi all'assistente» su un'immagine: la stessa immagine, normalizzata come ogni allegato della chat.
+// Un SVG non lo decodifica Electron (nativeImage): torna com'è e lo rasterizza l'interfaccia (src/lib/svgRaster.js) prima di allegarlo.
+ipcMain.handle('browser:fetch-image', async (_event, { contentsId, url } = {}) => {
+  const { buffer, mime } = await pageImageBytes(webviewOf(contentsId), url)
+  if (mime === 'image/svg+xml') return { svg: buffer.toString('base64') }
+  return images.prepareBuffer(buffer)
+})
 ipcMain.handle('browser-history:list', (_event, { agent } = {}) => historyFor(agent === true).list())
 ipcMain.handle('browser-history:add', (_event, { agent, ...entry } = {}) => historyFor(agent === true).add(entry))
 ipcMain.handle('browser-history:remove', (_event, url, { agent } = {}) => historyFor(agent === true).remove(url))
@@ -2249,11 +2320,47 @@ ipcMain.handle('ai:chat', (_event, messages) => aiProviders.chat(messages))
 
 app.on('web-contents-created', (_event, contents) => {
   if (contents.getType() !== 'webview') return
-  contents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/i.test(url)) contents.loadURL(url)
+  // Come in un browser: il clic centrale (o Ctrl+clic) su un link lo apre in una scheda nuova in secondo piano, un link con target="_blank" in una scheda nuova davanti.
+  // La finestra vera non si apre mai; la scheda la crea l'interfaccia (BrowserPane → App), accanto a quella di partenza.
+  contents.setWindowOpenHandler(({ url, disposition }) => {
+    if (/^https?:/i.test(url) && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('browser:open-tab', { contentsId: contents.id, url, background: disposition === 'background-tab' })
     return { action: 'deny' }
   })
   contents.on('will-navigate', (event, url) => { if (!/^(https?:|about:blank)/i.test(url)) event.preventDefault() })
+  // Un clic (o la rotella) dentro la pagina non arriva alla finestra dell'app: la si avvisa, così i menu aperti si chiudono come con un clic altrove.
+  contents.on('input-event', (_event, input) => {
+    if ((input.type === 'mouseDown' || input.type === 'mouseWheel') && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('browser:pointer-down', contents.id)
+  })
+  // Tasto destro nella pagina: il menu lo disegna l'interfaccia (stesso stile degli altri), qui si dice cosa c'è sotto il cursore.
+  contents.on('context-menu', (_event, params) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    // Dove aprire il menu: la posizione del cursore nella finestra (in pixel dell'interfaccia). Le coordinate di `params` sono quelle della pagina ospitata,
+    // che non coincidono con quelle della finestra (barra, scala dello schermo, zoom): il cursore, invece, è il punto esatto del clic.
+    let windowX = null
+    let windowY = null
+    try {
+      const cursor = screen.getCursorScreenPoint()
+      const bounds = mainWindow.getContentBounds()
+      const zoom = mainWindow.webContents.getZoomFactor() || 1
+      windowX = (cursor.x - bounds.x) / zoom
+      windowY = (cursor.y - bounds.y) / zoom
+    } catch { /* si ripiega sulle coordinate della pagina */ }
+    mainWindow.webContents.send('browser:context-menu', {
+      contentsId: contents.id,
+      x: params.x,
+      y: params.y,
+      windowX,
+      windowY,
+      linkURL: params.linkURL || '',
+      srcURL: params.srcURL || '',
+      mediaType: params.mediaType,
+      hasImageContents: Boolean(params.hasImageContents),
+      selectionText: String(params.selectionText || '').slice(0, 20000),
+      isEditable: Boolean(params.isEditable),
+      flags: params.editFlags,
+      pageURL: params.pageURL || '',
+    })
+  })
 })
 
 // Lingua del processo principale: ricordata tra gli avvii, così il menu nasce già nella lingua giusta.
@@ -2275,6 +2382,14 @@ ipcMain.on('home:changed', (_event, open) => {
 
 function buildMenu() {
   createApplicationMenu((command) => {
+    // «Seleziona tutto» vale solo per il riquadro in uso: con il focus dentro una pagina del browser, quella pagina; altrimenti decide l'interfaccia
+    // (campo di testo, documento, scheda del browser, testo della chat). Il ruolo di sistema selezionava l'intera finestra: albero dei file, chat, editor.
+    if (command === 'select-all') {
+      const focused = webContents.getFocusedWebContents?.()
+      if (focused && !focused.isDestroyed() && focused.getType() === 'webview' && focused.hostWebContents === mainWindow?.webContents) focused.selectAll()
+      else mainWindow?.webContents.send('document:command', 'select-all')
+      return
+    }
     if (['settings', 'open-project', 'about', 'check-updates', 'view-endless', 'view-pages'].includes(command)) mainWindow?.webContents.send('app:command', command)
     else mainWindow?.webContents.send('document:command', command)
   }, { view: viewMode, home: homeOpen })

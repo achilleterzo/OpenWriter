@@ -539,10 +539,10 @@ const Message = memo(function Message({ message, index, editor, onBranch, onEdit
         <p className="text-[11px] text-slate-500" title={`${t('Input tokens')}: ${message.usage.input.toLocaleString()} · ${t('Output tokens')}: ${message.usage.output.toLocaleString()}`}>↑ {formatTokens(message.usage.input)} ↓ {formatTokens(message.usage.output)}</p>
       )}
       <div className="flex gap-1 text-xs text-slate-500 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
-        {assistant && !message.error && shown && (
+        {!message.error && shown && (
           <>
             <button type="button" className={actionClass} onClick={copy}>{copied ? <Check size={12} /> : <Copy size={12} />} {copied ? t('Copied') : t('Copy')}</button>
-            {editor && (
+            {assistant && editor && (
               <button type="button" title={t('Replaces the selection or inserts at the cursor')} className={actionClass} onClick={() => editor.chain().focus().insertContent(shown, { contentType: 'markdown' }).run()}>
                 <CornerDownLeft size={12} /> {t('Insert')}</button>
             )}
@@ -926,7 +926,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     // Riquadro del browser: l'immagine si allega al messaggio in preparazione e non parte nulla; la domanda la scrive l'utente.
     if (request.image) {
       if (!capabilities?.vision) setError(t('The selected model cannot read images'))
-      else addPending([{ kind: 'image', mime: request.image.mime, data: request.image.data, label: t('Region of “{title}”', { title: ellipsize(String(request.image.title || '').replace(/\s+/g, ' '), 40) }), size: Math.round(request.image.data.length * 0.75) }], [])
+      else addPending([{ kind: 'image', mime: request.image.mime, data: request.image.data, label: request.image.label || t('Region of “{title}”', { title: ellipsize(String(request.image.title || '').replace(/\s+/g, ' '), 40) }), size: Math.round(request.image.data.length * 0.75) }], [])
       composer.current?.focus()
       return
     }
@@ -1085,7 +1085,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       getDocument: (path) => toolBridge.getDocument(path),
       getOpenDocumentText: (path) => toolBridge.getOpenDocumentText(path),
       listBrowserTabs: () => toolBridge.listBrowserTabs(),
-      getBrowser: (options) => toolBridge.getBrowser(options),
+      getBrowser: (options) => toolBridge.getBrowser({ ...options, agent: true }),
       captureDocument: (path) => toolBridge.captureDocument(path),
       captureBrowser: (tab) => toolBridge.captureBrowser(tab),
       askUser,
@@ -1484,7 +1484,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       ) : (
         <>
           <div className="relative flex min-h-0 flex-1 flex-col">
-          <div ref={listRef} onScroll={onListScroll} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+          <div ref={listRef} data-select-scope onScroll={onListScroll} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
             {!current.messages.length && !busy && (
               <p className="m-auto max-w-[16rem] text-center text-sm text-slate-500">{t('Ask to proofread, rewrite or discuss the document. If you select some text, the assistant works on that.')}
               </p>
