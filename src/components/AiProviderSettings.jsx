@@ -8,6 +8,7 @@ import codexLogo from '../assets/provider-logos/codex.svg'
 import claudeCodeLogo from '../assets/provider-logos/claude-code.svg'
 import geminiLogo from '../assets/provider-logos/gemini.svg'
 import { t } from '../i18n/index.js'
+import { toolOptions } from '../lib/toolOptions.js'
 import ModelPicker from './ModelPicker.jsx'
 import Switch from './Switch.jsx'
 
@@ -25,16 +26,6 @@ const logos = { ollama: ollamaLogo, 'ollama-cloud': ollamaLogo, openrouter: open
 // Provider che si usano con una chiave API salvata dall'app.
 const keyProviders = ['ollama-cloud', 'openrouter', 'gemini']
 const languages = ['Italiano', 'English', 'Español', 'Français', 'Deutsch', 'Português']
-const toolOptions = [
-  { key: 'files', label: t('Project files'), help: t('List folders and read the project\'s files (the .ow folder is excluded).') },
-  { key: 'create', label: t('Creating files and folders'), help: t('Create folders and new Markdown or text documents in the project, to write documents there. Existing files are never overwritten.') },
-  { key: 'memory', label: t('Memory'), help: t('Lets the assistant save important information about the project (decisions, terminology, style choices), linked to the files it applies to, and re-read it in every conversation. You can inspect and edit it in the Memory tab.') },
-  { key: 'notes', label: t('Notes in the document'), help: t('Add notes and suggestions anchored to the text, which you accept or reject, and consult them.') },
-  { key: 'edit', label: t('Editing the open document'), help: t('Replace or insert text. Edits can be undone with Ctrl+Z, they are not saved on their own, and a version is archived before the first edit.') },
-  { key: 'ask', label: t('Questions with choices'), help: t('The assistant can ask you questions with clickable answers (paged, with "Other" to write your own), instead of listing the options in the text.') },
-  { key: 'vision', label: t('Images and screenshots'), help: t('Look at screenshots of the document and of the browser tabs, and at images from pages, links or project files. Requires a model with vision; images are sent to the chosen provider and, for those on the web, downloaded by your computer (local addresses are blocked).') },
-  { key: 'web', label: t('Web browsing'), help: t('Search with DuckDuckGo, open pages and read the Browser tabs, including the ones you opened yourself (even pages where you are signed in). Searches and addresses leave your computer; it cannot open local addresses.') },
-]
 
 // Provider con chiamate native agli strumenti, ammessi per l'assistente di ricerca.
 const RESEARCH_PROVIDERS = ['ollama', 'ollama-cloud', 'openrouter', 'gemini']
@@ -44,6 +35,7 @@ const buttonClass = 'rounded-md bg-slate-700 px-4 py-2.5 text-sm font-medium tex
 
 export default function AiProviderSettings() {
   const [settings, setSettings] = useState(null)
+  const [autoApprove, setAutoApprove] = useState(() => window.electronAPI?.preferences?.values?.['openwriter.autoApprove'] === 'on')
   const [models, setModels] = useState([])
   const [modelsLoading, setModelsLoading] = useState(false)
   // Cambia a ogni ricarica dei modelli, così il selettore rilegge anche cosa accettano.
@@ -362,6 +354,10 @@ export default function AiProviderSettings() {
                 <span>{label}<span className="block text-xs text-slate-500">{help}</span></span>
               </label>
             ))}
+            <label className="flex items-start gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
+              <Switch checked={autoApprove} onChange={(value) => { setAutoApprove(value); window.electronAPI.preferences?.set('openwriter.autoApprove', value ? 'on' : 'off'); if (window.electronAPI.preferences?.values) window.electronAPI.preferences.values['openwriter.autoApprove'] = value ? 'on' : 'off' }} />
+              <span>{t('Approve the assistant\'s edits for me')}<span className="block text-xs text-slate-500">{t('Default for all projects; each project can choose differently in its settings or from the chat options.')}</span></span>
+            </label>
             <label className="flex items-start justify-between gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
               <span>{t('Reasoning with the tools')}<span className="block text-xs text-slate-500">{t('After the result of a tool the plan is already made: reasoning less makes the work faster. The level set above applies to the first step of each request.')}</span>
               </span>

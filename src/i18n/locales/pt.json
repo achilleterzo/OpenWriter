@@ -1366,5 +1366,11 @@
   "Ask the assistant about the selection": "Perguntar ao assistente sobre a seleção",
   "Ask the assistant in a new chat": "Perguntar ao assistente numa nova conversa",
   "Region actions": "Ações da moldura",
-  "Attach to chat": "Anexar ao chat"
+  "Attach to chat": "Anexar ao chat",
+  "As in the general settings": "Como nas definições gerais",
+  "Assistant tools in this project": "Ferramentas do assistente neste projeto",
+  "As in the general settings (Approve for me)": "Como nas definições gerais (Aprovar por mim)",
+  "As in the general settings (I review them)": "Como nas definições gerais (Revejo eu)",
+  "Approve the assistant's edits for me": "Aprovar por mim as alterações do assistente",
+  "Default for all projects; each project can choose differently in its settings or from the chat options.": "Predefinição para todos os projetos; cada projeto pode escolher de outra forma nas suas definições ou nas opções do chat."
 }

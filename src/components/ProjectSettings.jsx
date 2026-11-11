@@ -12,6 +12,7 @@ import { formatNumber } from '../i18n/index.js'
 import { samePath } from '../lib/pathCompare.js'
 import { SettingsHeaderActions } from './SettingsActions.jsx'
 import { t } from '../i18n/index.js'
+import { toolOptions } from '../lib/toolOptions.js'
 import Switch from './Switch.jsx'
 
 const electronAPI = window.electronAPI
@@ -90,6 +91,9 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
   const [spellcheck, setSpellcheck] = useState({ available: [], global: [] })
   // Livello della temperatura generale del provider attivo: è quello che il progetto eredita finché non ne sceglie uno.
   const [generalTemperature, setGeneralTemperature] = useState('')
+  // Strumenti accesi nelle impostazioni generali: il progetto li eredita finché non ne cambia uno.
+  const [generalTools, setGeneralTools] = useState({})
+  const generalApprove = electronAPI.preferences?.values?.['openwriter.autoApprove'] === 'on'
   const [info, setInfo] = useState({ available: false })
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
@@ -97,7 +101,7 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
 
   useEffect(() => {
     electronAPI.getSpellcheck().then(setSpellcheck)
-    electronAPI.ai.getSettings().then((ai) => setGeneralTemperature(levelOf(ai.provider, ai.providers?.[ai.provider]?.temperature))).catch(() => {})
+    electronAPI.ai.getSettings().then((ai) => { setGeneralTools(ai.tools || {}); setGeneralTemperature(levelOf(ai.provider, ai.providers?.[ai.provider]?.temperature)) }).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -106,9 +110,19 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
     ;(projectPath ? electronAPI.getProjectSettingsFor(projectPath) : electronAPI.getProjectSettings()).then((settings) => {
       setInfo(settings)
       // Senza un nome scelto, il campo parte dal nome della cartella (che resta il nome finché non lo si cambia).
-      setForm({ name: settings.name || folderOf(settings, projectPath), language: settings.ai.language, documentLanguage: settings.ai.documentLanguage || '', temperature: settings.ai.temperature ?? '', context: settings.ai.context, autoVersions: settings.options.autoVersions, searchIndex: settings.options.searchIndex !== false, sharedKnowledge: settings.options.sharedKnowledge !== false, inherit: settings.inherit === true, spellcheck: settings.spellcheck.languages, editor: settings.editor })
+      setForm({ name: settings.name || folderOf(settings, projectPath), language: settings.ai.language, documentLanguage: settings.ai.documentLanguage || '', temperature: settings.ai.temperature ?? '', autoApprove: settings.ai.autoApprove || '', tools: settings.ai.tools || {}, context: settings.ai.context, autoVersions: settings.options.autoVersions, searchIndex: settings.options.searchIndex !== false, sharedKnowledge: settings.options.sharedKnowledge !== false, inherit: settings.inherit === true, spellcheck: settings.spellcheck.languages, editor: settings.editor })
     }).catch((reason) => setError(reason.message))
   }, [project, projectPath, reloadToken])
+
+  // Gli interruttori mostrano lo stato efficace (scelta del progetto, altrimenti quella generale). Tornare al valore generale toglie la scelta: il progetto riprende a ereditare.
+  const toolOn = (key) => (typeof form.tools[key] === 'boolean' ? form.tools[key] : Boolean(generalTools[key]))
+  const setTool = (key, value) => {
+    const next = { ...form.tools }
+    if (value === Boolean(generalTools[key])) delete next[key]
+    else next[key] = value
+    update({ tools: next })
+  }
+  const approveOn = form?.autoApprove ? form.autoApprove === 'on' : generalApprove
 
   function update(changes) {
     setSaved(false)
@@ -118,7 +132,7 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
   async function save() {
     try {
       // Il nome uguale a quello della cartella non si salva: il progetto continua a seguire la cartella (se la si rinomina o sposta).
-      const payload = ({ name: form.name.trim() === folderOf(info, projectPath) ? '' : form.name, ai: { context: form.context, language: form.language, documentLanguage: form.documentLanguage, temperature: form.temperature }, options: { autoVersions: form.autoVersions, searchIndex: form.searchIndex, sharedKnowledge: form.sharedKnowledge }, ...(info.parent ? { inherit: form.inherit } : {}), spellcheck: { languages: form.spellcheck }, editor: form.editor })
+      const payload = ({ name: form.name.trim() === folderOf(info, projectPath) ? '' : form.name, ai: { context: form.context, language: form.language, documentLanguage: form.documentLanguage, temperature: form.temperature, autoApprove: form.autoApprove, tools: form.tools }, options: { autoVersions: form.autoVersions, searchIndex: form.searchIndex, sharedKnowledge: form.sharedKnowledge }, ...(info.parent ? { inherit: form.inherit } : {}), spellcheck: { languages: form.spellcheck }, editor: form.editor })
       const result = await (projectPath ? electronAPI.saveProjectSettingsFor(projectPath, payload) : electronAPI.saveProjectSettings(payload))
       // Se è il progetto aperto, il carattere cambia subito.
       const open = await electronAPI.getProject()
@@ -209,6 +223,20 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
       </label>
 
       <ParameterSlider id="project-temperature" label={t('Temperature in this project')} value={form.temperature} inherited={generalTemperature} onChange={(value) => update({ temperature: value })} min={TEMPERATURE_MIN} max={TEMPERATURE_MAX} step={TEMPERATURE_STEP} format={formatTemperature} />
+
+      <fieldset className="grid gap-3 rounded-lg border border-slate-800 p-4">
+        <legend className="px-1 text-sm text-slate-300">{t('Assistant tools in this project')}</legend>
+        {toolOptions.map(({ key, label, help }) => (
+          <label key={key} className="flex items-start gap-3 text-sm text-slate-300">
+            <Switch checked={toolOn(key)} onChange={(value) => setTool(key, value)} />
+            <span>{label}<span className="block text-xs text-slate-500">{help}</span></span>
+          </label>
+        ))}
+        <label className="flex items-start gap-3 border-t border-slate-800 pt-3 text-sm text-slate-300">
+          <Switch checked={approveOn} onChange={(value) => update({ autoApprove: value === generalApprove ? '' : value ? 'on' : 'off' })} />
+          <span>{t('Approve the assistant\'s edits for me')}<span className="block text-xs text-slate-500">{t('“Approve for me”: when the work is done the assistant\'s edits are accepted and saved, and the documents it opened are closed again. The previous version stays in the history.')}</span></span>
+        </label>
+      </fieldset>
 
       <div className="grid gap-2 text-sm text-slate-300">
         <span>{t('Spell checker languages in this project')}</span>

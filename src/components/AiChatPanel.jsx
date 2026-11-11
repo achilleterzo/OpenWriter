@@ -641,11 +641,18 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   // Lo scorrimento automatico segue il testo che arriva solo se si è in fondo: scorrendo verso l'alto si smette, e un pulsante riporta giù.
   const stickRef = useRef(true)
   // "Approva per me": a fine lavoro le modifiche dell'assistente si accettano, i documenti si salvano e quelli che ha aperto lui si richiudono (la versione
-  // precedente resta nella cronologia). Preferenza dell'app, valida per tutte le conversazioni.
-  const [autoApprove, setAutoApprove] = useState(() => api.preferences?.values?.['openwriter.autoApprove'] === 'on')
+  // precedente resta nella cronologia). Lo decide il progetto (impostazioni del progetto o questo menu); se non sceglie, vale la preferenza generale dell'app.
+  const [generalAutoApprove, setGeneralAutoApprove] = useState(() => api.preferences?.values?.['openwriter.autoApprove'] === 'on')
+  const projectApprove = projectSettings?.ai?.autoApprove || ''
+  const autoApprove = projectApprove ? projectApprove === 'on' : generalAutoApprove
   const autoApproveRef = useRef(autoApprove)
   autoApproveRef.current = autoApprove
-  const changeAutoApprove = (value) => { setAutoApprove(value); api.preferences?.set('openwriter.autoApprove', value ? 'on' : 'off') }
+  // value: 'inherit' (segue le impostazioni generali), 'review' o 'auto'.
+  const changeAutoApprove = (value) => {
+    const next = value === 'auto' ? 'on' : value === 'review' ? 'off' : ''
+    setProjectSettings((current) => (current ? { ...current, ai: { ...current.ai, autoApprove: next } } : current))
+    api.setProjectAiOptions({ autoApprove: next }).catch((reason) => console.error(reason))
+  }
   const [showJump, setShowJump] = useState(false)
   const liveRef = useRef({ text: '', thinking: '', status: '' })
   const frameRef = useRef(null)
@@ -682,6 +689,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   useEffect(() => {
     if (!project) { setProjectSettings(null); return }
     api.getProjectSettings().then(setProjectSettings).catch(() => setProjectSettings(null))
+    setGeneralAutoApprove(api.preferences?.values?.['openwriter.autoApprove'] === 'on')
   }, [project, settingsVersion])
 
   // Contesto del documento attivo: cambia col documento (un sotto-progetto ha le sue istruzioni, oltre a quelle del padre).
@@ -1040,7 +1048,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       setCurrent(conversation)
     }
 
-    const toolSettings = settings.tools || {}
+    // Gli strumenti del progetto prevalgono su quelli generali, solo dove il progetto ha fatto una scelta.
+    const toolSettings = { ...(settings.tools || {}), ...(projectSettings?.ai?.tools || {}) }
     // Gli strumenti dell'assistente richiedono un progetto aperto: senza, restano tutti disattivati.
     const toolsOn = {
       files: Boolean(toolSettings.files && project),
@@ -1637,10 +1646,11 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
                     <select
                       aria-label={t('Edits to the documents')}
                       title={t('“Approve for me”: when the work is done the assistant\'s edits are accepted and saved, and the documents it opened are closed again. The previous version stays in the history.')}
-                      value={autoApprove ? 'auto' : 'review'}
+                      value={projectApprove ? (projectApprove === 'on' ? 'auto' : 'review') : 'inherit'}
                       className="w-full min-w-0 rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs text-slate-100 outline-none focus:border-accent-400"
-                      onChange={(event) => changeAutoApprove(event.target.value === 'auto')}
+                      onChange={(event) => changeAutoApprove(event.target.value)}
                     >
+                      <option value="inherit">{generalAutoApprove ? t('As in the general settings (Approve for me)') : t('As in the general settings (I review them)')}</option>
                       <option value="review">{t('I review them')}</option>
                       <option value="auto">{t('Approve for me')}</option>
                     </select>

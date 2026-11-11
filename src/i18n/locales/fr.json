@@ -1366,5 +1366,11 @@
   "Ask the assistant about the selection": "Interroger l’assistant sur la sélection",
   "Ask the assistant in a new chat": "Interroger l’assistant dans une nouvelle conversation",
   "Region actions": "Actions du cadre",
-  "Attach to chat": "Joindre au chat"
+  "Attach to chat": "Joindre au chat",
+  "As in the general settings": "Comme dans les réglages généraux",
+  "Assistant tools in this project": "Outils de l’assistant dans ce projet",
+  "As in the general settings (Approve for me)": "Comme dans les réglages généraux (Approuver pour moi)",
+  "As in the general settings (I review them)": "Comme dans les réglages généraux (Je les relis)",
+  "Approve the assistant's edits for me": "Approuver pour moi les modifications de l’assistant",
+  "Default for all projects; each project can choose differently in its settings or from the chat options.": "Valeur par défaut pour tous les projets ; chaque projet peut choisir autrement dans ses réglages ou dans les options du chat."
 }
