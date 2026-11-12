@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronUp, Pencil, Plus, RotateCcw, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Download, Pencil, Plus, RotateCcw, X } from 'lucide-react'
 import { useDialogs } from './Dialogs.jsx'
+import { samePath } from '../lib/pathCompare.js'
 import { MAX_CUSTOM_QUICK_ACTIONS, MAX_PROJECT_QUICK_ACTIONS, newProjectActionId, MAX_QUICK_LABEL, MAX_QUICK_PROMPT, defaultTextOf, newCustomId, quickActionsOf, resolveQuickActions, toEntry } from '../lib/quickActions.js'
 import { t } from '../i18n/index.js'
 import Switch from './Switch.jsx'
@@ -158,22 +159,97 @@ function GeneralQuickActions() {
 }
 
 
-// Azioni rapide specifiche del progetto (project.json): compaiono nella chat solo in questo progetto, prima di quelle generali.
-function ProjectQuickActions({ project }) {
-  const [state, setState] = useState(null)
-  const [editing, setEditing] = useState(null)
+// «Importa da un altro progetto»: si sceglie il progetto, poi quali delle sue azioni portare qui (copie con un id nuovo; quelle già presenti con lo stesso testo non sono preselezionate).
+function ImportFromProject({ currentActions, currentPath, onImport, onClose }) {
+  const [projects, setProjects] = useState(null)
+  const [from, setFrom] = useState('')
+  const [available, setAvailable] = useState([])
+  const [picked, setPicked] = useState(new Set())
   const [error, setError] = useState('')
 
   useEffect(() => {
+    Promise.all([electronAPI.listProjects(), currentPath ? Promise.resolve(currentPath) : electronAPI.getProject()])
+      .then(([list, open]) => setProjects(list.filter((item) => !item.missing && !samePath(item.path, open))))
+      .catch((reason) => setError(reason.message))
+  }, [currentPath])
+
+  const same = (mine, action) => mine.label === action.label && mine.prompt === action.prompt
+  async function choose(path) {
+    setFrom(path)
+    setPicked(new Set())
+    setAvailable([])
+    if (!path) return
+    try {
+      const loaded = await electronAPI.getProjectSettingsFor(path)
+      const actions = loaded.quickActions?.actions || []
+      setAvailable(actions)
+      setPicked(new Set(actions.filter((action) => !currentActions.some((mine) => same(mine, action))).map((action) => action.id)))
+      setError('')
+    } catch (reason) {
+      setError(reason.message)
+    }
+  }
+  const room = MAX_PROJECT_QUICK_ACTIONS - currentActions.length
+  const chosen = available.filter((action) => picked.has(action.id))
+  const toggle = (id) => setPicked((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next })
+
+  return (
+    <div className="grid gap-2 rounded-lg border border-slate-800 p-3 text-sm text-slate-300">
+      <div className="flex items-center justify-between gap-2">
+        <span>{t('Import from another project')}</span>
+        <button type="button" aria-label={t('Close')} title={t('Close')} className={iconButton} onClick={onClose}><X size={14} /></button>
+      </div>
+      {projects && !projects.length && <p className="text-xs text-slate-500">{t('There are no other projects.')}</p>}
+      {projects?.length > 0 && (
+        <select className={fieldClass.replace('mt-1 ', '')} value={from} onChange={(event) => choose(event.target.value)}>
+          <option value="">{t('Choose a project…')}</option>
+          {projects.map((item) => <option key={item.path} value={item.path}>{item.name}</option>)}
+        </select>
+      )}
+      {from && !available.length && !error && <p className="text-xs text-slate-500">{t('This project has no actions of its own.')}</p>}
+      {available.length > 0 && (
+        <ul className="grid gap-1">
+          {available.map((action) => (
+            <li key={action.id}>
+              <label className="flex min-w-0 items-start gap-2 rounded-md px-1 py-1 hover:bg-slate-800/60">
+                <input type="checkbox" className="mt-1 accent-accent-500" checked={picked.has(action.id)} onChange={() => toggle(action.id)} />
+                <span className="min-w-0 flex-1" title={action.prompt}>
+                  <span className="block truncate text-sm text-slate-100">{action.label}{currentActions.some((mine) => same(mine, action)) && <span className="ml-2 text-xs text-slate-500">{t('already here')}</span>}</span>
+                  <span className="block truncate text-xs text-slate-500">{action.prompt}</span>
+                </span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+      {error && <p className="text-xs text-rose-400">{error}</p>}
+      {available.length > 0 && chosen.length > room && <p className="text-xs text-amber-400">{t('At most {count} actions per project: only the first {room} are imported.', { count: MAX_PROJECT_QUICK_ACTIONS, room: Math.max(0, room) })}</p>}
+      <div>
+        <button type="button" disabled={!chosen.length || room <= 0} className="rounded-md bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-100 transition hover:bg-slate-600 disabled:opacity-50" onClick={() => onImport(chosen.slice(0, Math.max(0, room)))}>{t('Import selected')}</button>
+      </div>
+    </div>
+  )
+}
+
+// Azioni rapide specifiche del progetto (project.json): compaiono nella chat solo in questo progetto, prima di quelle generali.
+// `projectPath`: un progetto qualsiasi (anche non aperto); senza, quello aperto. `plain`: dentro un'altra schermata, senza riquadro proprio. `onChanged`: dopo ogni salvataggio.
+export function ProjectQuickActions({ project, projectPath = null, plain = false, onChanged }) {
+  const [state, setState] = useState(null)
+  const [editing, setEditing] = useState(null)
+  const [error, setError] = useState('')
+  const [importing, setImporting] = useState(false)
+
+  useEffect(() => {
     if (!electronAPI?.getProjectSettings) return
-    electronAPI.getProjectSettings().then((loaded) => setState(loaded.quickActions || { actions: [], general: true })).catch((reason) => setError(reason.message))
-  }, [project])
+    ;(projectPath ? electronAPI.getProjectSettingsFor(projectPath) : electronAPI.getProjectSettings()).then((loaded) => setState(loaded.quickActions || { actions: [], general: true })).catch((reason) => setError(reason.message))
+  }, [project, projectPath])
 
   async function save(next) {
     setState(next)
     try {
-      setState(await electronAPI.setProjectQuickActions(next))
+      setState(await (projectPath ? electronAPI.setProjectQuickActionsFor(projectPath, next) : electronAPI.setProjectQuickActions(next)))
       setError('')
+      onChanged?.()
     } catch (reason) {
       setError(reason.message)
     }
@@ -195,7 +271,7 @@ function ProjectQuickActions({ project }) {
   }
 
   return (
-    <section className="grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6">
+    <section className={plain ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-6'}>
       <p className="max-w-xl text-sm leading-6 text-slate-400">{t('Actions that appear only in this project, in the chat before the general ones: for example to extract documentation from the source code, or to check a document against the code. They are saved in the project (.ow/project.json).')}</p>
       <label className="flex items-start gap-2 text-sm text-slate-300">
         <Switch checked={state.general} onChange={(value) => save({ ...state, general: value })} />
@@ -223,8 +299,11 @@ function ProjectQuickActions({ project }) {
 
       {error && <p className="text-sm text-rose-400">{error}</p>}
 
-      <div>
+      {importing && <ImportFromProject currentActions={actions} currentPath={projectPath} onClose={() => setImporting(false)} onImport={(chosen) => { save({ ...state, actions: [...actions, ...chosen.map(({ label, prompt }) => ({ id: newProjectActionId(), label, prompt }))] }); setImporting(false) }} />}
+
+      <div className="flex flex-wrap items-center gap-3">
         <button type="button" disabled={actions.length >= MAX_PROJECT_QUICK_ACTIONS} className="flex items-center gap-1.5 rounded-md bg-slate-700 px-3 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-600 disabled:opacity-50" onClick={() => setEditing({ id: newProjectActionId(), label: '', prompt: '', isDefault: false, isNew: true })}><Plus size={14} /> {t('Add action')}</button>
+        <button type="button" disabled={actions.length >= MAX_PROJECT_QUICK_ACTIONS || importing} className="flex items-center gap-1.5 rounded-md px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-800 disabled:opacity-40 disabled:hover:bg-transparent" onClick={() => setImporting(true)}><Download size={14} /> {t('Import from another project…')}</button>
       </div>
 
       {editing && <ActionDialog initial={editing} onSave={saveEditing} onClose={() => setEditing(null)} />}

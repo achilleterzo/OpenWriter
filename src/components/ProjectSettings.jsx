@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Camera, Check, FolderCog, X } from 'lucide-react'
 import { ProjectAvatar } from './ProjectIcon.jsx'
 import SkillsManager from './SkillsManager.jsx'
+import { ProjectQuickActions } from './QuickActionsSettings.jsx'
 import { chooseProjectIcon, invalidateProjectIcon, useProjectIcon } from '../lib/projectIcons.js'
 import SpellcheckLanguages from './SpellcheckLanguages.jsx'
 import { EditorFontChoice } from './FontPicker.jsx'
@@ -266,6 +267,11 @@ export default function ProjectSettings({ project, projectPath = null, onChanged
       <div className="grid gap-2 text-sm text-slate-300">
         <span>{t('Writing skills')}<span className="mt-1 block text-xs text-slate-500">{t('Tick the skills that the assistant applies by default in every conversation of this project; in the chat you can add or remove them for a single conversation. Project skills are saved in .ow/skills.')}</span></span>
         <SkillsManager scope="project" projectPath={projectPath} onChanged={onChanged} />
+      </div>
+
+      <div className="grid gap-2 text-sm text-slate-300">
+        <span>{t('Quick actions')}</span>
+        <ProjectQuickActions project={project} projectPath={projectPath} plain onChanged={onChanged} />
       </div>
 
       <ShareSetup target={projectPath || null} onImported={() => { onChanged?.(); setReloadToken((value) => value + 1) }} />
