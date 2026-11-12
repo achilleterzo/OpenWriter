@@ -68,6 +68,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setSemanticEnabled: (enabled) => ipcRenderer.invoke('semantic:set-enabled', Boolean(enabled)),
   getIndexActivity: () => ipcRenderer.invoke('knowledge:activity'),
   setProjectQuickActions: (value) => ipcRenderer.invoke('project:set-quick-actions', value),
+  // La disposizione delle bolle del grafo, in un file dei dati dell'app: la vedono tutte le finestre (vedi src/lib/graphLayoutStore.js).
+  layoutStorage: {
+    getItem: (key) => ipcRenderer.sendSync('layout:get', key),
+    setItem: (key, value) => ipcRenderer.sendSync('layout:set', key, String(value)),
+    removeItem: (key) => ipcRenderer.sendSync('layout:remove', key),
+    keys: () => ipcRenderer.sendSync('layout:keys'),
+  },
+  openProjectInNewWindow: (directory) => ipcRenderer.invoke('project:open-new-window', directory),
+  setProjectQuickActionsFor: (directory, value) => ipcRenderer.invoke('projects:set-quick-actions', { directory, value }),
   setProjectAiOptions: (value) => ipcRenderer.invoke('project:set-ai-options', value),
   getContextChain: (filePath) => ipcRenderer.invoke('project:context-chain', filePath),
   moveIntoDirectory: (request) => ipcRenderer.invoke('workspace:move-path', request),
@@ -115,6 +124,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getConversation: (id) => ipcRenderer.invoke('chat:get', id),
   createConversation: (conversation) => ipcRenderer.invoke('chat:create', conversation),
   saveConversation: (conversation) => ipcRenderer.invoke('chat:save', conversation),
+  setConversationQueue: (id, queue) => ipcRenderer.invoke('chat:set-queue', { id, queue }),
   deleteConversation: (id) => ipcRenderer.invoke('chat:delete', id),
   openChatFolder: () => ipcRenderer.invoke('chat:open-folder'),
   listDirectoryForAi: (path, options) => ipcRenderer.invoke('tools:list-directory', path, options),

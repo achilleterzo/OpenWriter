@@ -59,6 +59,7 @@ export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onC
       y: event.clientY,
       items: [
         !sameProject(item) && !item.missing && { label: t('Open'), onClick: () => run(() => onOpen(item.path)) },
+        !sameProject(item) && !item.missing && { label: t('Open in a new window'), onClick: () => run(() => electronAPI.openProjectInNewWindow(item.path)) },
         !item.missing && { label: t('Project settings…'), onClick: () => setSettingsFor(item) },
         { separator: true },
         !item.missing && onMove && { label: t('Move…'), onClick: () => moveProject(item) },

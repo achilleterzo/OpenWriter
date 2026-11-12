@@ -10,7 +10,7 @@ const { createAiProviders } = require('./ai-providers.cjs')
 const { createProjectFile } = require('./project-file.cjs')
 const { cleanTemperature } = require('./temperature.cjs')
 const { createProjectsStore } = require('./projects.cjs')
-const { execFile } = require('node:child_process')
+const { execFile, spawn } = require('node:child_process')
 const { createSystemIntegration } = require('./system-integration.cjs')
 const { createChatStore } = require('./chat-store.cjs')
 const { createMemoryStore } = require('./memory-store.cjs')
@@ -46,7 +46,9 @@ const { createWorkspacesStore } = require('./workspaces-store.cjs')
 const { STOPWORDS } = require('./knowledge-index.cjs')
 const { affinityEdges, uniformEdges, collectVectors, parentProjects } = require('./project-graph.cjs')
 const { findOwners } = require('./project-owner.cjs')
-const { mergeSearches, cleanTerms } = require('./search-merge.cjs')
+const { createPrimaryLock } = require('./primary-instance.cjs')
+const { createInstanceRegistry } = require('./instance-registry.cjs')
+const { mergeSearches, cleanTerms, markTerms } = require('./search-merge.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
 const MAX_SKILL_FILE_BYTES = MAX_SKILL_CHARS * 4
 const images = require('./images.cjs')
@@ -82,6 +84,13 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'ow-file', privileges: { standar
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
 
 let projectPath = null
+// «Apri in una nuova finestra»: un'altra istanza dell'app (un altro processo) con il progetto indicato. Condivide dati e impostazioni; ciò che non può esistere due volte
+// (ponte e server HTTP degli agenti MCP) lo serve una sola istanza, la principale (vedi primary-instance.cjs).
+// Quale progetto ha aperto ogni finestra (vedi instance-registry.cjs): lo stesso progetto non si apre in due finestre.
+const instances = createInstanceRegistry({ directory: path.join(app.getPath('userData'), 'instances'), samePath })
+// Seconda finestra: lo dice chi l'ha avviata, oppure c'è già un'altra istanza viva (per esempio un avvio dal file manager).
+const secondaryInstance = process.argv.includes('--ow-secondary') || instances.others().length > 0
+const startupProject = (() => { const given = process.argv.find((argument) => argument.startsWith('--ow-project=')); return given ? given.slice('--ow-project='.length) : '' })()
 const projectsStore = createProjectsStore({ filePath: () => path.join(app.getPath('userData'), 'projects.json') })
 // Gli spazi di lavoro (workspace): un filtro sull'elenco dei progetti e sulla conoscenza che l'assistente e gli agenti raggiungono (workspaces-store.cjs).
 const workspacesStore = createWorkspacesStore({ directory: () => app.getPath('userData') })
@@ -442,6 +451,8 @@ function loadSession({ startup = false } = {}) {
   const session = readSessions()[sessionKey()] || null
   if (!startup) return session
   let interrupted = false
+  // Il segno d'avvio è dell'istanza principale: una seconda, che parte mentre l'altra lavora, lo scambierebbe per un avvio interrotto.
+  if (secondaryInstance) return session
   try {
     interrupted = fsSync.existsSync(startupMarkerPath())
     fsSync.writeFileSync(startupMarkerPath(), String(Date.now()))
@@ -472,11 +483,21 @@ function workspaceFilePath() {
 
 async function loadProject() {
   // I membri temporanei (progetti aperti da un agente) non sopravvivono a un riavvio.
-  try { workspacesStore.clearTemporary() } catch (error) { console.error('Membri temporanei non azzerati:', error.message) }
+  // Una seconda istanza non azzera i membri temporanei dell'altra, e parte dal progetto che le è stato indicato (non dall'ultimo aperto).
+  if (!secondaryInstance) { try { workspacesStore.clearTemporary() } catch (error) { console.error('Membri temporanei non azzerati:', error.message) } }
   try {
-    const { project } = JSON.parse(await fs.readFile(workspaceFilePath(), 'utf8'))
-    if (project && (await fs.stat(project)).isDirectory()) projectPath = project
+    if (startupProject && (await fs.stat(startupProject)).isDirectory()) projectPath = path.resolve(startupProject)
+    else {
+      const { project } = JSON.parse(await fs.readFile(workspaceFilePath(), 'utf8'))
+      if (project && (await fs.stat(project)).isDirectory()) projectPath = project
+    }
   } catch {}
+  // Il progetto dell'ultima volta (o quello indicato) è già aperto in un'altra finestra: questa parte dalla Home, senza progetto.
+  if (projectPath && instances.holder(projectPath)) {
+    console.error(t('The project "{name}" is already open in another OpenWriter window', { name: path.basename(projectPath) }))
+    projectPath = null
+  }
+  instances.register(projectPath)
   initializeProject()
   // Il progetto di un avvio precedente entra nell'elenco anche se è stato aperto prima che l'elenco esistesse.
   if (projectPath && !projectsStore.list().some((item) => samePath(item.path, projectPath))) projectsStore.touch(projectPath)
@@ -495,8 +516,15 @@ function initializeProject() {
 // `join`: un progetto nuovo per l'elenco entra nello spazio di lavoro attivo (se non è «Tutti»). Chi apre da fuori lo chiede all'utente prima e passa `join: false`;
 // un agente che apre un progetto non lo fa entrare: diventa un membro temporaneo (vedi mcpRequests.js).
 async function setProject(directory, { join = true } = {}) {
+  // Già aperto in un'altra finestra: si porta quella in primo piano, qui non si apre.
+  const holder = instances.holder(directory)
+  if (holder) {
+    instances.requestFocus(holder.pid)
+    throw new Error(t('This project is already open in another OpenWriter window, which has been brought to the front'))
+  }
   const known = projectsStore.list().some((item) => samePath(item.path, directory))
   projectPath = directory
+  instances.register(projectPath)
   initializeProject()
   // `workspace.json` porta anche lo spazio di lavoro attivo: si scrive unendo i campi, altrimenti ogni apertura di un progetto lo cancellerebbe.
   workspacesStore.setLastProject(projectPath)
@@ -927,6 +955,8 @@ function createWindow() {
   })
 
   applySpellcheck()
+  // Con più finestre lo spazio di lavoro attivo (nel file dei dati dell'app) può essere cambiato dall'altra: al ritorno in primo piano il selettore e l'elenco si rileggono.
+  mainWindow.on('focus', () => notifyWorkspaces())
   mainWindow.on('app-command', (_event, command) => { if (navigationCommand[command]) mainWindow.webContents.send('app:command', navigationCommand[command]) })
   // Se il processo dell'interfaccia muore la finestra resta vuota e la console non dice nulla: si registra il motivo e si riprova a ricaricare (al massimo due volte).
   let reloads = 0
@@ -1163,6 +1193,12 @@ ipcMain.handle('skills:set-active', (_event, { directory, active } = {}) => {
 ipcMain.handle('project:get-settings', () => projectFile.getSettings())
 // Azioni rapide del progetto aperto (vedi project-file.cjs).
 ipcMain.handle('project:set-quick-actions', (_event, value) => projectFile.setQuickActions(value))
+// Le azioni rapide di un progetto qualsiasi (anche non aperto, o un sotto-progetto), dalle sue impostazioni.
+ipcMain.handle('projects:set-quick-actions', (_event, { directory, value } = {}) => {
+  const { file } = projectFileFor(directory)
+  file.initialize()
+  return file.setQuickActions(value)
+})
 ipcMain.handle('project:set-ai-options', (_event, value) => projectFile.setAiOptions(value))
 // Contesto dell'assistente per il documento attivo: le istruzioni di tutti i progetti coinvolti, dal più esterno al più vicino.
 ipcMain.handle('project:context-chain', (_event, filePath) => projectFile.getContextChain(filePath))
@@ -1365,7 +1401,7 @@ async function runKnowledgeSearch(args = {}, { project: asked = null, home = fal
   }
   if (!sources.length) throw new Error('There are no other projects or reference folders to search: use scope "project" or leave it out')
   const [found, ...stats] = await Promise.all([
-    knowledge.search(sources.map((source) => source.key), query, { folder, limit: Number(args.maxResults) || 10, semantic: semanticAvailable(), includeWeak: args.includeWeak === true }),
+    knowledge.search(sources.map((source) => source.key), query, { folder, limit: Number(args.maxResults) || 10, semantic: semanticAvailable() && args.exact !== true, includeWeak: args.includeWeak === true, exact: args.exact === true }),
     ...sources.map((source) => knowledge.stats(source.key)),
   ])
   const prefixes = new Map(sources.map((source) => [source.key, source.prefix]))
@@ -1396,23 +1432,25 @@ async function searchProjectsForHome(args = {}) {
   const query = String(args.query || '').trim()
   // `terms`: sinonimi e termini affini chiesti dall'interfaccia al modello linguistico; ognuno si cerca a parte (parole e significato) e i risultati si uniscono.
   // Ai sinonimi dell'IA (se ci sono) si aggiungono sempre quelli locali: le parole dei testi più vicine per significato a quelle cercate (`local: false` li esclude).
-  const localTerms = args.local === false ? [] : await localSynonyms(query)
-  const terms = cleanTerms([...(Array.isArray(args.terms) ? args.terms : []), ...localTerms], query, 12)
+  // `exact` («Parole intere»): la frase scritta, parole intere, senza sinonimi né significato.
+  const exact = args.exact === true
+  const localTerms = args.local === false || exact ? [] : await localSynonyms(query)
+  const terms = exact ? [] : cleanTerms([...(Array.isArray(args.terms) ? args.terms : []), ...localTerms], query, 12)
   // `includeWeak`: anche i passaggi che il filtro di pertinenza scarta ("meno pertinenti"), con `weak: true`, ordinati per pertinenza.
   const includeWeak = args.includeWeak === true
   // `workspace`: dove cerca la Home: non indicato = lo spazio di lavoro attivo; 'all' = tutti i progetti; un id = quello spazio (lo sceglie l'utente accanto al campo di ricerca).
   const workspace = typeof args.workspace === 'string' && args.workspace ? args.workspace : undefined
-  const base = await runKnowledgeSearch({ query, maxResults, includeWeak, workspace }, { home: true })
+  const base = await runKnowledgeSearch({ query, maxResults, includeWeak, workspace, exact }, { home: true })
   const { found, files, outside } = base
   // Le pagine web salvate di un progetto (`@nome-web`) appartengono a quel progetto.
   const ownerOf = (item) => (item.web ? outside.find((other) => other.project && (item.name === `${other.name}-web` || item.name.startsWith(`${other.name}-web-`))) || null : item)
-  const shape = (entries) => entries.flatMap((entry) => {
+  const shape = (entries, term = query) => entries.flatMap((entry) => {
     const item = entry.source?.item
     const owner = item ? ownerOf(item) : null
     if (!item || !owner) return []
     return [{
       project: owner.path, projectName: owner.name, file: entry.relative, absolute: path.join(item.path, entry.relative),
-      display: entry.path, heading: entry.heading || '', startLine: entry.startLine, endLine: entry.endLine, snippet: String(entry.snippet || '').replace(/\s+/g, ' ').trim(),
+      display: entry.path, heading: markTerms(entry.heading || '', term), startLine: entry.startLine, endLine: entry.endLine, snippet: markTerms(String(entry.snippet || '').replace(/\s+/g, ' ').trim(), term),
       // Perché compare: 'words' (contiene le parole), 'meaning' (solo per significato) o 'both'.
       via: entry.via || 'words',
       // Pertinenza 0-1 (da quanto il passaggio si stacca dagli altri per questa domanda) e punteggio z; assenti senza ricerca per significato.
@@ -1421,14 +1459,17 @@ async function searchProjectsForHome(args = {}) {
       ...(entry.weak ? { weak: true } : {}),
     }]
   })
-  let results = shape(found.results)
+  // Le parole scritte dall'utente trovate davvero (tutte, nel testo o nel titolo) sono la risposta più diretta: la loro pertinenza è alta (almeno 0,9) a prescindere dalla vicinanza di significato;
+  // quella di un sinonimo, invece, viene scontata nell'unione (vedi search-merge.cjs).
+  const exactly = (entries) => entries.map((entry) => (entry.relevance !== undefined && entry.via !== 'meaning' && found.mode !== 'or' && !found.partial ? { ...entry, relevance: Math.max(entry.relevance, 0.9) } : entry))
+  let results = exactly(shape(found.results))
   let weakCount = found.weakCount || 0
   if (terms.length) {
     const extra = await Promise.all(terms.map(async (term) => {
       try {
         const { found: termFound } = await runKnowledgeSearch({ query: term, maxResults: 10, includeWeak, workspace }, { home: true })
         weakCount += termFound.weakCount || 0
-        return { term, original: false, results: shape(termFound.results) }
+        return { term, original: false, results: shape(termFound.results, term) }
       } catch { return { term, original: false, results: [] } }
     }))
     results = mergeSearches([{ term: query, original: true, results }, ...extra], { limit: maxResults + 10 })
@@ -1823,6 +1864,7 @@ ipcMain.handle('chat:list', () => chatStore.list())
 ipcMain.handle('chat:get', (_event, id) => chatStore.get(id))
 ipcMain.handle('chat:create', (_event, conversation) => chatStore.create(conversation || {}))
 ipcMain.handle('chat:save', (_event, conversation) => chatStore.save(conversation))
+ipcMain.handle('chat:set-queue', (_event, { id, queue } = {}) => chatStore.setQueue(String(id || ''), queue))
 ipcMain.handle('chat:delete', (_event, id) => chatStore.remove(id))
 ipcMain.handle('chat:open-folder', () => shell.openPath(chatStore.ensureDirectory()))
 ipcMain.handle('spellcheck:get', () => spellcheckState())
@@ -2394,8 +2436,43 @@ ipcMain.on('home:changed', (_event, open) => {
   buildMenu()
 })
 
+// Apre un progetto in una nuova finestra: un'altra istanza dell'app (vedi primary-instance.cjs per ciò che non condividono). `directory` assente = si sceglie la cartella.
+async function openProjectInNewWindow(directory) {
+  let target = directory ? path.resolve(String(directory)) : ''
+  if (!target) {
+    const picked = await dialog.showOpenDialog(mainWindow, { title: t('Open a project in a new window'), defaultPath: projectPath ? path.dirname(projectPath) : undefined, properties: ['openDirectory'] })
+    if (picked.canceled || !picked.filePaths[0]) return false
+    target = path.resolve(picked.filePaths[0])
+  }
+  if (!(await fs.stat(target).catch(() => null))?.isDirectory()) throw new Error(t('The folder does not exist'))
+  if (projectPath && samePath(target, projectPath)) throw new Error(t('This project is already open in this window'))
+  const holder = instances.holder(target)
+  if (holder) {
+    instances.requestFocus(holder.pid)
+    throw new Error(t('This project is already open in another OpenWriter window, which has been brought to the front'))
+  }
+  const args = [...(app.isPackaged ? [] : [app.getAppPath()]), '--ow-secondary', `--ow-project=${target}`]
+  const environment = { ...process.env }
+  delete environment.ELECTRON_RUN_AS_NODE
+  const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', env: environment })
+  child.on('error', (error) => console.error(t('Could not open a new window: {message}', { message: error.message })))
+  child.unref()
+  return true
+}
+// Disposizione delle bolle del grafo, condivisa da tutte le finestre: un file nei dati dell'app, con le sole chiavi della disposizione (chiamate sincrone, come il localStorage).
+const layoutFile = () => path.join(app.getPath('userData'), 'graph-layout.json')
+const LAYOUT_KEY_PATTERN = /^openwriter\.graphLayout\.v1(:[\w.-]+)?$/
+const readLayoutStore = () => { try { const parsed = JSON.parse(fsSync.readFileSync(layoutFile(), 'utf8')); return parsed && typeof parsed === 'object' ? parsed : {} } catch { return {} } }
+const changeLayoutStore = (change) => { try { const store = readLayoutStore(); change(store); writeFileAtomic(layoutFile(), JSON.stringify(store)) } catch (error) { console.error('Disposizione del grafo non salvata:', error.message) } }
+ipcMain.on('layout:get', (event, key) => { event.returnValue = LAYOUT_KEY_PATTERN.test(String(key)) ? (readLayoutStore()[String(key)] ?? null) : null })
+ipcMain.on('layout:set', (event, key, value) => { if (LAYOUT_KEY_PATTERN.test(String(key))) changeLayoutStore((store) => { store[String(key)] = String(value).slice(0, 2_000_000) }); event.returnValue = true })
+ipcMain.on('layout:remove', (event, key) => { if (LAYOUT_KEY_PATTERN.test(String(key))) changeLayoutStore((store) => { delete store[String(key)] }); event.returnValue = true })
+ipcMain.on('layout:keys', (event) => { event.returnValue = Object.keys(readLayoutStore()) })
+ipcMain.handle('project:open-new-window', (_event, directory) => openProjectInNewWindow(directory))
+
 function buildMenu() {
   createApplicationMenu((command) => {
+    if (command === 'open-project-new-window') { openProjectInNewWindow().catch((error) => console.error(error.message)); return }
     // «Seleziona tutto» vale solo per il riquadro in uso: con il focus dentro una pagina del browser, quella pagina; altrimenti decide l'interfaccia
     // (campo di testo, documento, scheda del browser, testo della chat). Il ruolo di sistema selezionava l'intera finestra: albero dei file, chat, editor.
     if (command === 'select-all') {
@@ -2602,14 +2679,24 @@ const mcpHttp = createMcpHttp({ directory: app.getPath('userData'), serverPath: 
 const startMcpHttp = (options = {}) => mcpHttp.start({ readOnly: loadPreferences()['openwriter.mcpHttpReadOnly'] === 'on', ...options })
 ipcMain.handle('mcp:http-status', () => mcpHttp.status())
 ipcMain.handle('mcp:http-set', async (_event, { enabled, renewToken } = {}) => {
+  if (!primaryLock.isPrimary()) throw new Error(t('The agents (MCP) are served by another OpenWriter window: change this setting there'))
   const preferencesNow = loadPreferences()
   if (enabled === false) { mcpHttp.stop(); preferencesNow['openwriter.mcpHttp'] = 'off'; flushPreferences(); return mcpHttp.status() }
   preferencesNow['openwriter.mcpHttp'] = 'on'
   flushPreferences()
   return startMcpHttp({ renewToken: renewToken === true })
 })
-app.on('will-quit', () => mcpHttp.stop())
-if (loadPreferences()['openwriter.mcpHttp'] === 'on') app.whenReady().then(() => startMcpHttp()).catch((error) => console.error('Server MCP HTTP non avviato:', error.message))
+app.on('will-quit', () => { mcpHttp.stop(); primaryLock.release(); instances.unregister() })
+// Il ponte e il server HTTP li serve solo l'istanza principale. Se si chiude, un'altra finestra aperta subentra (pochi secondi) e li riavvia: stessa porta e stesso
+// token per l'HTTP, porta nuova per il ponte (il server MCP rilegge il file a ogni chiamata).
+const primaryLock = createPrimaryLock({
+  file: path.join(app.getPath('userData'), 'primary-instance.lock'),
+  onAcquire: () => {
+    mcpBridge.start()
+    if (loadPreferences()['openwriter.mcpHttp'] === 'on') startMcpHttp().catch((error) => console.error('Server MCP HTTP non avviato:', error.message))
+  },
+  onRelease: () => { mcpBridge.stop(); mcpHttp.stop() },
+})
 app.on('will-quit', () => mcpBridge.stop())
 
 // Il browser integrato mantiene i login dopo un riavvio. I cookie con scadenza li tiene già la partizione persistente; quelli "di sessione"
@@ -2745,7 +2832,14 @@ app.whenReady().then(async () => {
   await loadProject()
   createWindow()
   buildMenu()
-  mcpBridge.start()
+  primaryLock.start()
+  // Un'altra finestra ha chiesto questo progetto: questa si porta in primo piano.
+  instances.watchFocus(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  })
   for (const filePath of markdownArguments(process.argv)) openExternalDocument(filePath)
   for (const directory of folderArguments(process.argv)) openExternalProject(directory)
 

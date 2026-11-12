@@ -17,6 +17,7 @@ function createApplicationMenu(sendCommand, state = {}) {
         { label: t('New document'), accelerator: 'CmdOrCtrl+N', click: command('new') },
         { label: t('Open…'), accelerator: 'CmdOrCtrl+O', click: command('open') },
         { label: t('Open project folder…'), accelerator: 'CmdOrCtrl+Shift+O', click: command('open-project') },
+        { label: t('Open project in a new window…'), click: command('open-project-new-window') },
         { label: t('Close tab'), accelerator: 'CmdOrCtrl+W', click: command('close-tab'), enabled: onDocument },
         { type: 'separator' },
         { label: t('Save'), accelerator: 'CmdOrCtrl+S', click: command('save'), enabled: onDocument },
