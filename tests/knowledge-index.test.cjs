@@ -551,3 +551,16 @@ test('search: con includeWeak si aggiungono i meno pertinenti (weak), sempre ord
   assert.ok(!all.results[0].weak, 'in cima i pertinenti')
   index.close()
 })
+
+test('buildMatchQuery e search con exact («Parole intere»): una frase, parole intere nell\'ordine scritto, senza prefisso', () => {
+  assert.equal(buildMatchQuery('Il gatto  nero', 'and', { exact: true }), '"Il gatto nero"')
+  assert.equal(buildMatchQuery('', 'and', { exact: true }), '')
+  const index = memory()
+  index.indexFile(P, 'a.md', '# A\n\nIl gatto nero dorme.\n')
+  index.indexFile(P, 'b.md', '# B\n\nIl nero gatto dorme e il gattone no.\n')
+  assert.deepEqual(index.search(P, 'gatto nero', { exact: true }).results.map((row) => row.path), ['a.md'])
+  assert.equal(index.search(P, 'gatt', { exact: true }).results.length, 0)
+  assert.equal(index.search(P, 'gatto nero', { exact: true }).results[0].relevance, 1)
+  assert.ok(index.search(P, 'gatt').results.length > 0)
+  index.close()
+})

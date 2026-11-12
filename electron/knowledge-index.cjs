@@ -151,9 +151,14 @@ o os as um uma uns umas do dos da das no nos na nas em com para por
 `.split(/\s+/).filter(Boolean))
 
 // `mode` 'or': le parole funzionali (di, della, the…) non contano: "almeno una parola" con "di" trova qualsiasi cosa. Se la domanda è fatta solo di quelle, restano.
-function buildMatchQuery(input, mode = 'and') {
+function buildMatchQuery(input, mode = 'and', { exact = false } = {}) {
   const terms = []
   const text = String(input ?? '')
+  // «Parole intere»: tutta la domanda è una sola frase, parole intere nell'ordine scritto (nessuna parola ridotta a prefisso, nessuna "almeno una").
+  if (exact) {
+    const words = (text.match(/[\p{L}\p{N}]+/gu) || []).slice(0, MAX_QUERY_TERMS * 4)
+    return words.length ? `"${words.join(' ')}"` : ''
+  }
   const phrases = []
   const rest = text.replace(/"([^"]+)"/g, (_, phrase) => {
     const words = phrase.match(/[\p{L}\p{N}]+/gu)
@@ -464,7 +469,7 @@ function createKnowledgeIndex({ file, readOnly = false }) {
      * semantic-embedder.cjs) la ricerca per parole si fonde con quella per significato: stessa lista, ordinata per rango in entrambe.
      * → { mode: 'and' | 'or' | 'hybrid', results: [{ id, project, path, heading, startLine, endLine, snippet, score }] }
      */
-    search(projectOrProjects, query, { limit = DEFAULT_LIMIT, folder = '', maxPerFile = DEFAULT_PER_FILE, queryVector = null, model = '', includeWeak = false } = {}) {
+    search(projectOrProjects, query, { limit = DEFAULT_LIMIT, folder = '', maxPerFile = DEFAULT_PER_FILE, queryVector = null, model = '', includeWeak = false, exact = false } = {}) {
       const size = Math.min(MAX_LIMIT, Math.max(1, Math.round(Number(limit)) || DEFAULT_LIMIT))
       const perFile = Math.max(1, Math.round(Number(maxPerFile)) || DEFAULT_PER_FILE)
       const scope = String(folder || '').replace(/^\/+|\/+$/g, '')
@@ -476,7 +481,7 @@ function createKnowledgeIndex({ file, readOnly = false }) {
         : { sql: '', params: [] })
       // I candidati per parole, in ordine di rilevanza e senza ancora il limite per file.
       const lexical = (mode) => {
-        const match = buildMatchQuery(query, mode)
+        const match = buildMatchQuery(query, mode, { exact })
         if (!match) return []
         const filter = folderFilter()
         return db.prepare(`
@@ -536,6 +541,8 @@ function createKnowledgeIndex({ file, readOnly = false }) {
       }
       let mode = 'and'
       let rows = lexical('and')
+      // Frase intera trovata: è la risposta esatta (pertinenza piena); niente "almeno una parola" né significato.
+      if (exact) return { mode, weakCount: 0, results: finalize(rows).map((row) => ({ ...row, via: 'words', relevance: 1 })) }
       if (!rows.length) { mode = 'or'; rows = lexical('or') }
       if (!queryVector || !model) return { mode, results: finalize(rows) }
       const near = vectorCandidates(projects, queryVector, scope, size * perFile * VECTOR_CANDIDATES, model)
