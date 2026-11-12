@@ -70,12 +70,14 @@ precision highp float;
 layout(location = 0) in vec2 corner;
 layout(location = 1) in vec4 body;   // centro (x, y), raggio, indice cella
 layout(location = 2) in vec4 mood;   // evidenziata, attenuata, tipo (0 normale, 1 non connesso), peso (0-1: più è grande il progetto, più la bolla ha rilievo)
+layout(location = 3) in vec4 tone;   // x: colore della luce in una ricerca (0 accento, 1 rosso, 2 giallo, 3 verde: la pertinenza a semaforo)
 uniform vec2 resolution;
 uniform vec2 pan;
 uniform float zoom;
 out vec2 local;
 out float cell;
 out vec4 moodOut;
+out float toneOut;
 void main() {
   float reach = body.z * 1.7;
   vec2 world = body.xy + corner * reach;
@@ -84,6 +86,7 @@ void main() {
   local = corner * 1.7;
   cell = body.w;
   moodOut = mood;
+  toneOut = tone.x;
 }`
 
 const NODE_FRAGMENT = `#version 300 es
@@ -91,6 +94,7 @@ precision highp float;
 in vec2 local;
 in float cell;
 in vec4 moodOut;
+in float toneOut;
 uniform sampler2D atlas;
 uniform vec2 atlasGrid;   // colonne, righe
 uniform vec3 accent;
@@ -125,7 +129,9 @@ void main() {
   // Bordo sottile (circa il 3% del raggio, come nell'avatar dell'elenco): uno più largo copriva i margini dell'icona.
   float ring = smoothstep(0.95, 0.975, r) * body;
   float lit = moodOut.x;
-  vec3 rim = mix(border, accent, lit);
+  // Il colore della luce: l'accento, o (in una ricerca) il semaforo della pertinenza, gli stessi colori della barra nei risultati.
+  vec3 tint = toneOut < 0.5 ? accent : toneOut < 1.5 ? vec3(0.957, 0.247, 0.369) : toneOut < 2.5 ? vec3(0.984, 0.749, 0.141) : vec3(0.063, 0.725, 0.506);
+  vec3 rim = mix(border, tint, lit);
   vec3 rgb = mix(face, rim, ring);
   // Alone: sempre leggero, forte quando la bolla è evidenziata; le bolle non connesse "respirano" piano.
   float glowShape = exp(-pow(max(r - 1.0, 0.0) * 2.6, 2.0));
@@ -133,7 +139,7 @@ void main() {
   float glow = glowShape * (0.12 + 0.18 * breath + 0.75 * lit) * (1.0 - body);
   float fade = 1.0 - 0.72 * moodOut.y;
   float alpha = (body + glow) * fade;
-  vec3 mixed = (rgb * body + accent * glow) * fade;
+  vec3 mixed = (rgb * body + tint * glow) * fade;
   color = vec4(mixed, alpha);
 }`
 
@@ -322,11 +328,14 @@ export function createGraphRenderer(canvas) {
   gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0)
   gl.bindBuffer(gl.ARRAY_BUFFER, nodeBuffer)
   gl.enableVertexAttribArray(1)
-  gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 32, 0)
+  gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 48, 0)
   gl.vertexAttribDivisor(1, 1)
   gl.enableVertexAttribArray(2)
-  gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 32, 16)
+  gl.vertexAttribPointer(2, 4, gl.FLOAT, false, 48, 16)
   gl.vertexAttribDivisor(2, 1)
+  gl.enableVertexAttribArray(3)
+  gl.vertexAttribPointer(3, 4, gl.FLOAT, false, 48, 32)
+  gl.vertexAttribDivisor(3, 1)
 
   const edgeBuffer = gl.createBuffer()
   const edgeVao = gl.createVertexArray()
@@ -390,7 +399,7 @@ export function createGraphRenderer(canvas) {
 
   /**
    * frame: { time, still, pan: [x, y], zoom, colors: { accent, border },
-   *          nodes: [{ x, y, r, cell, lit, dim, free, weight }], edges: [{ ax, ay, bx, by, weight, curve, phase, lit, reachA, reachB }], dim }
+   *          nodes: [{ x, y, r, cell, lit, dim, free, weight, tone }], edges: [{ ax, ay, bx, by, weight, curve, phase, lit, reachA, reachB }], dim }
    */
   function draw(frame) {
     if (disposed) return
@@ -414,7 +423,7 @@ export function createGraphRenderer(canvas) {
     // profondità, così passa sopra una bolla che ha dietro e sotto una che ha davanti. Una bolla conta dalla sua superficie più vicina (z − r): i pezzi che
     // la raggiungono dal suo stesso centro restano dietro di lei.
     const EDGE_FLOATS = 12
-    const NODE_FLOATS = 8
+    const NODE_FLOATS = 12
     const items = []
     frame.edges.forEach((edge, index) => {
       const startZ = edge.az || 0
@@ -446,6 +455,7 @@ export function createGraphRenderer(canvas) {
         const o = nodeCount * NODE_FLOATS
         nodeData[o] = node.x; nodeData[o + 1] = node.y; nodeData[o + 2] = node.r; nodeData[o + 3] = node.cell
         nodeData[o + 4] = node.lit; nodeData[o + 5] = node.dim; nodeData[o + 6] = node.free ? 1 : 0; nodeData[o + 7] = node.weight || 0
+        nodeData[o + 8] = node.tone || 0; nodeData[o + 9] = 0; nodeData[o + 10] = 0; nodeData[o + 11] = 0
         const last = runs[runs.length - 1]
         if (last && last.kind === 0) last.count += 1; else runs.push({ kind: 0, start: nodeCount, count: 1 })
         nodeCount += 1
@@ -499,6 +509,7 @@ export function createGraphRenderer(canvas) {
         gl.bindBuffer(gl.ARRAY_BUFFER, nodeBuffer)
         gl.vertexAttribPointer(1, 4, gl.FLOAT, false, stride, base)
         gl.vertexAttribPointer(2, 4, gl.FLOAT, false, stride, base + 16)
+        gl.vertexAttribPointer(3, 4, gl.FLOAT, false, stride, base + 32)
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, run.count)
       }
     }
