@@ -45,6 +45,7 @@ const { outsideFolders: outsideFoldersOf } = require('./shared-knowledge.cjs')
 const { createWorkspacesStore } = require('./workspaces-store.cjs')
 const { STOPWORDS } = require('./knowledge-index.cjs')
 const { affinityEdges, uniformEdges, collectVectors, parentProjects } = require('./project-graph.cjs')
+const { findOwners } = require('./project-owner.cjs')
 const { mergeSearches, cleanTerms } = require('./search-merge.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
 const MAX_SKILL_FILE_BYTES = MAX_SKILL_CHARS * 4
@@ -539,7 +540,8 @@ async function importFiles({ paths, targetDirectory }) {
         copied.push(destination)
         continue
       }
-      if (!stats.isFile() || !listedExtensions.includes(path.extname(source).toLowerCase())) { skipped.push(source); continue }
+      // Qualsiasi file entra nel progetto: anche un formato che l'editor non apre si può dare all'assistente (per ricavarne un Markdown).
+      if (!stats.isFile()) { skipped.push(source); continue }
       const destination = await uniqueDestination(directory, path.basename(source))
       await fs.copyFile(source, destination, fsSync.constants.COPYFILE_EXCL)
       copied.push(destination)
@@ -1474,6 +1476,17 @@ ipcMain.handle('projects:graph', async (_event, options = {}) => {
     let stats = { files: 0, chunks: 0, updatedAt: null }
     if (indexed && knowledge.available) { try { stats = await knowledge.stats(item.path) } catch { /* senza statistiche il progetto resta senza linee */ } }
     nodes.push({ ...base, indexed, shared, files: stats.files, chunks: stats.chunks, updatedAt: stats.updatedAt })
+  }
+  // I sotto-progetti (cartelle con una `.ow` propria) dei progetti dell'elenco compaiono come satelliti anche se non sono mai stati aperti come progetti indipendenti.
+  // Non si indicizzano per conto loro: il loro contenuto è già nell'indice del progetto che li contiene.
+  for (const owner of [...nodes]) {
+    if (owner.missing) continue
+    let found = []
+    try { found = findOwners(owner.path) } catch { found = [] }
+    for (const directory of found) {
+      if (nodes.some((node) => samePath(node.path, directory))) continue
+      nodes.push({ path: directory, name: path.basename(directory), missing: false, openedAt: null, ...(owner.temporary ? { temporary: true } : {}), indexed: false, shared: false, files: 0, chunks: 0, updatedAt: null })
+    }
   }
   // Un progetto che condivide e ha l'indice acceso ma nessun passaggio (appena aggiunto): si indicizza (non più spesso di ogni due minuti), senza aspettare l'apertura.
   // `options.refresh` (il pulsante Aggiorna della Home): tutti i progetti con l'indice acceso si riallineano ai file, aperti o no. Altrimenti solo quelli senza ancora
@@ -2490,7 +2503,7 @@ ipcMain.handle('clipboard:paste-files', async (_event, { targetDirectory } = {})
         const destination = await uniqueDestination(directory, path.basename(source))
         await fs.cp(source, destination, { recursive: true, errorOnExist: true, filter: (item) => !CLIPBOARD_IGNORED.has(path.basename(item)) })
         result.copied.push(destination)
-      } else if (listedExtensions.includes(path.extname(source).toLowerCase())) {
+      } else if (stats.isFile()) {
         const destination = await uniqueDestination(directory, path.basename(source))
         await fs.copyFile(source, destination, fsSync.constants.COPYFILE_EXCL)
         result.copied.push(destination)
