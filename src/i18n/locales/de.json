@@ -609,7 +609,7 @@
   "untitled": "ohne Titel",
   "{basename} is not valid JSON: fix it or remove it": "{basename} ist kein gültiges JSON: Korrigiere oder entferne die Datei",
   "{copied} copied": "{copied} kopiert",
-  "{copied} copied, {skipped} skipped (unsupported format)": "{copied} kopiert, {skipped} übersprungen (nicht unterstütztes Format)",
+  "{copied} copied, {skipped} not copied": "{copied} kopiert, {skipped} nicht kopiert",
   "{count} seconds": "{count} Sekunden",
   "{formatNumber} characters": "{formatNumber} Zeichen",
   "{hidden} unchanged lines": "{hidden} unveränderte Zeilen",

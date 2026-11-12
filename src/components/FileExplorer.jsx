@@ -606,7 +606,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
         if (directory !== project && !expandedPaths.has(directory)) onToggle(directory)
         setLocalRefresh((value) => value + 1)
         onStatus(result.skipped.length
-          ? t('{copied} copied, {skipped} skipped (unsupported format)', { copied: result.copied.length, skipped: result.skipped.length })
+          ? t('{copied} copied, {skipped} not copied', { copied: result.copied.length, skipped: result.skipped.length })
           : t('{copied} copied', { copied: result.copied.length }))
       } catch (reason) {
         onStatus(t('Copy failed: {message}', { message: reason.message }))
