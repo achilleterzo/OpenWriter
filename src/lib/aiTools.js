@@ -21,7 +21,7 @@ export const TOOL_DEFINITIONS = [
   { group: 'research', name: 'research', required: ['question'], description: 'Delegates an exploration of the project to a research assistant (another model) that searches and reads the files and returns a SHORT report with file paths and line numbers. Use it as soon as answering needs more than three or four searches or readings: which documents talk about something, where a topic is handled, inventories and comparisons ("list X and tell me which are missing from Y", code against documentation, a check across many files). For one simple lookup use search_files or read_file yourself. Give it the WHOLE question, comparison or final check included (it does not see this conversation), and say what the report must list. It only reads. Trust the paths and line numbers; verify with read_file startLine/endLine only the two or three points your answer depends on (anything marked not verified, or claims about what code does) and do not repeat its searches. If the report has gaps ("Not found", a place not searched), call research again with a narrower question instead of exploring yourself.', parameters: { question: 'what to find out, with every detail it needs', scope: 'optional: folder or files to restrict the search to' } },
   { group: 'files', name: 'search_files', required: ['pattern'], description: 'Searches the text of the project files for a word, a phrase or a regular expression, without opening the files one by one. By default it returns only the LIST OF FILES that contain it, with the number of matches: then read just those. To judge a match use output=lines (long lines are shown around the match) with a little context, or read a few lines with read_file startLine/endLine: do not open whole files to check. output=count gives only the totals. Case-insensitive, literal unless regex=true. Searches .md, .markdown and .txt unless you give glob (e.g. "*.md, *.js"). Works in reference folders too (path "@name/…"). To explore a subject by relevance, without the exact words, use search_knowledge.', parameters: { pattern: 'the text to find, or the regular expression', regex: 'true for a regular expression (default: literal; a pattern with | or symbols such as \\s, \\w, .* is read as one automatically); false forces literal text', caseSensitive: 'true to distinguish capitals (default false)', path: 'optional: folder or file to search, relative to the project root (default: all)', glob: 'optional: file names, comma separated, e.g. "*.md, *.js" or "docs/**/*.md" (default: .md, .markdown, .txt)', output: '"files" (default), "lines" or "count"', context: 'with output=lines: lines of context around each match (0-5)', maxResults: 'maximum files or lines (default 50, at most 500)' } },
   { group: 'files', name: 'search_knowledge', required: ['query'], description: 'Finds the PASSAGES of the project documents (.md, .markdown, .txt) that best answer a question or deal with a subject, ranked by relevance, without knowing the exact words. Write a few significant words, not a sentence ("contratto penale ritardo", not "what happens if we are late?"); accents and capitals do not matter and the last word also matches its beginnings. Each result is a passage with file, line range and the path of its headings, plus the text around the match: read it with read_file startLine/endLine before relying on it. It does NOT understand synonyms: if nothing relevant comes back, try other words. It also searches what the user shares with this project: the reference folders linked to it, the web pages the user saved ("@web/…") and the user\'s OTHER PROJECTS (paths "@name/…", which read_file opens, read-only), so look there too when the project itself has little: the user wants one body of knowledge across projects. Use it to explore ("where do we talk about X?"); use search_files for an exact phrase, a regular expression, code files or every occurrence.', parameters: { query: 'a few significant words to look for', path: 'optional: folder or file to restrict the search to, relative to the project root, or "@name/…" for a reference folder or another project (default: everything shared)', scope: 'optional: "all" (default: this project, the reference folders and the other projects), "project" (this project only) or "others" (only the reference folders and the other projects)', maxResults: 'maximum passages (default 10, at most 50)' } },
-  { group: 'files', name: 'list_directory', required: [], description: 'Lists the files and folders of a project directory (.ow excluded) with size and last modification. ONE call is enough: it is RECURSIVE by default and returns the whole hierarchy below the folder (indented) with the date of every file, so never list sub-folders one by one and never repeat a listing you already have (a folder already covered by an earlier complete listing is not listed again). To find what changed recently or to compare dates (for example the sources against their documentation) use sort="date": ONE flat list of the files below the folder, the most recently modified first, always the whole hierarchy (call it on the project root, or pass several folders at once with paths). recursive=false shows only that folder, by name. The date of a file is when it was last saved on disk, not the unsaved changes of an open tab.', parameters: { path: 'optional: path relative to the project root (default: the root); "@name/…" lists a reference folder (read-only)', paths: 'optional: several folders in ONE call (comma-separated), instead of one call each', sort: 'optional: "name" (default, folders first) or "date" (flat list of the files below the folder, most recent first, up to 150)', recursive: 'optional, default true: everything below the folder (up to 12 levels and 1000 entries); false: only the folder' } },
+  { group: 'files', name: 'list_directory', required: [], description: 'Lists the files and folders of a project directory (.ow excluded) with size and last modification. ONE call is enough: it is RECURSIVE by default and returns the whole hierarchy below the folder (indented) with the date of every file, so never list sub-folders one by one and never repeat a listing you already have (a folder already covered by an earlier complete listing is not listed again). To find what changed recently or to compare dates (for example the sources against their documentation) use sort="date": ONE flat list of the files below the folder, the most recently modified first, always the whole hierarchy (call it on the project root, or pass several folders at once with paths). recursive=false shows only that folder, by name. The date of a file is when it was last saved on disk, not the unsaved changes of an open tab.', parameters: { path: 'optional: path relative to the project root (default: the root); "@name/…" lists a reference folder (read-only)', paths: 'optional: several folders in ONE call (comma-separated), instead of one call each', sort: 'optional: "name" (default, folders first) or "date" (flat list of the files below the folder, most recent first, up to 2000 files)', recursive: 'optional, default true: everything below the folder (up to 12 levels and 1000 entries); false: only the folder' } },
   { group: 'files', name: 'read_file', required: ['path'], description: 'Reads the text of a project file (.md, .txt, .docx, .pdf, …). Long files are read in chunks, or only the lines you need (startLine/endLine, the line numbers that search_files shows: to check a match read a few lines around it instead of the whole file). If the file is open in a tab it returns the CURRENT editor text, including unsaved changes (yours too).', parameters: { path: 'path relative to the project root, or "@name/file.md" for a file in a reference folder (read-only)', offset: 'optional: character to start from', limit: 'optional: maximum number of characters', startLine: 'optional: first line to read (from 1); instead of offset', endLine: 'optional, with startLine: last line, inclusive (default: 50 lines from startLine)' } },
   { group: 'files', name: 'list_versions', required: [], description: 'Lists the saved versions (history) of a project document, newest first, with id, date, kind (manual or automatic), label and size. Versions are archived before the assistant edits a document and at every save. Use it to see how a document changed or to find an earlier text.', parameters: { path: 'optional: document path relative to the project root (default: the active document)' } },
   { group: 'files', name: 'read_version', required: ['id'], description: 'Reads the text of a saved version of a document (id from list_versions). Read-only: it never changes the document; if the user wants an earlier text back, use it to rewrite or restore the passage with the editing tools. Long versions are read in chunks.', parameters: { id: 'version id from list_versions', path: 'optional: document path relative to the project root (default: the active document)', offset: 'optional: character to start from', limit: 'optional: maximum number of characters' } },
@@ -392,8 +392,13 @@ export function createToolRunner(context) {
   const isTrue = (value) => value === true || value === 'true'
   // Complete recursive listings already given in this run: { path ('' = root), sort }. Cleared whenever a file or folder is created, moved or deleted.
   const listedTrees = []
-  // Number of tool calls so far: the runner uses it to know whether an earlier listing is still among the recent results the model keeps in full.
-  let callCount = 0
+  // Characters of results produced so far: an earlier listing is still in front of the model only while little has been produced since (older long results are cut).
+  let producedChars = 0
+  const measured = async (promise) => {
+    const result = await promise
+    producedChars += typeof result === 'string' ? result.length : JSON.stringify(result ?? '').length
+    return result
+  }
 
   function showPage(target, page, offset) {
     pages.set(target.id, page)
@@ -564,8 +569,8 @@ export function createToolRunner(context) {
       const recursive = sort === 'date' || !/^(false|0)$/i.test(String(args.recursive ?? 'true'))
       const wanted = text(args.path).trim().replace(/^\/+|\/+$/g, '').replace(/^\.$/, '')
       // A complete listing of this folder or of a folder above it was already given: the answer is in the conversation, do not repeat it.
-      const covering = wanted.startsWith('@') ? null : listedTrees.find((item) => item.sort === sort && callCount - item.at <= 3 && (item.path === '' || wanted === item.path || wanted.startsWith(`${item.path}/`)))
-      if (covering) return `Already listed: the complete listing of "${covering.path || '/'}" (sort=${sort}) is in an earlier list_directory result of this conversation and includes "${wanted || '/'}"; nothing has been created, moved or deleted since. Use that result (it is among your latest results) instead of listing again; read_file opens a file and search_files looks for text.`
+      const covering = wanted.startsWith('@') ? null : listedTrees.find((item) => item.sort === sort && producedChars - item.at <= 70000 && (item.path === '' || wanted === item.path || wanted.startsWith(`${item.path}/`)))
+      if (covering) return `Already listed: the complete listing of "${covering.path || '/'}" (sort=${sort}) is in an earlier list_directory result of this conversation and includes "${wanted || '/'}"; nothing has been created, moved or deleted since. Use that result (it is still among your latest results) instead of listing again; read_file opens a file and search_files looks for text.`
       const { path, entries, truncated, linked = [], references = [] } = await api.listDirectoryForAi(text(args.path), { sort: recursive && sort === 'date' ? 'name' : sort })
       // Last modification in the user's local time, minute precision.
       const when = (modified) => {
@@ -581,8 +586,8 @@ export function createToolRunner(context) {
       if (!entries.length) return [`${path}: empty folder`, ...linkedLines, ...referenceLines].join('\n')
       // sort=date over the hierarchy: ONE flat list of the files below the folder, the most recently modified first (what changed lately, without walking the folders).
       if (recursive && sort === 'date') {
-        const MAX_VISITED = 3000
-        const MAX_SHOWN = 150
+        const MAX_VISITED = 20000
+        const MAX_SHOWN = 2000
         const MAX_DEPTH = 12
         const found = []
         let visited = 0
@@ -600,9 +605,9 @@ export function createToolRunner(context) {
         await walk(wanted || '.', entries, 0)
         found.sort((a, b) => (Number(b.entry.modified) || 0) - (Number(a.entry.modified) || 0))
         const shown = found.slice(0, MAX_SHOWN)
-        const lines = shown.map(({ relative, entry }) => `  ${relative} (${entry.size ?? '?'} B${entry.modified ? `, modified ${when(entry.modified)}` : ''})`)
+        const lines = shown.map(({ relative, entry }) => `  ${relative}${entry.modified ? `  ${when(entry.modified)}` : ''}`)
         const complete = !stopped && found.length <= MAX_SHOWN
-        if (complete) listedTrees.push({ path: wanted, sort, at: callCount })
+        if (complete) listedTrees.push({ path: wanted, sort, at: producedChars })
         return [`${path}: ${found.length} files below it, most recently modified first:`, ...lines, complete ? '' : `… showing the ${shown.length} most recent${stopped ? ' (the folder is too large to scan entirely)' : ` of ${found.length}`}: narrow it with a deeper path`].filter(Boolean).concat(linkedLines, referenceLines).join('\n')
       }
       const header = sort === 'date' ? `${path} (most recently modified first):` : `${path}:`
@@ -630,7 +635,7 @@ export function createToolRunner(context) {
         return out
       }
       const body = recursive && sort === 'name' ? await tree(text(args.path).trim().replace(/^\/+|\/+$/g, '') || '.', entries, 0) : entries.map((entry) => line(entry, '  '))
-      if (recursive && sort === 'name' && !cut && !truncated) listedTrees.push({ path: wanted, sort, at: callCount })
+      if (recursive && sort === 'name' && !cut && !truncated) listedTrees.push({ path: wanted, sort, at: producedChars })
       return [header, ...body, truncated ? '… list truncated' : '', cut ? `… CUT at ${MAX_TREE_ENTRIES} entries: list a deeper folder with its path, or use recursive=false` : ''].filter(Boolean).concat(linkedLines, referenceLines).join('\n')
     },
 
@@ -1288,10 +1293,9 @@ ${saved}`
   const LEGACY_TOOLS = { web_read: 'web', create_directory: 'create' }
 
   return async function run(name, args) {
-    callCount += 1
     if (LEGACY_TOOLS[name]) {
       if (!toolAvailable({ group: LEGACY_TOOLS[name], name }, context.enabled)) throw new Error(`Tool not available: ${name}`)
-      return tools[name]({ ...(args && typeof args === 'object' ? args : {}) })
+      return measured(tools[name]({ ...(args && typeof args === 'object' ? args : {}) }))
     }
     const tool = TOOL_DEFINITIONS.find((item) => item.name === name)
     if (!tool || !toolAvailable(tool, context.enabled)) throw new Error(`Tool not available: ${name}`)
@@ -1306,6 +1310,6 @@ ${saved}`
       const known = Object.keys(tool.parameters || {}).join(', ')
       throw new Error(`Missing required parameter${missing.length > 1 ? 's' : ''} for ${name}: ${missing.map((parameter) => `"${parameter}"`).join(', ')}. Nothing was changed. The parameters of ${name} are: ${known || '(none)'}.${missing.includes('replace') ? ' To delete the passage pass "replace" as an empty string.' : ''}`)
     }
-    return tools[name](given)
+    return measured(tools[name](given))
   }
 }
