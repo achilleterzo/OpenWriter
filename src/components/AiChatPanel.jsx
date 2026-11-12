@@ -1,5 +1,5 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Brain, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Copy, CornerDownLeft, Download, FileText, FolderOpen, GitBranch, Loader2, Paperclip, Pencil, Pin, Plus, Quote, RotateCcw, Send, Settings, Sparkles, Square, Trash2, Wand2, Wrench, X } from 'lucide-react'
+import { ArrowDown, Brain, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Clock, Copy, CornerDownLeft, Download, FileText, FolderOpen, GitBranch, Loader2, Paperclip, Pencil, Pin, Plus, Quote, RotateCcw, Send, Settings, Sparkles, Square, Trash2, Wand2, Wrench, X } from 'lucide-react'
 import MarkdownMessage from './MarkdownMessage.jsx'
 import ChatComposer from './ChatComposer.jsx'
 import { useDialogs } from './Dialogs.jsx'
@@ -140,7 +140,8 @@ function transcriptOf(conversation) {
 // di un messaggio dell'utente (i messaggi "tool" non possono contenerne).
 function toModelMessages(messages, context, native, loaded = new Map()) {
   const usable = messages.filter((message) => !(message.error && message.role === 'assistant'))
-  const lastUser = usable.map((message) => message.role).lastIndexOf('user')
+  // Il contesto (documento, selezione) resta sulla richiesta vera: i messaggi arrivati mentre l'assistente lavorava (`queued`) non lo portano.
+  const lastUser = usable.map((message) => (message.role === 'user' && !message.queued ? 'user' : message.role)).lastIndexOf('user')
   // Dai più recenti, finché il budget lo permette: questi restano interi.
   const recentTools = new Set()
   let budget = KEEP_TOOL_CHARS
@@ -169,7 +170,7 @@ function toModelMessages(messages, context, native, loaded = new Map()) {
     if (message.role === 'user') {
       const detail = message.attachment?.detail ? `${message.attachment.detail}\n\n` : ''
       const { parts, note } = userAttachmentParts(message, loaded)
-      const text = `${message.content}${note}`
+      const text = `${message.queued ? 'The user wrote this while you were working: take it into account and continue the task.\n\n' : ''}${message.content}${note}`
       if (index === lastUser && context) return [{ role: 'user', content: `${context}\n\n${detail}Request: ${text}`, ...parts }]
       return [{ role: 'user', content: `${detail}${text}`, ...parts }]
     }
@@ -518,6 +519,7 @@ const Message = memo(function Message({ message, index, editor, onBranch, onEdit
       {message.attachment?.label && (message.attachment.noteId && onOpenNote
         ? <button type="button" className="max-w-[92%] truncate rounded-lg border-l-2 border-accent-500 bg-slate-800/60 px-2.5 py-1 text-left text-xs text-slate-300 transition hover:bg-slate-700/60" title={message.attachment.label} onClick={() => onOpenNote(message.attachment.noteId)}>{message.attachment.label}</button>
         : <div className="max-w-[92%] truncate rounded-lg border-l-2 border-accent-500 bg-slate-800/60 px-2.5 py-1 text-xs text-slate-300" title={message.attachment.label}>{message.attachment.label}</div>)}
+      {message.queued && <p className="flex max-w-[92%] items-center gap-1.5 rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-400" title={t('Written while the assistant was working: it read it at its next step')}><CornerDownLeft size={12} className="shrink-0" /> <span className="truncate">{t('Added during the work')}</span></p>}
       {!assistant && message.images?.length > 0 && <ToolImages images={message.images} onOpen={onOpenImage} />}
       {!assistant && message.files?.length > 0 && (
         <div className="flex max-w-[92%] flex-wrap justify-end gap-1.5">
@@ -561,7 +563,7 @@ const ChatInput = forwardRef(function ChatInput({ busy, suggestion, onSend, onSt
   const [empty, setEmpty] = useState(true)
   const composer = useRef(null)
   useImperativeHandle(ref, () => ({ setValue: (text) => composer.current?.setValue(text), focus: () => composer.current?.focus() }), [])
-  const send = () => onSend(composer.current?.getMarkdown() ?? '')
+  const send = (mode) => onSend(composer.current?.getMarkdown() ?? '', mode)
   return (
     <div className="grid gap-1">
       {attachments.length > 0 && (
@@ -591,9 +593,10 @@ const ChatInput = forwardRef(function ChatInput({ busy, suggestion, onSend, onSt
           <button type="button" aria-label={t('Attach files')} title={attachTitle} disabled={busy || !canAttachFiles} className="rounded-md p-2.5 text-slate-400 transition hover:bg-slate-800 hover:text-slate-50 disabled:opacity-40 disabled:hover:bg-transparent" onClick={onAttach}><Paperclip size={16} /></button>
           {busy
             ? <button type="button" aria-label={t('Stop')} title={t('Stop')} className="rounded-md bg-rose-600 p-2.5 text-white transition hover:bg-rose-500" onClick={onStop}><Square size={16} /></button>
-            : <button type="button" aria-label={t('Send')} title={t('Send')} disabled={empty && !attachments.length} className="rounded-md bg-accent-600 p-2.5 text-white transition hover:bg-accent-500 disabled:opacity-50" onClick={send}><Send size={16} /></button>}
+            : <button type="button" aria-label={t('Send')} title={t('Send')} disabled={empty && !attachments.length} className="rounded-md bg-accent-600 p-2.5 text-white transition hover:bg-accent-500 disabled:opacity-50" onClick={() => send()}><Send size={16} /></button>}
         </div>
       </div>
+      {busy && <p className="truncate text-[11px] text-slate-500">{t('Enter queues a task that starts when the work is finished · Ctrl+Enter adds the message to the work in progress')}</p>}
       {suggestion && empty && !busy && <p className="truncate text-[11px] text-slate-500">{t('Press an arrow key or Tab to use the suggested prompt')}</p>}
     </div>
   )
@@ -624,6 +627,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const contextPathsKey = JSON.stringify(contextFilePaths())
   const [conversations, setConversations] = useState([])
   const [current, setCurrent] = useState(blankConversation)
+  // La conversazione in uso è stata caricata: prima di allora una richiesta dall'esterno finirebbe in una chat nuova.
+  const [loaded, setLoaded] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [editingIndex, setEditingIndex] = useState(null)
   const composer = useRef(null)
@@ -657,6 +662,10 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const liveRef = useRef({ text: '', thinking: '', status: '' })
   const frameRef = useRef(null)
   const runRef = useRef({ cancelled: false, cancel: null })
+  // Messaggi scritti mentre l'assistente lavora: entrano insieme (separati da una riga vuota) nella prossima chiamata al modello del compito in corso, o alla fine come nuovo turno.
+  const queueRef = useRef([])
+  const [queued, setQueued] = useState([])
+  const [autoSend, setAutoSend] = useState(null)
   const nativeUnsupported = useRef(false)
   // File allegati al prossimo messaggio e token consumati dalle richieste non ancora attribuite a una risposta.
   const [pendingFiles, setPendingFiles] = useState([])
@@ -712,17 +721,21 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   // Carica le conversazioni del progetto e riapre l'ultima in uso. Senza progetto la chat resta solo in memoria.
   useEffect(() => {
     let cancelled = false
+    setLoaded(false)
     ;(async () => {
-      if (!project) { setConversations([]); setCurrent(blankConversation()); return }
+      if (!project) { setConversations([]); setCurrent(blankConversation()); setLoaded(true); return }
       try {
         const list = await api.listConversations()
         if (cancelled) return
         setConversations(list)
         const id = list.some((item) => item.id === conversationId) ? conversationId : null
-        setCurrent(id ? await api.getConversation(id) : blankConversation())
+        const opened = id ? await api.getConversation(id) : blankConversation()
+        if (cancelled) return
+        setCurrent(opened)
       } catch (reason) {
         if (!cancelled) setError(reason.message)
       }
+      if (!cancelled) setLoaded(true)
     })()
     return () => { cancelled = true }
     // L'avvio dipende solo dal progetto: l'id attivo viene poi gestito da questo componente.
@@ -746,12 +759,29 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     setShowJump(false)
     scrollToEnd()
   }
+  // Chi segue il fondo lo segue anche quando cambia la misura della lista senza che cambi lo stato (un messaggio accodato che compare o sparisce, il campo di testo che
+  // si allarga o si restringe, la riga di aiuto, un'immagine che si carica): si osserva la lista stessa invece di fidarsi del solo momento in cui React ridisegna.
+  const followRef = useRef(null)
+  useEffect(() => {
+    const list = listRef.current
+    if (!list || followRef.current?.list === list) return
+    followRef.current?.stop()
+    const follow = () => { if (stickRef.current) scrollToEnd() }
+    const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(follow) : null
+    resize?.observe(list)
+    const mutation = typeof MutationObserver === 'function' ? new MutationObserver(follow) : null
+    mutation?.observe(list, { childList: true, subtree: true, characterData: true })
+    followRef.current = { list, stop: () => { resize?.disconnect(); mutation?.disconnect() } }
+  })
+  useEffect(() => () => { followRef.current?.stop(); followRef.current = null }, [])
   // Un messaggio appena inviato dall'utente, o un'altra conversazione, portano sempre in fondo.
   useEffect(() => { stickRef.current = true }, [current.id])
   useEffect(() => {
-    if (current.messages[current.messages.length - 1]?.role === 'user') stickRef.current = true
+    // Un messaggio dell'utente appena inviato porta in fondo; un'iniezione entrata durante il lavoro no (chi sta rileggendo più in alto non viene trascinato giù).
+    const last = current.messages[current.messages.length - 1]
+    if (last?.role === 'user' && !last.queued) stickRef.current = true
     if (stickRef.current) scrollToEnd()
-  }, [current.messages, live, busy, pendingAsk])
+  }, [current.messages, live, busy, pendingAsk, queued])
 
   const provider = settings?.provider
   const model = settings?.providers?.[provider]?.model
@@ -910,15 +940,23 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       scheduleLive()
     }, options)
     runRef.current.cancel = request.cancel
-    const reply = await request.promise
-    return { reply, thinking: liveRef.current.thinking }
+    runRef.current.streaming = true
+    try {
+      const reply = await request.promise
+      return { reply, thinking: liveRef.current.thinking }
+    } finally {
+      runRef.current.streaming = false
+    }
   }
 
   // Richiesta arrivata da fuori (es. "Applica correzione…" di una nota): parte appena l'assistente è pronto e libero.
   const handledRequest = useRef(null)
   const resetFor = useRef(null)
   useEffect(() => {
-    if (!request || handledRequest.current === request.id || busy || !enabled || !settings) return
+    if (!request || handledRequest.current === request.id || !loaded || !enabled || !settings) return
+    // Una richiesta di solo testo (per esempio il controllo AI di un documento) è come un'azione rapida: se l'assistente sta lavorando va in coda, altrimenti parte.
+    const plainText = Boolean(request.text) && !request.newChat && !request.resume && !request.passage && !request.image && !request.attachment && !request.onStarted
+    if (busy && !plainText) return
     // Ripresa dopo il cambio di progetto: aspetta che la conversazione sia stata caricata.
     if (request.resume && current.id !== request.conversationId) return
     // Richiesta in una chat nuova: prima si azzera la conversazione, poi (al render successivo) si invia.
@@ -948,6 +986,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       composer.current?.focus()
       return
     }
+    if (busy) { queueMessage(request.text, false, { keepComposer: true }); return }
     send(request.text || '', request.attachment, { ...(request.resume ? { resume: true } : {}), ...(request.onStarted ? { onStarted: request.onStarted } : {}) })
   })
 
@@ -969,6 +1008,67 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
 
   handlers.current = { branchFrom, startEdit }
 
+  // Aprendo una conversazione si ritrova la sua coda salvata (task rimasti dopo un riavvio o un arresto improvviso). Un'iniezione mai consegnata vale ormai come un task.
+  useEffect(() => {
+    if (busy) return
+    const saved = (current.queue || []).map((item) => ({ ...item, now: false }))
+    queueRef.current = saved
+    setQueued(saved)
+  }, [current.id])
+
+  // Il testo in coda rimasto a compito finito si invia appena l'assistente è libero (con lo stato aggiornato, non quello della chiamata appena conclusa).
+  useEffect(() => {
+    if (autoSend === null || busy) return
+    const text = autoSend
+    setAutoSend(null)
+    send(text)
+  })
+
+  // Un messaggio scritto mentre l'assistente lavora. Due operazioni distinte:
+  //  · Invio (`now` falso): task in coda. Una pillola in fondo alla chat; parte, tutti insieme, quando il lavoro è finito e l'assistente ha consegnato.
+  //  · Ctrl+Invio (`now`): iniezione. Entra nella prossima chiamata al modello; se l'assistente sta scrivendo la risposta la interrompe e la rifà, se sta
+  //    eseguendo uno strumento aspetta che finisca.
+  // La coda sta anche nel file della conversazione (.ow/chat): dopo un arresto improvviso o un aggiornamento dell'app i task in attesa si ritrovano.
+  function saveQueue() {
+    const id = busy ? runRef.current.conversationId : current.id
+    if (project && id) api.setConversationQueue(id, queueRef.current).catch((reason) => console.error(reason))
+  }
+
+  function queueMessage(text, now = false, { keepComposer = false } = {}) {
+    const body = String(text || '').trim()
+    if (!body) return
+    if (!keepComposer) composer.current?.setValue('')
+    queueRef.current = [...queueRef.current, { id: `${Date.now()}-${Math.random()}`, text: body, now }]
+    setQueued(queueRef.current)
+    saveQueue()
+    if (now && runRef.current.streaming && !runRef.current.cancelled) {
+      runRef.current.restart = true
+      runRef.current.cancel?.()
+      // Il messaggio compare subito in chat, senza passare dalla coda: la chiamata riparte appena la risposta interrotta si è chiusa.
+      runRef.current.drainNow?.()
+    }
+  }
+  // «Invia ora» su un task in coda: diventa un'iniezione, come se fosse stato inviato con Ctrl+Invio.
+  const promote = (id) => {
+    const item = queueRef.current.find((entry) => entry.id === id)
+    if (!item) return
+    // Assistente libero (per esempio task ritrovati dopo un riavvio): si invia subito, come un messaggio normale.
+    if (!busy) {
+      unqueue(id)
+      send(item.text)
+      return
+    }
+    queueRef.current = queueRef.current.map((entry) => (entry.id === id ? { ...entry, now: true } : entry))
+    setQueued(queueRef.current)
+    saveQueue()
+    if (runRef.current.streaming && !runRef.current.cancelled) {
+      runRef.current.restart = true
+      runRef.current.cancel?.()
+      runRef.current.drainNow?.()
+    }
+  }
+  const unqueue = (id) => { queueRef.current = queueRef.current.filter((item) => item.id !== id); setQueued(queueRef.current); saveQueue() }
+
   // Qualunque cosa succeda durante la richiesta (anche un errore prima dell'avvio vero e proprio), `busy` torna falso:
   // altrimenti la scelta della conversazione e l'invio resterebbero bloccati.
   async function send(text, attachment = null, options = {}) {
@@ -981,9 +1081,11 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       return
     }
     setBusy(true)
+    let failed = false
     try {
       await runConversation(content, attachment, options)
     } catch (reason) {
+      failed = true
       console.error(reason)
       setError(reason.message)
     } finally {
@@ -993,13 +1095,23 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       setPendingAsk(null)
       setLive(null)
       setBusy(false)
+      if (queueRef.current.length) {
+        const leftover = queueRef.current.map((item) => item.text).join('\n\n')
+        queueRef.current = []
+        setQueued([])
+        saveQueue()
+        // I task in coda (e un'iniezione arrivata a compito già finito) partono da soli come un nuovo messaggio. Se il lavoro è stato interrotto o è finito male,
+        // tornano nel campo, da rivedere e inviare.
+        if (!failed && !runRef.current.cancelled) setAutoSend(leftover)
+        else composer.current?.setValue(leftover)
+      }
     }
   }
 
   async function runConversation(content, attachment, { resume = false, onStarted = null }) {
     setError('')
     composer.current?.setValue('')
-    runRef.current = { cancelled: false, cancel: null }
+    runRef.current = { cancelled: false, cancel: null, restart: false, streaming: false }
 
     // Il messaggio dell'utente viene salvato subito: anche se la richiesta fallisce resta nel log.
     // Modificando un messaggio precedente le risposte successive vengono troncate; riprendendo si scartano solo gli errori in coda.
@@ -1030,6 +1142,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       }
     setCurrent(conversation)
     conversation = await persist(conversation)
+    runRef.current.conversationId = conversation.id
     setCurrent(conversation)
     // Chi ha inviato la richiesta (un agente esterno, via MCP) saprà in quale chat e a quale messaggio è finita.
     onStarted?.({ conversationId: conversation.id, messageIndex: conversation.messages.length - 1 })
@@ -1047,6 +1160,19 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       conversation = await persist(conversation)
       setCurrent(conversation)
     }
+
+    // I messaggi in coda entrano insieme, separati da una riga vuota, come un solo messaggio dell'utente. → true se ce n'erano.
+    // Solo le iniezioni (Ctrl+Invio) entrano nel lavoro in corso; i task in coda (Invio) aspettano che il lavoro sia finito.
+    const drainQueue = async () => {
+      const items = queueRef.current.filter((item) => item.now)
+      if (!items.length) return false
+      queueRef.current = queueRef.current.filter((item) => !item.now)
+      setQueued(queueRef.current)
+      saveQueue()
+      await append({ role: 'user', content: items.map((item) => item.text).join('\n\n'), queued: true })
+      return true
+    }
+    runRef.current.drainNow = drainQueue
 
     // Gli strumenti del progetto prevalgono su quelli generali, solo dove il progetto ha fatto una scelta.
     const toolSettings = { ...(settings.tools || {}), ...(projectSettings?.ai?.tools || {}) }
@@ -1136,6 +1262,9 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
 
       let limit = maxSteps
       for (let step = 0; ; step += 1) {
+        // Ciò che l'utente ha scritto nel frattempo entra nella chiamata che sta per partire.
+        if (step > 0) await drainQueue()
+        runRef.current.restart = false
         // Documento e selezione sono riletti a ogni passaggio: dopo una modifica il modello vede il testo aggiornato.
         // Con dei brani in discussione al modello vanno loro, non il documento attivo né la selezione (restano i documenti fissati a mano).
         const passages = conversation.passages || []
@@ -1230,6 +1359,13 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
             result = await attemptReply(false)
           }
         } catch (reason) {
+          // «Aggiorna la risposta in corso» (Ctrl+Invio): la risposta a metà si scarta e la chiamata si rifà con il messaggio in coda.
+          if (runRef.current.restart && !runRef.current.cancelled) {
+            runRef.current.restart = false
+            liveRef.current = { text: '', thinking: '', status: '' }
+            await drainQueue()
+            continue
+          }
           const partial = visibleText(liveRef.current.text).text
           if (runRef.current.cancelled) {
             if (partial.trim()) await append({ role: 'assistant', content: `${partial}\n\n${t('(interrupted)')}`, interrupted: true, ...(liveRef.current.thinking ? { thinking: liveRef.current.thinking } : {}) })
@@ -1245,6 +1381,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         if (!parsed) {
           const { text: finalText, next } = splitNextPrompt(result.reply)
           await append(result.reply.trim() ? { role: 'assistant', content: finalText || result.reply, ...(next ? { nextPrompt: next } : {}), ...thinking } : { role: 'assistant', content: t('The model returned an empty reply. Use “Resume from here” to try again.'), error: true, ...thinking })
+          // Compito finito ma un'iniezione è arrivata all'ultimo istante: la legge subito. I task in coda partono dopo, come nuovo messaggio.
+          if (result.reply.trim() && queueRef.current.some((item) => item.now)) continue
           break
         }
 
@@ -1515,6 +1653,28 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
                 </p>
               </div>
             )}
+            {/* Iniezioni (Ctrl+Invio): appaiono subito in chat, sbiadite, e diventano normali quando entrano nel lavoro in corso. */}
+            {queued.filter((item) => item.now).map((item) => (
+              <div key={item.id} className="group flex flex-col items-end gap-1 opacity-60" title={t('Sent with Ctrl+Enter: it reaches the assistant as soon as the tool in progress has finished')}>
+                <div className="max-w-[92%] break-words rounded-xl bg-accent-600 px-3 py-2 text-sm leading-6 text-white"><MarkdownMessage onAccent softBreaks>{item.text}</MarkdownMessage></div>
+                <p className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                  <Loader2 size={11} className="animate-spin" /> {t('Now')}
+                  <button type="button" aria-label={t('Remove from the queue')} title={t('Remove from the queue')} className="rounded p-0.5 hover:bg-slate-800 hover:text-slate-50" onClick={() => unqueue(item.id)}><X size={11} /></button>
+                </p>
+              </div>
+            ))}
+            {/* Task in coda (Invio): una pillola in fondo alla chat per ognuno; partono insieme, come un solo messaggio, quando il lavoro è finito. */}
+            {queued.filter((item) => !item.now).map((item) => (
+              <div key={item.id} className="flex justify-end">
+                <p className="flex max-w-[92%] items-center gap-1.5 rounded-full border border-slate-600 bg-slate-800/60 py-1 pl-2.5 pr-1.5 text-xs text-slate-300" title={t('Queued task: it starts when the assistant has finished the current work')}>
+                  <Clock size={12} className="shrink-0 text-accent-400" />
+                  <span className="shrink-0 text-accent-400">{t('Queued')}</span>
+                  <button type="button" aria-label={t('Send now')} title={t('Send now: add it to the work in progress')} className="shrink-0 rounded-full p-0.5 text-slate-400 hover:bg-slate-700 hover:text-accent-400" onClick={() => promote(item.id)}><Send size={11} /></button>
+                  <span className="min-w-0 truncate">{item.text.replace(/\s+/g, ' ')}</span>
+                  <button type="button" aria-label={t('Remove from the queue')} title={t('Remove from the queue')} className="shrink-0 rounded-full p-0.5 text-slate-400 hover:bg-slate-700 hover:text-slate-50" onClick={() => unqueue(item.id)}><X size={11} /></button>
+                </p>
+              </div>
+            ))}
             {pendingAsk && <AskCard ask={pendingAsk} />}
             {error && <p className="text-sm text-rose-400">{error}</p>}
             <div ref={endRef} />
@@ -1555,10 +1715,10 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
             )}
             <div className="mb-2 flex flex-wrap gap-1.5">
               {quickActionsFor(settings, projectSettings).map((action) => (
-                <button key={action.id} type="button" disabled={busy} title={action.isProject ? `${t('Project action')}: ${action.prompt}` : undefined} className={`rounded-full border px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50 ${action.isProject ? 'flex items-center gap-1 border-slate-500' : 'border-slate-700'}`} onClick={() => send(action.prompt)}>{action.isProject && <FolderOpen size={11} className="shrink-0 text-accent-400" />}{action.label}</button>
+                <button key={action.id} type="button" title={action.isProject ? `${t('Project action')}: ${action.prompt}` : undefined} className={`rounded-full border px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50 ${action.isProject ? 'flex items-center gap-1 border-slate-500' : 'border-slate-700'}`} onClick={() => (busy ? queueMessage(action.prompt) : send(action.prompt))}>{action.isProject && <FolderOpen size={11} className="shrink-0 text-accent-400" />}{action.label}</button>
               ))}
               {activeSkills.flatMap((skill) => skill.actions.map((action) => (
-                <button key={`${skill.id}:${action.label}`} type="button" disabled={busy} title={`${skill.name}: ${action.prompt}`} className="flex items-center gap-1 rounded-full border border-accent-500/40 px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50" onClick={() => send(action.prompt)}><Wand2 size={11} className="text-accent-400" /> {action.label}</button>
+                <button key={`${skill.id}:${action.label}`} type="button" title={`${skill.name}: ${action.prompt}`} className="flex items-center gap-1 rounded-full border border-accent-500/40 px-2.5 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50 disabled:opacity-50" onClick={() => (busy ? queueMessage(action.prompt) : send(action.prompt))}><Wand2 size={11} className="text-accent-400" /> {action.label}</button>
               )))}
             </div>
             {hasPassages && (
@@ -1690,7 +1850,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
               ref={composer}
               busy={busy}
               suggestion={suggestion}
-              onSend={send}
+              onSend={(text, mode) => (busy ? queueMessage(text, mode === 'now') : send(text))}
               onStop={stop}
               attachments={pendingFiles}
               canAttachFiles={Boolean(capabilities?.vision || capabilities?.pdf)}

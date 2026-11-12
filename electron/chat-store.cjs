@@ -42,6 +42,11 @@ function createChatStore({ getProjectPath }) {
   }
 
   const text = (value, limit) => String(value ?? '').slice(0, limit)
+  const MAX_QUEUE = 20
+  const cleanQueue = (value) => (Array.isArray(value) ? value : [])
+    .filter((item) => item && typeof item.text === 'string' && item.text.trim())
+    .slice(0, MAX_QUEUE)
+    .map((item) => ({ id: text(item.id, 80) || `${Date.now()}-${Math.random()}`, text: text(item.text, MAX_MESSAGE_CHARS), now: item.now === true }))
   const optionalId = (value) => (typeof value === 'string' && ID_PATTERN.test(value) ? value : null)
 
   function normalize(input, existing = {}) {
@@ -57,6 +62,9 @@ function createChatStore({ getProjectPath }) {
       skillOverrides: { add: skillIds(input.skillOverrides?.add), remove: skillIds(input.skillOverrides?.remove) },
       // Temperatura propria della conversazione ('' = segue quella del progetto).
       temperature: cleanTemperature(input.temperature),
+      // Task in coda (e iniezioni non ancora consegnate): sopravvivono a un arresto improvviso. Si cambiano solo con `setQueue`: un salvataggio della conversazione,
+      // anche con una copia vecchia in mano, lascia quella che è già su disco.
+      queue: cleanQueue(existing.queue),
       passages: (Array.isArray(input.passages) ? input.passages : [])
         .filter((passage) => passage && typeof passage.text === 'string' && passage.text.trim())
         .slice(0, MAX_PASSAGES)
@@ -139,6 +147,16 @@ function createChatStore({ getProjectPath }) {
     const conversation = normalize(input, existing)
     writeAtomic(file, JSON.stringify(conversation, null, 2))
     return conversation
+  }
+
+  // Solo la coda: la scrive subito, senza toccare il resto né la data di modifica (l'elenco delle conversazioni non si riordina).
+  function setQueue(id, queue) {
+    const file = fileFor(id)
+    if (!fs.existsSync(file)) return []
+    const conversation = readConversation(id)
+    conversation.queue = cleanQueue(queue)
+    writeAtomic(file, JSON.stringify(conversation, null, 2))
+    return conversation.queue
   }
 
   const attachmentsDirectory = () => path.join(directory(), 'attachments')
@@ -231,7 +249,7 @@ function createChatStore({ getProjectPath }) {
     return directory()
   }
 
-  return { list, get: readConversation, create, save, remove, copyTo, ensureDirectory, saveAttachment, getAttachment }
+  return { list, get: readConversation, create, save, setQueue, remove, copyTo, ensureDirectory, saveAttachment, getAttachment }
 }
 
 module.exports = { createChatStore }

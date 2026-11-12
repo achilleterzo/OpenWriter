@@ -70,7 +70,8 @@ const ChatComposer = forwardRef(function ChatComposer({ placeholder, onEmptyChan
         // In una lista Invio crea la voce successiva (e su una voce vuota esce dalla lista): si invia con Ctrl+Invio o con il pulsante.
         if (!withModifier && current?.isActive('listItem')) return false
         event.preventDefault()
-        send?.()
+        // Con il modificatore (Ctrl/Cmd+Invio) il chiamante sa che il messaggio è «subito»: mentre l'assistente lavora aggiorna la risposta in corso.
+        send?.(withModifier ? 'now' : undefined)
         return true
       },
     },
