@@ -35,17 +35,17 @@ That agent and the built-in assistant do not compete: they split the work. While
 
 **Write.** Rich-text editing with Markdown as the native format, a source view, find and replace, notes and bookmarks, document history, DOCX and PDF import, export to DOCX, PDF, or a self-contained Markdown file, and a text reader for any other text file. → [Documents and the editor](docs/guide/documents-and-editor.md)
 
-**Delegate and review.** An assistant that proofreads, rewrites, summarizes, and edits, with quick actions, writing skills, project memory, and several AI providers (Ollama, Ollama Cloud, OpenRouter, Codex, Claude, Gemini). Quick actions are yours to edit, and a project can have its own, imported in one go from another project. Every edit is applied in place and marked for you to accept or reject — or, for a project where you choose so, accepted and saved at the end of the work. The writing temperature and how much the assistant may do are set per project, and an interrupted turn can be resumed from its last step. → [The assistant](docs/guide/assistant.md)
+**Delegate and review.** An assistant that proofreads, rewrites, summarizes, and edits, with quick actions, writing skills, project memory, and several AI providers (Ollama, Ollama Cloud, OpenRouter, Codex, Claude, Gemini). Messages written while it works wait in a queue or are injected into the work in progress. Quick actions are yours to edit, and a project can have its own, imported in one go from another project. Every edit is applied in place and marked for you to accept or reject — or, for a project where you choose so, accepted and saved at the end of the work. The writing temperature and how much the assistant may do are set per project, and an interrupted turn can be resumed from its last step. → [The assistant](docs/guide/assistant.md)
 
 **Find.** Search by words and by meaning, in a project or across all of them, with a model that runs on your computer and is downloaded only if you ask for it; a whole-words switch turns it into an exact search when you want a name, an expression, or a quotation as it stands. When the computer has more than one graphics card, you choose which one the search by meaning uses. Pages from the web can be saved into a project and searched offline. → [Knowledge](docs/guide/knowledge.md)
 
-**See everything at once.** The Projects Home is a network of all your projects, linked when their contents are close in meaning, with a search that works like an agent's. → [Projects Home](docs/guide/projects-home.md)
+**See everything at once.** The Projects Home is a network of all your projects, linked when their contents are close in meaning, with a search that works like an agent's and bubbles that light up in traffic-light colours by relevance. → [Projects Home](docs/guide/projects-home.md)
 
 **Organize.** Projects with a file explorer, sub-projects, linked documents, and their own icon; workspaces that filter which projects you, the assistant, and the agents see. → [Projects](docs/guide/projects.md) · [Workspaces](docs/guide/workspaces.md)
 
 **Connect.** Each project decides whether it is indexed and whether its passages are visible to the others. External agents work on the project through the built-in MCP server, and what they change reaches you as edits to accept or reject. → [External agents (MCP)](docs/guide/external-agents.md)
 
-**Integrate.** File associations and the folder entry of the file manager, a built-in browser with a reader view, updates on your schedule. → [The application and the system](docs/guide/system.md)
+**Integrate.** File associations and the folder entry of the file manager, a built-in browser with a reader view, several windows on different projects, updates on your schedule. → [The application and the system](docs/guide/system.md)
 
 The interface is available in English, Italian, French, Spanish, German, and Portuguese, with themes, accent colors, and typography you can change.
 

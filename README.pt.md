@@ -35,17 +35,17 @@ Esse agente e o assistente integrado não competem: dividem o trabalho. Enquanto
 
 **Escrever.** Edição de texto rico com Markdown como formato nativo, vista de código-fonte, localizar e substituir, notas e marcadores, histórico de documentos, importação de DOCX e PDF, exportação para DOCX, PDF ou um ficheiro Markdown autónomo, e um leitor de texto para qualquer outro ficheiro de texto. → [Documentos e editor](docs/guide/documents-and-editor.md)
 
-**Delegar e rever.** Um assistente que revê, reescreve, resume e edita, com ações rápidas, skills de escrita, memória de projeto e vários fornecedores de IA (Ollama, Ollama Cloud, OpenRouter, Codex, Claude, Gemini). As ações rápidas são editáveis, e um projeto pode ter as suas, importadas de uma vez de outro projeto. Cada edição é aplicada no local e marcada para a aceitar ou rejeitar — ou, num projeto em que o escolha, aceite e guardada no fim do trabalho. O calor da escrita (a temperatura) e o que o assistente pode fazer definem-se por projeto, e um turno interrompido pode ser retomado a partir do último passo. → [O assistente](docs/guide/assistant.md)
+**Delegar e rever.** Um assistente que revê, reescreve, resume e edita, com ações rápidas, skills de escrita, memória de projeto e vários fornecedores de IA (Ollama, Ollama Cloud, OpenRouter, Codex, Claude, Gemini). As mensagens escritas enquanto trabalha esperam numa fila ou entram no trabalho em curso. As ações rápidas são editáveis, e um projeto pode ter as suas, importadas de uma vez de outro projeto. Cada edição é aplicada no local e marcada para a aceitar ou rejeitar — ou, num projeto em que o escolha, aceite e guardada no fim do trabalho. O calor da escrita (a temperatura) e o que o assistente pode fazer definem-se por projeto, e um turno interrompido pode ser retomado a partir do último passo. → [O assistente](docs/guide/assistant.md)
 
 **Encontrar.** Pesquisa por palavras e por significado, num projeto ou em todos, com um modelo que corre no seu computador e só é descarregado se o pedir; um interruptor de palavras inteiras torna-a numa pesquisa exata, para quando procura um nome, uma expressão ou uma citação tal como estão. Se o computador tiver mais de uma placa gráfica, escolhe qual é usada pela pesquisa por significado. As páginas da web podem ser guardadas num projeto e pesquisadas offline. → [Conhecimento](docs/guide/knowledge.md)
 
-**Ver tudo de uma vez.** O Início de projetos é uma rede de todos os seus projetos, ligados quando os seus conteúdos estão próximos em significado, com uma pesquisa que funciona como a de um agente. → [Início de projetos](docs/guide/projects-home.md)
+**Ver tudo de uma vez.** O Início de projetos é uma rede de todos os seus projetos, ligados quando os seus conteúdos estão próximos em significado, com uma pesquisa que funciona como a de um agente e bolhas que se acendem nas cores do semáforo conforme a relevância. → [Início de projetos](docs/guide/projects-home.md)
 
 **Organizar.** Projetos com explorador de ficheiros, subprojetos, documentos ligados e ícone próprio; espaços de trabalho que filtram os projetos que você, o assistente e os agentes veem. → [Projetos](docs/guide/projects.md) · [Espaços de trabalho](docs/guide/workspaces.md)
 
 **Ligar.** Cada projeto decide se é indexado e se as suas passagens são visíveis para os outros. Os agentes externos trabalham no projeto através do servidor MCP integrado, e o que alteram chega até si como edições para aceitar ou rejeitar. → [Agentes externos (MCP)](docs/guide/external-agents.md)
 
-**Integrar.** Associações de ficheiros e entrada de pasta no gestor de ficheiros, um navegador integrado com vista de leitura, atualizações ao seu ritmo. → [A aplicação e o sistema](docs/guide/system.md)
+**Integrar.** Associações de ficheiros e entrada de pasta no gestor de ficheiros, um navegador integrado com vista de leitura, várias janelas com projetos diferentes, atualizações ao seu ritmo. → [A aplicação e o sistema](docs/guide/system.md)
 
 A interface está disponível em inglês, italiano, francês, espanhol, alemão e português, com temas, cores de destaque e tipografia que pode alterar.
 

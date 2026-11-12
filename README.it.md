@@ -35,17 +35,17 @@ Quell'agente e l'assistente integrato non si fanno concorrenza: si dividono il l
 
 **Scrivi.** Editor di testo ricco con il Markdown come formato nativo, vista sorgente, trova e sostituisci, note e segnalibri, cronologia dei documenti, importazione di DOCX e PDF, esportazione in DOCX, PDF o in un file Markdown autonomo, e un lettore di testo per qualsiasi altro file di testo. → [Documenti ed editor](docs/guide/documents-and-editor.md)
 
-**Delega e rivedi.** Un assistente che corregge, riscrive, riassume e modifica, con azioni rapide, skill di scrittura, memoria di progetto e diversi provider di IA (Ollama, Ollama Cloud, OpenRouter, Codex, Claude, Gemini). Le azioni rapide si modificano, e un progetto può avere le sue, importate in blocco da un altro progetto. Ogni modifica viene applicata sul posto e segnata perché tu la accetti o la rifiuti — oppure, per un progetto in cui lo scegli, accettata e salvata alla fine del lavoro. La temperatura della scrittura e quanto l'assistente può fare si impostano per progetto, e un turno interrotto può riprendere dall'ultimo passo. → [L'assistente](docs/guide/assistant.md)
+**Delega e rivedi.** Un assistente che corregge, riscrive, riassume e modifica, con azioni rapide, skill di scrittura, memoria di progetto e diversi provider di IA (Ollama, Ollama Cloud, OpenRouter, Codex, Claude, Gemini). I messaggi scritti mentre lavora aspettano in coda o entrano nel lavoro in corso. Le azioni rapide si modificano, e un progetto può avere le sue, importate in blocco da un altro progetto. Ogni modifica viene applicata sul posto e segnata perché tu la accetti o la rifiuti — oppure, per un progetto in cui lo scegli, accettata e salvata alla fine del lavoro. La temperatura della scrittura e quanto l'assistente può fare si impostano per progetto, e un turno interrotto può riprendere dall'ultimo passo. → [L'assistente](docs/guide/assistant.md)
 
 **Trova.** Ricerca per parole e per significato, in un progetto o in tutti, con un modello che gira sul tuo computer e viene scaricato solo se lo chiedi; un interruttore per le parole intere la rende una ricerca esatta, quando cerchi un nome, un'espressione o una citazione così come sono. Se il computer ha più di una scheda grafica, scegli quale usa la ricerca per significato. Le pagine web si possono salvare in un progetto e cercare offline. → [Conoscenza](docs/guide/knowledge.md)
 
-**Vedi tutto insieme.** La Home dei progetti è una rete di tutti i tuoi progetti, collegati quando i loro contenuti sono vicini nel significato, con una ricerca che funziona come quella di un agente. → [Home dei progetti](docs/guide/projects-home.md)
+**Vedi tutto insieme.** La Home dei progetti è una rete di tutti i tuoi progetti, collegati quando i loro contenuti sono vicini nel significato, con una ricerca che funziona come quella di un agente e bolle che si accendono nei colori del semaforo in base alla pertinenza. → [Home dei progetti](docs/guide/projects-home.md)
 
 **Organizza.** Progetti con esplora file, sotto-progetti, documenti collegati e un'icona propria; spazi di lavoro che filtrano i progetti che vedono tu, l'assistente e gli agenti. → [Progetti](docs/guide/projects.md) · [Spazi di lavoro](docs/guide/workspaces.md)
 
 **Collega.** Ogni progetto decide se viene indicizzato e se i suoi passaggi sono visibili agli altri. Gli agenti esterni lavorano sul progetto tramite il server MCP integrato, e ciò che modificano ti arriva come modifiche da accettare o rifiutare. → [Agenti esterni (MCP)](docs/guide/external-agents.md)
 
-**Integra.** Associazioni di file e voce di cartella nel file manager, un browser integrato con vista di lettura, aggiornamenti secondo i tuoi tempi. → [L'applicazione e il sistema](docs/guide/system.md)
+**Integra.** Associazioni di file e voce di cartella nel file manager, un browser integrato con vista di lettura, più finestre su progetti diversi, aggiornamenti secondo i tuoi tempi. → [L'applicazione e il sistema](docs/guide/system.md)
 
 L'interfaccia è disponibile in inglese, italiano, francese, spagnolo, tedesco e portoghese, con temi, colori d'accento e tipografia modificabili.
 

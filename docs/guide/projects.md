@@ -12,6 +12,7 @@ The projects view lists the known projects with an avatar (the project's icon, o
 
 - Move through the tree with the arrow keys, Home, and End; Enter opens a file, F2 renames, Del deletes. Dropping on a folder moves, from outside the project it copies.
 - **Selection.** Ctrl/Cmd+click adds or removes a row, Shift+click (or Shift+arrows) selects a range, Ctrl/Cmd+A selects everything visible. Dragging, the context menu, copy, cut, and delete all act on the whole selection, with a single confirmation.
+- **Any file.** Dragging, dropping and pasting accept every kind of file, not only the supported formats: the assistant can read what the app cannot open and turn it into a Markdown document.
 - **Folders** work like files: they can be dragged inside the tree, dropped from the file manager (copied with their content), copied, cut, and pasted.
 - **System clipboard.** Copy or cut in OpenWriter and paste in the file manager or another program, and the other way round. Dragging also hands files and folders to the system.
 - **DOCX and PDF originals.** A converted document keeps its original under it; deleting the document moves the original to the trash with it, and renaming or moving the document carries the original along.
