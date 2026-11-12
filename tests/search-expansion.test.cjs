@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { mergeSearches, cleanTerms } = require('../electron/search-merge.cjs')
+const { mergeSearches, cleanTerms, markTerms } = require('../electron/search-merge.cjs')
 
 const loadExpansion = () => import('../src/lib/queryExpansion.js')
 
@@ -49,6 +49,14 @@ test('mergeSearches: a pari pertinenza vince la domanda; il limite taglia; proge
   ], { limit: 2 })
   assert.equal(merged.length, 2)
   assert.deepEqual([merged[0].file, merged[0].term], ['a.md', 'q'])
+})
+
+test('mergeSearches: un termine affine con la stessa pertinenza vale meno della parola cercata', () => {
+  const merged = mergeSearches([
+    { term: 'Cartonio', original: true, results: [hit('a.md', 1, 0.65)] },
+    { term: 'carta', original: false, results: [hit('b.md', 1, 0.6)] },
+  ])
+  assert.deepEqual(merged.map((row) => [row.file, row.relevance]), [['a.md', 0.65], ['b.md', 0.48]])
 })
 
 test('cleanTerms: puliti, senza doppioni né la domanda (anche con accenti diversi), al più max', () => {
@@ -106,4 +114,11 @@ test('synonymCache: scade dopo il tempo limite e il numero di voci è limitato (
   assert.equal(cache.get('c'), null)
   assert.deepEqual(cache.get('b'), ['b'])
   assert.deepEqual(cache.get('e'), ['e'])
+})
+
+test('markTerms: evidenzia le parole cercate (senza accenti né maiuscole) solo se l’estratto non è già evidenziato', () => {
+  assert.equal(markTerms('Il signor Cartonio è arrivato', 'cartonio'), 'Il signor «Cartonio» è arrivato')
+  assert.equal(markTerms('Perché no', 'perche'), '«Perché» no')
+  assert.equal(markTerms('già «Cartonio» qui', 'cartonio'), 'già «Cartonio» qui')
+  assert.equal(markTerms('niente da vedere', 'xy'), 'niente da vedere')
 })
