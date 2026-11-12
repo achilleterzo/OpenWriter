@@ -11,7 +11,7 @@ OpenWriter keeps, for every project with the search index on, a derived index of
 Search by meaning needs a model that runs on your computer, `multilingual-e5-small`, which is **not** shipped with the application and is downloaded only when you click the button (Settings → Local models, or the first-run window that offers it once):
 
 - **CPU pack** (about 150 MB): works everywhere.
-- **Graphics card pack** (about 280 MB, experimental): much faster, needs WebGPU, and runs in a hidden window of the application.
+- **Graphics card pack** (about 280 MB, experimental): much faster, needs WebGPU, and runs in a hidden window of the application. When the computer has more than one card you choose which to prefer (the system's default, a high-performance one or a low-power one), and if that card fails the search goes on with the CPU until you choose it again.
 
 Each pack lives in the application data (never in a project), has pinned sizes and checksums, and can be removed at any time; each has its own vectors, so switching computes only what is missing. Without a pack everything works as before, by words. The vectors are computed in the background without blocking the interface, and no text leaves the computer.
 

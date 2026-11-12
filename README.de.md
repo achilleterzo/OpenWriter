@@ -4,7 +4,7 @@
 
 [![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/achilleterzo/badge.svg)](https://hub.xerj.org/contributors/achilleterzo)
 
-OpenWriter ist ein lokaler Schreibarbeitsplatz für Markdown. Deine Dokumente, Notizen und das Wissen, das sich in deinen Projekten ansammelt, bleiben auf deinem Computer, und zwei Arten von Agenten können gemeinsam damit arbeiten: der in die App integrierte Assistent und die externen Agenten, die du ohnehin nutzt (Claude Code, Codex, OpenCode, die Clients in deiner IDE), angebunden über einen eingebauten MCP-Server.
+OpenWriter ist ein lokaler Schreibarbeitsplatz für Markdown. Deine Dokumente, Notizen und das Wissen, das sich in deinen Projekten ansammelt, bleiben auf deinem Computer, und zwei Arten von Agenten können gemeinsam damit arbeiten: der in die App integrierte Assistent und die externen Agenten, die du ohnehin nutzt, angebunden über einen eingebauten MCP-Server.
 
 Es ist für jede lange Arbeit gedacht, die beim Wachsen stimmig bleiben muss: ein Buch, eine Anleitung, ein Handbuch, eine Abschlussarbeit, ein Dokumentationsbestand oder ein Softwareprojekt samt den Ideen drumherum.
 
@@ -20,7 +20,9 @@ Etwas Großes zu schreiben heißt vor allem, sich zu erinnern: was du entschiede
 
 ### Zwei Agenten parallel
 
-Der externe Agent und der integrierte Assistent konkurrieren nicht: Sie teilen sich die Arbeit. Während Claude Code (oder ein anderer Agent) den Code schreibt oder eine Idee entwickelt, kann er die Dokumentation mit `ask_agent` an den integrierten Assistenten übergeben. Der Assistent arbeitet parallel in der App, mit den Anweisungen, Skills und dem Gedächtnis des Projekts, und der Agent verfolgt, was er schreibt (`list_chats`, `read_chat`). Was einer von beiden in den offenen Dokumenten ändert, erreicht dich als Änderung, die du annehmen oder ablehnen kannst. Beide suchen bei Bedarf mit `search_knowledge`, sodass keiner das ganze Projekt mit sich herumtragen muss.
+OpenWriter enthält einen Server des Model Context Protocol (MCP). Es ist der Standard, mit dem die Agenten, die du schon nutzt — Claude Code, Codex, OpenCode, die in Editoren und IDEs eingebauten Clients —, auf einem Ordner mit Dateien arbeiten können. Du fügst eine Konfiguration in den Client ein (Einstellungen → Agenten (MCP)). Von da an kann dieser Agent das Projekt, sein Wissen, seine Notizen und seine gespeicherten Seiten lesen und seine Dokumente ändern. Es ist der Agent, den du ohnehin bezahlst und dem du vertraust, an deinen Markdown-Dateien eingesetzt.
+
+Dieser Agent und der integrierte Assistent konkurrieren nicht: Sie teilen sich die Arbeit. Während Claude Code den Code schreibt oder eine Idee entwickelt, kann er die Dokumentation mit einem einzigen Aufruf, `ask_agent`, an den Assistenten übergeben. Der Assistent öffnet einen Chat in der App und arbeitet dort parallel, mit den Anweisungen, Skills und dem Gedächtnis des Projekts. Der Agent muss diesen Text nicht mit seinem eigenen Kontext schreiben. Danach verfolgt er, was er geschrieben hat, indem er diesen Chat liest: `list_chats` findet ihn, und `read_chat` liefert seine letzten Nachrichten. Die Anfrage ist mit dem Namen des Agenten signiert, damit sie sich von deinen eigenen Nachrichten unterscheidet. Was einer von beiden in den offenen Dokumenten ändert, erreicht dich als Änderung, die du annehmen oder ablehnen kannst. Beide suchen bei Bedarf mit `search_knowledge`, sodass keiner das ganze Projekt mit sich herumtragen muss.
 
 ### Einige Einsatzmöglichkeiten
 
@@ -33,9 +35,9 @@ Der externe Agent und der integrierte Assistent konkurrieren nicht: Sie teilen s
 
 **Schreiben.** Rich-Text-Bearbeitung mit Markdown als Nativformat, Quelltextansicht, Suchen und Ersetzen, Notizen und Lesezeichen, Dokumentenverlauf, DOCX- und PDF-Import, Export als DOCX, PDF oder eigenständige Markdown-Datei und ein Textleser für jede andere Textdatei. → [Dokumente und Editor](docs/guide/documents-and-editor.md)
 
-**Delegieren und prüfen.** Ein Assistent, der Korrektur liest, umschreibt, zusammenfasst und bearbeitet, mit Schnellaktionen, Schreib-Skills, Projektgedächtnis und mehreren KI-Anbietern (Ollama, Ollama Cloud, OpenRouter, Codex, Claude, Gemini). Jede Änderung wird direkt angewendet und zum Annehmen oder Ablehnen markiert, und ein unterbrochener Durchlauf kann ab seinem letzten Schritt fortgesetzt werden. → [Der Assistent](docs/guide/assistant.md)
+**Delegieren und prüfen.** Ein Assistent, der Korrektur liest, umschreibt, zusammenfasst und bearbeitet, mit Schnellaktionen, Schreib-Skills, Projektgedächtnis und mehreren KI-Anbietern (Ollama, Ollama Cloud, OpenRouter, Codex, Claude, Gemini). Schnellaktionen lassen sich bearbeiten, und ein Projekt kann eigene haben, die aus einem anderen Projekt auf einmal importiert werden. Jede Änderung wird direkt angewendet und zum Annehmen oder Ablehnen markiert — oder, in einem Projekt, in dem du es so wählst, am Ende der Arbeit angenommen und gespeichert. Die Wärme des Schreibens (die Temperatur) und wie viel der Assistent tun darf, werden pro Projekt eingestellt, und ein unterbrochener Durchlauf kann ab seinem letzten Schritt fortgesetzt werden. → [Der Assistent](docs/guide/assistant.md)
 
-**Finden.** Suche nach Wörtern und nach Bedeutung, in einem Projekt oder in allen, mit einem Modell, das auf deinem Computer läuft und nur auf Wunsch heruntergeladen wird. Webseiten lassen sich in einem Projekt speichern und offline durchsuchen. → [Wissen](docs/guide/knowledge.md)
+**Finden.** Suche nach Wörtern und nach Bedeutung, in einem Projekt oder in allen, mit einem Modell, das auf deinem Computer läuft und nur auf Wunsch heruntergeladen wird; eine Umschaltung auf ganze Wörter macht daraus eine exakte Suche, wenn du einen Namen, einen Ausdruck oder ein Zitat genau so suchst. Hat der Computer mehr als eine Grafikkarte, wählst du, welche die Suche nach Bedeutung nutzt. Webseiten lassen sich in einem Projekt speichern und offline durchsuchen. → [Wissen](docs/guide/knowledge.md)
 
 **Alles auf einmal sehen.** Die Projekt-Startseite ist ein Netz aller deiner Projekte, verbunden, wenn ihre Inhalte bedeutungsmäßig nahe beieinander liegen, mit einer Suche, die wie die eines Agenten funktioniert. → [Projekt-Startseite](docs/guide/projects-home.md)
 
@@ -49,21 +51,22 @@ Die Oberfläche gibt es auf Englisch, Italienisch, Französisch, Spanisch, Deuts
 
 ## Datenschutz
 
-Dokumenttext wird nur dann an einen KI-Anbieter gesendet, wenn du eine Anfrage abschickst, und mit einem lokalen Ollama-Modell verlässt er deinen Rechner nie. Der Suchindex und seine Vektoren liegen auf deinem Computer; die einzigen Downloads sind die lokalen Modellpakete, und nur, wenn du auf die Schaltfläche klickst. Externe Agenten sind optional, erreichen nur die Dokumente des Projekts und lauschen ausschließlich auf `127.0.0.1` mit einem Token. Die Einzelheiten stehen unter [Datenschutz](docs/guide/privacy.md).
+Zum Starten brauchst du weder ein Konto noch eine Konfiguration: Editor, Projekte, Notizen und die Suche nach Wörtern funktionieren für sich, und ein KI-Anbieter wird erst gefragt, wenn du einen einrichtest und eine Anfrage abschickst. Dokumenttext wird nur dann an einen KI-Anbieter gesendet, wenn du eine Anfrage abschickst, und mit einem lokalen Ollama-Modell verlässt er deinen Rechner nie. Der Suchindex und seine Vektoren liegen auf deinem Computer; die einzigen Downloads sind die lokalen Modellpakete, und nur, wenn du auf die Schaltfläche klickst. Das Bedeutungsmodell läuft auf der CPU oder, wenn du willst, auf einer Grafikkarte, die du unter denen des Computers auswählst. Externe Agenten sind optional, erreichen nur die Dokumente des Projekts und lauschen ausschließlich auf `127.0.0.1` mit einem Token. Die Einzelheiten stehen unter [Datenschutz](docs/guide/privacy.md).
 
 ## Erste Schritte
 
-Voraussetzungen: aktuelles Node.js LTS oder neuer und npm.
+OpenWriter läuft unter Windows (Installer), macOS (DMG) und Linux (AppImage, DEB). Fertige Builds gibt es auf der [Release-Seite](https://github.com/achilleterzo/OpenWriter/releases); selbst zu kompilieren erfordert die Schritte unten.
+
+Voraussetzungen: Node.js 22 oder neuer und npm. Führe die Befehle unten in dem Ordner aus, in den du das Repository geklont hast, wie er auch heißt:
 
 ```bash
-cd openwriter
 npm install
 npm run dev
 ```
 
 Der Entwicklungsbefehl startet Vite und öffnet die Electron-Anwendung. Änderungen in `src/` werden automatisch neu geladen; Änderungen in `electron/` erfordern einen Neustart des Befehls. Die Dateizuordnungen und der Ordnereintrag werden in der Entwicklungsversion nicht registriert: Installiere einen Build, um sie auszuprobieren.
 
-Unit-Tests laufen mit `npm run test:unit`; `npm test` führt zusätzlich den Produktions-Build aus. Zwei der semantischen Tests laufen gegen das echte Modell und werden übersprungen, sofern `OW_SEMANTIC_PACK` nicht auf den Ordner eines installierten Pakets zeigt.
+Unit-Tests laufen mit `npm run test:unit`; `npm test` führt zusätzlich den Produktions-Build aus. Einige der semantischen Tests laufen gegen das echte Modell und werden übersprungen, sofern `OW_SEMANTIC_PACK` nicht auf den Ordner eines installierten Pakets zeigt.
 
 So erstellst und startest du lokal einen Produktions-Build:
 

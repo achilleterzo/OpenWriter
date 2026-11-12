@@ -4,7 +4,7 @@
 
 [![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/achilleterzo/badge.svg)](https://hub.xerj.org/contributors/achilleterzo)
 
-OpenWriter is a local-first writing workspace for Markdown. Your documents, notes, and the knowledge that builds up in your projects stay on your computer, and two kinds of agents can work on them together: the assistant built into the app and the external agents you already use (Claude Code, Codex, OpenCode, the clients in your IDE), connected through a built-in MCP server.
+OpenWriter is a local-first writing workspace for Markdown. Your documents, notes, and the knowledge that builds up in your projects stay on your computer, and two kinds of agents can work on them together: the assistant built into the app and the external agents you already use, connected through a built-in MCP server.
 
 It is made for any long piece of work that has to stay coherent as it grows: a book, a guide, a manual, a thesis, a body of documentation, or a software project and the ideas around it.
 
@@ -20,7 +20,9 @@ Writing something large is mostly remembering: what you decided, where you alrea
 
 ### Two agents in parallel
 
-The external agent and the built-in assistant do not compete: they split the work. While Claude Code (or another agent) writes the code or develops an idea, it can hand the documentation of it to the built-in assistant with `ask_agent`. The assistant works in the app in parallel, with the instructions, skills, and memory of the project, and the agent follows what it writes (`list_chats`, `read_chat`). What either of them changes in the open documents reaches you as an edit to accept or reject. Both look things up with `search_knowledge` as they need, so neither has to carry the whole project around.
+OpenWriter contains a Model Context Protocol (MCP) server. It is the standard through which the agents you already use — Claude Code, Codex, OpenCode, the clients built into editors and IDEs — can work on a folder of files. You paste a configuration snippet into the client (Settings → Agents (MCP)). From then on, that agent can read the project, its knowledge, its notes, and its saved pages, and change its documents. It is the agent you already pay for and trust, put to work on your Markdown.
+
+That agent and the built-in assistant do not compete: they split the work. While Claude Code writes the code or develops an idea, it can hand the documentation of it over to the assistant with a single call, `ask_agent`. The assistant starts a chat in the app and works on it in parallel, with the instructions, skills, and memory of the project. The agent does not have to write that text with its own context. It then follows what it wrote by reading that chat: `list_chats` finds it, and `read_chat` returns its last messages. The request is signed with the agent's name, so it is told apart from your own. What either of them changes in the open documents reaches you as an edit to accept or reject. Both look things up with `search_knowledge` as they need, so neither has to carry the whole project around.
 
 ### Some ways to use it
 
@@ -33,9 +35,9 @@ The external agent and the built-in assistant do not compete: they split the wor
 
 **Write.** Rich-text editing with Markdown as the native format, a source view, find and replace, notes and bookmarks, document history, DOCX and PDF import, export to DOCX, PDF, or a self-contained Markdown file, and a text reader for any other text file. → [Documents and the editor](docs/guide/documents-and-editor.md)
 
-**Delegate and review.** An assistant that proofreads, rewrites, summarizes, and edits, with quick actions, writing skills, project memory, and several AI providers (Ollama, Ollama Cloud, OpenRouter, Codex, Claude, Gemini). Every edit is applied in place and marked for you to accept or reject, and an interrupted turn can be resumed from its last step. → [The assistant](docs/guide/assistant.md)
+**Delegate and review.** An assistant that proofreads, rewrites, summarizes, and edits, with quick actions, writing skills, project memory, and several AI providers (Ollama, Ollama Cloud, OpenRouter, Codex, Claude, Gemini). Quick actions are yours to edit, and a project can have its own, imported in one go from another project. Every edit is applied in place and marked for you to accept or reject — or, for a project where you choose so, accepted and saved at the end of the work. The writing temperature and how much the assistant may do are set per project, and an interrupted turn can be resumed from its last step. → [The assistant](docs/guide/assistant.md)
 
-**Find.** Search by words and by meaning, in a project or across all of them, with a model that runs on your computer and is downloaded only if you ask for it. Pages from the web can be saved into a project and searched offline. → [Knowledge](docs/guide/knowledge.md)
+**Find.** Search by words and by meaning, in a project or across all of them, with a model that runs on your computer and is downloaded only if you ask for it; a whole-words switch turns it into an exact search when you want a name, an expression, or a quotation as it stands. When the computer has more than one graphics card, you choose which one the search by meaning uses. Pages from the web can be saved into a project and searched offline. → [Knowledge](docs/guide/knowledge.md)
 
 **See everything at once.** The Projects Home is a network of all your projects, linked when their contents are close in meaning, with a search that works like an agent's. → [Projects Home](docs/guide/projects-home.md)
 
@@ -49,21 +51,22 @@ The interface is available in English, Italian, French, Spanish, German, and Por
 
 ## Privacy
 
-Document text is sent to an AI provider only when you submit a request, and with a local Ollama model it never leaves your machine. The search index and its vectors live on your computer; the only downloads are the local model packs, and only when you click the button. External agents are opt-in, reach only the documents of the project, and listen only on `127.0.0.1` with a token. The details are in [Privacy](docs/guide/privacy.md).
+No account and no configuration are needed to start: the editor, the projects, the notes and the search by words work on their own, and document text reaches an AI provider only when you set one up and submit a request — with a local Ollama model it never leaves your machine. The search index and its vectors live on your computer; the only downloads are the local model packs, and only when you click the button. The meaning model runs on the CPU or, if you prefer, on a graphics card you pick among the ones the computer has. External agents are opt-in, reach only the documents of the project, and listen only on `127.0.0.1` with a token. The details are in [Privacy](docs/guide/privacy.md).
 
 ## Getting started
 
-Requirements: Node.js current LTS or newer and npm.
+OpenWriter runs on Windows (installer), macOS (DMG), and Linux (AppImage, DEB). Ready-made builds are on the [releases page](https://github.com/achilleterzo/OpenWriter/releases); building it yourself takes the steps below.
+
+Requirements: Node.js 22 or newer and npm. Run the commands below in the folder where you cloned the repository, whatever you called it:
 
 ```bash
-cd openwriter
 npm install
 npm run dev
 ```
 
 The development command starts Vite and opens the Electron application. Changes in `src/` reload automatically; changes in `electron/` require restarting the development command. The file associations and the folder entry are not registered in the development version: install a build to try them.
 
-Unit tests run with `npm run test:unit`; `npm test` also runs the production build. Two of the semantic tests run against the real model and are skipped unless `OW_SEMANTIC_PACK` points to an installed pack folder.
+Unit tests run with `npm run test:unit`; `npm test` also runs the production build. A few of the semantic tests run against the real model and are skipped unless `OW_SEMANTIC_PACK` points to an installed pack folder.
 
 To create and run a production build locally:
 

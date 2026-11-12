@@ -186,6 +186,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [system-integration.cjs.md](reference/electron/system-integration.cjs.md) ([system-integration.cjs](../electron/system-integration.cjs)) — Markdown file association and folder entry of the file manager, per platform
   - [private-address.mjs.md](reference/electron/private-address.mjs.md) ([private-address.mjs](../electron/private-address.mjs)) — Network addresses the agents' browser may not reach (local, private, service)
   - [gpu-context.cjs.md](reference/electron/gpu-context.cjs.md) ([gpu-context.cjs](../electron/gpu-context.cjs)) — Hidden WebGPU window that computes vectors on the graphics card
+  - [gpu-embedder/](reference/electron/gpu-embedder/gpu-embedder.md) ([gpu-embedder/](../electron/gpu-embedder/)) — The page inside the hidden window, with its own preload bridge
   - [semantic-pack.cjs.md](reference/electron/semantic-pack.cjs.md) ([semantic-pack.cjs](../electron/semantic-pack.cjs)) — Downloadable model and runtime for the search by meaning
   - [semantic-embedder-worker.cjs.md](reference/electron/semantic-embedder-worker.cjs.md) ([semantic-embedder-worker.cjs](../electron/semantic-embedder-worker.cjs)) — Thread that runs the embedding model
   - [semantic-embedder.cjs.md](reference/electron/semantic-embedder.cjs.md) ([semantic-embedder.cjs](../electron/semantic-embedder.cjs)) — Turns texts into embedding vectors (WebAssembly)
@@ -197,6 +198,8 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [markdown-tokens.cjs.md](reference/electron/markdown-tokens.cjs.md) ([markdown-tokens.cjs](../electron/markdown-tokens.cjs)) — Markdown tokenizer with the editor's extensions
   - [markdown-images.cjs.md](reference/electron/markdown-images.cjs.md) ([markdown-images.cjs](../electron/markdown-images.cjs)) — Images of a document found and rewritten through the tokens
   - [markdown-embed.cjs.md](reference/electron/markdown-embed.cjs.md) ([markdown-embed.cjs](../electron/markdown-embed.cjs)) — Self-contained Markdown export with embedded images
+  - [markdown-extract.cjs.md](reference/electron/markdown-extract.cjs.md) ([markdown-extract.cjs](../electron/markdown-extract.cjs)) — The reverse: base64 images become files beside the document
+  - [temperature.cjs.md](reference/electron/temperature.cjs.md) ([temperature.cjs](../electron/temperature.cjs)) — The temperature level converted into each provider's degrees, with its style hint
   - [document-images.cjs.md](reference/electron/document-images.cjs.md) ([document-images.cjs](../electron/document-images.cjs)) — Images following a document that is moved
   - [pdf-import.cjs.md](reference/electron/pdf-import.cjs.md) ([pdf-import.cjs](../electron/pdf-import.cjs)) — PDF text extraction with the images in place
   - [fonts.cjs.md](reference/electron/fonts.cjs.md) ([fonts.cjs](../electron/fonts.cjs)) — Google Fonts downloaded and kept in the app data
@@ -207,6 +210,8 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [mcp-http.cjs.md](reference/electron/mcp-http.cjs.md) ([mcp-http.cjs](../electron/mcp-http.cjs)) — HTTP transport of the MCP server, started by the app
   - [mcp-bridge.cjs.md](reference/electron/mcp-bridge.cjs.md) ([mcp-bridge.cjs](../electron/mcp-bridge.cjs)) — Local bridge from the MCP server to the running app
   - [path-compare.cjs.md](reference/electron/path-compare.cjs.md) ([path-compare.cjs](../electron/path-compare.cjs)) — Platform-aware path comparison
+  - [primary-instance.cjs.md](reference/electron/primary-instance.cjs.md) ([primary-instance.cjs](../electron/primary-instance.cjs)) — Lock that elects the instance running the MCP bridge and HTTP server
+  - [instance-registry.cjs.md](reference/electron/instance-registry.cjs.md) ([instance-registry.cjs](../electron/instance-registry.cjs)) — Which project each window has open, and the focus request to bring it forward
   - [menu.cjs.md](reference/electron/menu.cjs.md) ([menu.cjs](../electron/menu.cjs)) — Native application menu
   - [updates.cjs.md](reference/electron/updates.cjs.md) ([updates.cjs](../electron/updates.cjs)) — Latest version from the GitHub releases
   - [projects.cjs.md](reference/electron/projects.cjs.md) ([projects.cjs](../electron/projects.cjs)) — Recently opened projects
@@ -238,6 +243,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [documentStats.js.md](reference/src/lib/documentStats.js.md) ([documentStats.js](../src/lib/documentStats.js)) — Word, sentence and reading-time statistics of a document
     - [editorInsert.js.md](reference/src/lib/editorInsert.js.md) ([editorInsert.js](../src/lib/editorInsert.js)) — Markdown inserted into the editor in place of a range
     - [embeddedImages.js.md](reference/src/lib/embeddedImages.js.md) ([embeddedImages.js](../src/lib/embeddedImages.js)) — Embedded base64 images collapsed for display
+    - [exportHtml.js.md](reference/src/lib/exportHtml.js.md) ([exportHtml.js](../src/lib/exportHtml.js)) — HTML for PDF, print and DOCX: real anchors and heading ids
     - [fonts.js.md](reference/src/lib/fonts.js.md) ([fonts.js](../src/lib/fonts.js)) — Editor fonts and the Google Fonts catalog
     - [footnoteExtensions.js.md](reference/src/lib/footnoteExtensions.js.md) ([footnoteExtensions.js](../src/lib/footnoteExtensions.js)) — Footnote references and definitions
     - [imageExtension.js.md](reference/src/lib/imageExtension.js.md) ([imageExtension.js](../src/lib/imageExtension.js)) — Tiptap image node, also inside a link
@@ -274,8 +280,14 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [selectionText.js.md](reference/src/lib/selectionText.js.md) ([selectionText.js](../src/lib/selectionText.js)) — Text of the editor selection
     - [skills.js.md](reference/src/lib/skills.js.md) ([skills.js](../src/lib/skills.js)) — Writing skills helpers
     - [smartDashesExtension.js.md](reference/src/lib/smartDashesExtension.js.md) ([smartDashesExtension.js](../src/lib/smartDashesExtension.js)) — Dashes and ellipsis typed in the editor
+    - [svgRaster.js.md](reference/src/lib/svgRaster.js.md) ([svgRaster.js](../src/lib/svgRaster.js)) — An SVG rasterised to a PNG for the chat
+    - [temperature.js.md](reference/src/lib/temperature.js.md) ([temperature.js](../src/lib/temperature.js)) — The temperature level (0–1), its bands and its labels
     - [textAlignExtension.js.md](reference/src/lib/textAlignExtension.js.md) ([textAlignExtension.js](../src/lib/textAlignExtension.js)) — Text alignment saved as aligned blocks
+    - [toasts.js.md](reference/src/lib/toasts.js.md) ([toasts.js](../src/lib/toasts.js)) — Notification store: four levels, de-duplication, console diagnostics
+    - [toolOptions.js.md](reference/src/lib/toolOptions.js.md) ([toolOptions.js](../src/lib/toolOptions.js)) — The assistant tool groups as the settings show them
     - [updateSchedule.js.md](reference/src/lib/updateSchedule.js.md) ([updateSchedule.js](../src/lib/updateSchedule.js)) — When the app checks for a new version
+    - [webAddress.js.md](reference/src/lib/webAddress.js.md) ([webAddress.js](../src/lib/webAddress.js)) — Which web addresses the assistant and the agents may open
+    - [webReferences.js.md](reference/src/lib/webReferences.js.md) ([webReferences.js](../src/lib/webReferences.js)) — Save and refresh web pages as references of the project
   - [components/](reference/src/components/)
     - [components.md](reference/src/components/components.md) — Index of all components
     - [pages/](reference/src/components/pages/) — One page per component, named after its file; each page links to the component it documents.

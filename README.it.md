@@ -4,7 +4,7 @@
 
 [![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/achilleterzo/badge.svg)](https://hub.xerj.org/contributors/achilleterzo)
 
-OpenWriter è uno spazio di scrittura locale per il Markdown. I tuoi documenti, le note e la conoscenza che si accumula nei progetti restano sul tuo computer, e due tipi di agenti possono lavorarci insieme: l'assistente integrato nell'app e gli agenti esterni che già usi (Claude Code, Codex, OpenCode, i client del tuo IDE), collegati tramite un server MCP integrato.
+OpenWriter è uno spazio di scrittura locale per il Markdown. I tuoi documenti, le note e la conoscenza che si accumula nei progetti restano sul tuo computer, e due tipi di agenti possono lavorarci insieme: l'assistente integrato nell'app e gli agenti esterni che già usi, collegati tramite un server MCP integrato.
 
 È pensato per qualsiasi lavoro lungo che deve restare coerente mentre cresce: un libro, una guida, un manuale, una tesi, un corpus di documentazione, oppure un progetto software e le idee che lo circondano.
 
@@ -20,7 +20,9 @@ Scrivere qualcosa di grande significa soprattutto ricordare: che cosa hai deciso
 
 ### Due agenti in parallelo
 
-L'agente esterno e l'assistente integrato non si fanno concorrenza: si dividono il lavoro. Mentre Claude Code (o un altro agente) scrive il codice o sviluppa un'idea, può affidare la documentazione all'assistente integrato con `ask_agent`. L'assistente lavora nell'app in parallelo, con le istruzioni, le skill e la memoria del progetto, e l'agente segue ciò che scrive (`list_chats`, `read_chat`). Ciò che l'uno o l'altro modifica nei documenti aperti ti arriva come modifica da accettare o rifiutare. Entrambi cercano con `search_knowledge` quando serve, così nessuno dei due deve portarsi dietro l'intero progetto.
+OpenWriter contiene un server del Model Context Protocol (MCP). È lo standard con cui gli agenti che già usi — Claude Code, Codex, OpenCode, i client integrati negli editor e negli IDE — possono lavorare su una cartella di file. Incolli una configurazione nel client (Impostazioni → Agenti (MCP)). Da quel momento quell'agente può leggere il progetto, la sua conoscenza, le note e le pagine salvate, e modificarne i documenti. È l'agente che già paghi e di cui ti fidi, messo al lavoro sui tuoi Markdown.
+
+Quell'agente e l'assistente integrato non si fanno concorrenza: si dividono il lavoro. Mentre Claude Code scrive il codice o sviluppa un'idea, può affidare la documentazione all'assistente con una sola chiamata, `ask_agent`. L'assistente apre una chat nell'app e ci lavora in parallelo, con le istruzioni, le skill e la memoria del progetto. L'agente non deve scrivere quel testo con il proprio contesto. Poi segue ciò che ha scritto leggendo quella chat: `list_chats` la trova, e `read_chat` ne restituisce gli ultimi messaggi. La richiesta è firmata con il nome dell'agente, così si distingue dai tuoi messaggi. Ciò che l'uno o l'altro modifica nei documenti aperti ti arriva come modifica da accettare o rifiutare. Entrambi cercano con `search_knowledge` quando serve, così nessuno dei due deve portarsi dietro l'intero progetto.
 
 ### Alcuni modi di usarlo
 
@@ -33,9 +35,9 @@ L'agente esterno e l'assistente integrato non si fanno concorrenza: si dividono 
 
 **Scrivi.** Editor di testo ricco con il Markdown come formato nativo, vista sorgente, trova e sostituisci, note e segnalibri, cronologia dei documenti, importazione di DOCX e PDF, esportazione in DOCX, PDF o in un file Markdown autonomo, e un lettore di testo per qualsiasi altro file di testo. → [Documenti ed editor](docs/guide/documents-and-editor.md)
 
-**Delega e rivedi.** Un assistente che corregge, riscrive, riassume e modifica, con azioni rapide, skill di scrittura, memoria di progetto e diversi provider di IA (Ollama, Ollama Cloud, OpenRouter, Codex, Claude, Gemini). Ogni modifica viene applicata sul posto e segnata perché tu la accetti o la rifiuti, e un turno interrotto può riprendere dall'ultimo passo. → [L'assistente](docs/guide/assistant.md)
+**Delega e rivedi.** Un assistente che corregge, riscrive, riassume e modifica, con azioni rapide, skill di scrittura, memoria di progetto e diversi provider di IA (Ollama, Ollama Cloud, OpenRouter, Codex, Claude, Gemini). Le azioni rapide si modificano, e un progetto può avere le sue, importate in blocco da un altro progetto. Ogni modifica viene applicata sul posto e segnata perché tu la accetti o la rifiuti — oppure, per un progetto in cui lo scegli, accettata e salvata alla fine del lavoro. La temperatura della scrittura e quanto l'assistente può fare si impostano per progetto, e un turno interrotto può riprendere dall'ultimo passo. → [L'assistente](docs/guide/assistant.md)
 
-**Trova.** Ricerca per parole e per significato, in un progetto o in tutti, con un modello che gira sul tuo computer e viene scaricato solo se lo chiedi. Le pagine web si possono salvare in un progetto e cercare offline. → [Conoscenza](docs/guide/knowledge.md)
+**Trova.** Ricerca per parole e per significato, in un progetto o in tutti, con un modello che gira sul tuo computer e viene scaricato solo se lo chiedi; un interruttore per le parole intere la rende una ricerca esatta, quando cerchi un nome, un'espressione o una citazione così come sono. Se il computer ha più di una scheda grafica, scegli quale usa la ricerca per significato. Le pagine web si possono salvare in un progetto e cercare offline. → [Conoscenza](docs/guide/knowledge.md)
 
 **Vedi tutto insieme.** La Home dei progetti è una rete di tutti i tuoi progetti, collegati quando i loro contenuti sono vicini nel significato, con una ricerca che funziona come quella di un agente. → [Home dei progetti](docs/guide/projects-home.md)
 
@@ -49,21 +51,22 @@ L'interfaccia è disponibile in inglese, italiano, francese, spagnolo, tedesco e
 
 ## Privacy
 
-Il testo dei documenti viene inviato a un provider di IA solo quando invii una richiesta, e con un modello Ollama locale non lascia mai il tuo computer. L'indice di ricerca e i suoi vettori stanno sul tuo computer; gli unici download sono i pacchetti dei modelli locali, e solo quando premi il pulsante. Gli agenti esterni sono opt-in, raggiungono solo i documenti del progetto e restano in ascolto solo su `127.0.0.1` con un token. I dettagli sono in [Privacy](docs/guide/privacy.md).
+Per iniziare non servono né un account né una configurazione: l'editor, i progetti, le note e la ricerca per parole funzionano da soli, e a un provider di IA ci si rivolge solo quando ne imposti uno e invii una richiesta. Il testo dei documenti viene inviato a un provider di IA solo quando invii una richiesta, e con un modello Ollama locale non lascia mai il tuo computer. L'indice di ricerca e i suoi vettori stanno sul tuo computer; gli unici download sono i pacchetti dei modelli locali, e solo quando premi il pulsante. Il modello di significato gira sulla CPU o, se preferisci, su una scheda grafica che scegli tra quelle del computer. Gli agenti esterni sono opt-in, raggiungono solo i documenti del progetto e restano in ascolto solo su `127.0.0.1` con un token. I dettagli sono in [Privacy](docs/guide/privacy.md).
 
 ## Per iniziare
 
-Requisiti: Node.js LTS corrente o successivo e npm.
+OpenWriter gira su Windows (installer), macOS (DMG) e Linux (AppImage, DEB). Le build pronte sono nella [pagina delle release](https://github.com/achilleterzo/OpenWriter/releases); compilarlo da soli richiede i passaggi qui sotto.
+
+Requisiti: Node.js 22 o successivo e npm. Esegui i comandi qui sotto nella cartella in cui hai clonato il repository, comunque tu l'abbia chiamata:
 
 ```bash
-cd openwriter
 npm install
 npm run dev
 ```
 
 Il comando di sviluppo avvia Vite e apre l'applicazione Electron. Le modifiche in `src/` si ricaricano automaticamente; quelle in `electron/` richiedono di riavviare il comando. Le associazioni di file e la voce di cartella non sono registrate nella versione di sviluppo: installa una build per provarle.
 
-I test unitari si lanciano con `npm run test:unit`; `npm test` esegue anche la build di produzione. Due dei test semantici girano sul modello reale e vengono saltati a meno che `OW_SEMANTIC_PACK` non punti alla cartella di un pacchetto installato.
+I test unitari si lanciano con `npm run test:unit`; `npm test` esegue anche la build di produzione. Alcuni dei test semantici girano sul modello reale e vengono saltati a meno che `OW_SEMANTIC_PACK` non punti alla cartella di un pacchetto installato.
 
 Per creare ed eseguire una build di produzione in locale:
 
