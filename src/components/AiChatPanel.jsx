@@ -90,7 +90,7 @@ function userAttachmentParts(message, loaded) {
 
 // Titoli lunghi: nelle liste a discesa si abbreviano, il titolo completo resta nel tooltip.
 const ellipsize = (value, limit) => (value.length > limit ? `${value.slice(0, limit - 1).trimEnd()}…` : value)
-const blankConversation = () => ({ id: null, title: '', parentId: null, branchedAt: null, contextFrom: [], skillOverrides: { add: [], remove: [] }, temperature: '', passages: [], messages: [] })
+const blankConversation = () => ({ id: null, title: '', parentId: null, branchedAt: null, contextFrom: [], skillOverrides: { add: [], remove: [] }, temperature: '', selection: null, passages: [], messages: [] })
 const noSkills = { skills: [], defaults: [], problems: [], chain: [] }
 // Skill attive in una conversazione, come oggetti completi (istruzioni, esempi, azioni), nell'ordine di attivazione.
 const activeSkillsOf = (data, overrides) => {
@@ -672,14 +672,21 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const attachCounter = useRef(0)
   const usageRef = useRef({ input: 0, output: 0 })
 
+  // Le impostazioni in vigore: le generali, con sopra il modello scelto dal progetto aperto.
   useEffect(() => {
-    ai?.getSettings().then(setSettings)
-  }, [settingsVersion])
+    ai?.getEffectiveSettings().then(setSettings)
+  }, [settingsVersion, project])
 
-  // Modelli disponibili per il provider attivo (per il selettore in chat).
+  // Il modello della conversazione, se l'utente l'ha cambiato dal selettore; altrimenti quello del progetto o delle impostazioni generali.
+  const selection = current.selection || null
+  const provider = selection?.provider || settings?.provider
+  const model = (selection && selection.model) || settings?.providers?.[provider]?.model
+  const reasoningChoice = (selection && reasoningByProvider[provider]?.some((option) => option.value === selection.reasoning) && selection.reasoning) || settings?.providers?.[provider]?.reasoning
+
+  // Modelli disponibili per il provider in uso (per il selettore in chat).
   useEffect(() => {
-    if (!settings?.aiEnabled) return undefined
-    const { provider: active } = settings
+    if (!settings?.aiEnabled || !provider) return undefined
+    const active = provider
     const key = `${active}|${settings.providers?.[active]?.endpoint || ''}`
     if (modelsCache.has(key)) { setModels(modelsCache.get(key)); return undefined }
     let cancelled = false
@@ -687,12 +694,13 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       .then((list) => { modelsCache.set(key, list); if (!cancelled) setModels(list) })
       .catch(() => { if (!cancelled) setModels([]) })
     return () => { cancelled = true }
-  }, [settings?.aiEnabled, settings?.provider])
+  }, [settings?.aiEnabled, provider])
 
   // Cosa sa fare il modello scelto (le immagini servono un modello con vision).
   useEffect(() => {
-    ai?.getCapabilities().then(setCapabilities).catch(() => setCapabilities(null))
-  }, [settingsVersion])
+    if (!provider) return
+    ai?.getCapabilities(model, provider).then(setCapabilities).catch(() => setCapabilities(null))
+  }, [settingsVersion, provider, model])
 
   // Il contesto di progetto (.ow/context.md) si rilegge a ogni cambio di progetto o chiusura delle impostazioni.
   useEffect(() => {
@@ -783,8 +791,6 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     if (stickRef.current) scrollToEnd()
   }, [current.messages, live, busy, pendingAsk, queued])
 
-  const provider = settings?.provider
-  const model = settings?.providers?.[provider]?.model
   const providerLabel = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', openrouter: 'OpenRouter', codex: 'Codex', claude: 'Claude', gemini: 'Gemini' }[provider]
   const enabled = Boolean(settings?.aiEnabled)
   // Quali istruzioni di progetto stanno arrivando all'assistente: una sola → "contesto del progetto"; più d'una → i nomi dei progetti.
@@ -801,14 +807,10 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const parent = current.parentId ? conversations.find((item) => item.id === current.parentId) : null
   const parentTitle = parent?.title || t('deleted conversation')
 
-  // Modello e sforzo si cambiano anche dalla chat: sono le stesse impostazioni del provider attivo.
+  // Modello e sforzo si cambiano anche dalla chat, ma valgono per questa conversazione: il modello del progetto e le impostazioni generali restano come sono.
   async function changeProviderSetting(changes) {
-    const active = settings.provider
-    const next = { ...settings, providers: { ...settings.providers, [active]: { ...settings.providers[active], ...changes } } }
-    setSettings(next)
     try {
-      setSettings(await ai.saveSettings(next))
-      ai.getCapabilities().then(setCapabilities).catch(() => setCapabilities(null))
+      await updateConversation({ selection: { provider, model: model || '', reasoning: reasoningChoice || '', ...changes } })
     } catch (reason) {
       setError(reason.message)
     }
@@ -869,6 +871,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       branchedAt: index,
       contextFrom: current.contextFrom,
       temperature: current.temperature ?? '',
+      selection: current.selection || null,
       passages: current.passages || [],
       messages: current.messages.slice(0, index + 1),
     }
@@ -1176,8 +1179,13 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
 
     // Gli strumenti del progetto prevalgono su quelli generali, solo dove il progetto ha fatto una scelta.
     const toolSettings = { ...(settings.tools || {}), ...(projectSettings?.ai?.tools || {}) }
+    // Strumenti dei servizi esterni (MCP) che il progetto usa: se un servizio non parte, l'assistente lavora senza e lo dice.
+    let mcpOffer = { tools: [], problems: [] }
+    if (project && !loose && api.mcp) { try { mcpOffer = await api.mcp.tools() } catch { /* senza servizi si lavora comunque */ } }
+    const mcpTools = mcpOffer.tools || []
     // Gli strumenti dell'assistente richiedono un progetto aperto: senza, restano tutti disattivati.
     const toolsOn = {
+      mcp: mcpTools.length > 0,
       files: Boolean(toolSettings.files && project),
       create: Boolean(toolSettings.create && project),
       notes: Boolean(toolSettings.notes && project),
@@ -1195,7 +1203,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     const disabledTools = Object.keys(labels).filter((group) => !toolSettings[group]).map((group) => ({ group, label: labels[group] }))
     // Senza cartella di progetto (area di lavoro "main") l'assistente lavora solo sui documenti aperti nelle schede.
     if (loose) toolsOn.loose = true
-    const canUseNative = ['ollama', 'ollama-cloud', 'openrouter', 'gemini'].includes(settings.provider)
+    const canUseNative = ['ollama', 'ollama-cloud', 'openrouter', 'gemini'].includes(current.selection?.provider || settings.provider)
     const snapshotted = new Set()
     // Documenti modificati dall'assistente in questa richiesta: a lavoro finito vengono salvati (la versione precedente è archiviata da beforeEdit).
     const editedTabs = new Set()
@@ -1217,6 +1225,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       project: loose ? null : project,
       loose,
       enabled: toolsOn,
+      mcpTools,
+      callMcp: (name, args) => api.mcp.callTool(name, args),
       getDocument: (path) => toolBridge.getDocument(path),
       getOpenDocumentText: (path) => toolBridge.getOpenDocumentText(path),
       listBrowserTabs: () => toolBridge.listBrowserTabs(),
@@ -1318,7 +1328,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
               chainValue(chain, 'language') || projectSettings?.ai?.language || settings.language || languageEnglishName(),
               chain.length ? chainInstructions(chain) : [projectSettings?.ai?.context, ...(projectSettings?.ai?.extraContext || []).map((file) => `## ${file.name}\n${file.text}`)].filter((part) => part && part.trim()).join('\n\n'),
               previous,
-              anyTool || disabledTools.length ? toolsPrompt(toolsOn, { documentPath: toolBridge.activeDocumentPath(), native, maxSteps, disabled: disabledTools }) : '',
+              anyTool || disabledTools.length ? toolsPrompt(toolsOn, { documentPath: toolBridge.activeDocumentPath(), native, maxSteps, disabled: disabledTools, mcpTools, mcpProblems: mcpOffer.problems || [] }) : '',
               chainValue(chain, 'documentLanguage') || projectSettings?.ai?.documentLanguage || '',
               memoryText,
               skillsText,
@@ -1331,14 +1341,14 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
             const afterTool = conversation.messages.at(-1)?.role === 'tool'
             const mode = settings.toolReasoning || 'reduced'
             const reasoningCap = afterTool && mode !== 'same' ? (mode === 'none' ? 'instant' : 'low') : null
-            const streamOptions = { ...(native ? { tools: toolSchemas(toolsOn) } : {}), ...(reasoningCap ? { reasoningCap } : {}), ...(conversation.temperature !== '' && conversation.temperature != null ? { temperature: conversation.temperature } : {}) }
+            const streamOptions = { ...(native ? { tools: toolSchemas(toolsOn, mcpTools) } : {}), ...(reasoningCap ? { reasoningCap } : {}), ...(conversation.selection ? { selection: conversation.selection } : {}), ...(conversation.temperature !== '' && conversation.temperature != null ? { temperature: conversation.temperature } : {}) }
             let reply = await streamReply(modelMessages, streamOptions)
             // Una risposta vuota (capita con alcuni modelli dopo il ragionamento) si ritenta una volta con un richiamo esplicito.
             if (!reply.reply.trim()) reply = await streamReply([...modelMessages, { role: 'user', content: 'Your reply was empty. Reply now, or use a tool.' }], streamOptions)
             // Se il modello parla degli strumenti (ne cita il nome) invece di usarli, si richiama una volta: confronto sui nomi tecnici, non sul testo in lingua.
             if (anyTool && reply.reply.trim() && !parseToolCall(reply.reply)) {
               // Una risposta lunga che cita uno strumento è una risposta vera (la documentazione parla spesso degli strumenti), non un'intenzione non eseguita.
-              const mentioned = reply.reply.trim().length < 1500 && TOOL_DEFINITIONS.some((tool) => toolAvailable(tool, toolsOn) && reply.reply.includes(tool.name))
+              const mentioned = reply.reply.trim().length < 1500 && (TOOL_DEFINITIONS.some((tool) => toolAvailable(tool, toolsOn) && reply.reply.includes(tool.name)) || mcpTools.some((tool) => reply.reply.includes(tool.name)))
               // Dopo il risultato di uno strumento una risposta molto breve senza chiamata è quasi sempre un abbandono prematuro: si richiama una volta.
               const prematureStop = conversation.messages.at(-1)?.role === 'tool' && reply.reply.trim().length < 600
               if (mentioned || prematureStop) {
@@ -1791,7 +1801,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
                 <label className="grid min-w-0 gap-0.5">{t('Effort')}<select
                     aria-label={t('Reasoning effort')}
                     disabled={busy}
-                    value={settings.providers?.[provider]?.reasoning || reasoningByProvider[provider][0].value}
+                    value={reasoningChoice || reasoningByProvider[provider][0].value}
                     className="w-full min-w-0 rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs text-slate-100 outline-none focus:border-accent-400 disabled:opacity-50"
                     onChange={(event) => changeProviderSetting({ reasoning: event.target.value })}
                   >

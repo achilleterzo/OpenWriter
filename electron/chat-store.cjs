@@ -4,6 +4,7 @@ const path = require('node:path')
 const { t } = require('./i18n.cjs')
 const { writeFileAtomic } = require('./atomic-write.cjs')
 const { cleanTemperature } = require('./temperature.cjs')
+const { cleanModelChoice } = require('./model-choice.cjs')
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/
 const MAX_TITLE_CHARS = 200
@@ -62,6 +63,8 @@ function createChatStore({ getProjectPath }) {
       skillOverrides: { add: skillIds(input.skillOverrides?.add), remove: skillIds(input.skillOverrides?.remove) },
       // Temperatura propria della conversazione ('' = segue quella del progetto).
       temperature: cleanTemperature(input.temperature),
+      // Modello scelto per questa conversazione dal selettore della chat (null = quello del progetto, o le impostazioni generali).
+      selection: cleanModelChoice(input.selection),
       // Task in coda (e iniezioni non ancora consegnate): sopravvivono a un arresto improvviso. Si cambiano solo con `setQueue`: un salvataggio della conversazione,
       // anche con una copia vecchia in mano, lascia quella che è già su disco.
       queue: cleanQueue(existing.queue),

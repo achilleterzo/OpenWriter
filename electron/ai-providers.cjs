@@ -7,6 +7,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { t } = require('./i18n.cjs')
 const { cleanTemperature, nativeTemperature, styleHint } = require('./temperature.cjs')
+const { cleanModelChoice, applyModelChoice } = require('./model-choice.cjs')
 
 const PROVIDERS = ['ollama', 'ollama-cloud', 'openrouter', 'codex', 'claude', 'gemini']
 const CODEX_SANDBOXES = ['read-only', 'workspace-write', 'danger-full-access']
@@ -84,6 +85,13 @@ function cliInvocation(provider, args) {
     return { command: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', [`& ${quotePowerShellArg(command)}`, ...args.map((arg) => (arg === '' ? '\'""\'' : quotePowerShellArg(arg)))].join(' ')] }
   }
   return { command, args, shell: true }
+}
+
+// Claude parte isolato: senza i server MCP dell'utente (né quelli del progetto) e senza le sue skill e i suoi comandi. Altrimenti il modello vedrebbe
+// strumenti che non sono dell'app (per esempio il server MCP di OpenWriter stesso, con `ask_agent`) e potrebbe usarli saltando le conferme dell'app.
+// Gli strumenti dell'app gli arrivano come testo nel prompt. `emptyConfigPath`: un file con `{"mcpServers":{}}` (un file, non una stringa JSON: attraverso PowerShell le virgolette si perdono).
+function claudeIsolationArgs(emptyConfigPath) {
+  return ['--strict-mcp-config', '--mcp-config', emptyConfigPath, '--disable-slash-commands']
 }
 
 // Solo OAuth: una API key nell'ambiente del processo non deve cambiare silenziosamente la modalità di autenticazione.
@@ -420,7 +428,7 @@ function normalizeSettings(settings = {}) {
  * Livello di connessione ai provider AI (Ollama, Ollama Cloud, OpenRouter, Codex CLI, Claude CLI, Gemini).
  * `app` e `safeStorage` arrivano da electron; `getWorkingDirectory` è opzionale.
  */
-function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undefined, getProjectTemperature = () => '', log: externalLog = () => {} }) {
+function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undefined, getProjectTemperature = () => '', getProjectModel = () => null, log: externalLog = () => {} }) {
   // Diagnostica: console e file userData/ai-diagnostics.log (si riparte da zero oltre 1 MB).
   const log = (line) => {
     externalLog(line)
@@ -435,6 +443,12 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
   const sessionApiKeys = {}
 
   const settingsPath = () => path.join(app.getPath('userData'), 'ai-settings.json')
+  // Il file di configurazione MCP vuoto che si dà a Claude (vedi claudeIsolationArgs).
+  function emptyMcpConfig() {
+    const file = path.join(app.getPath('userData'), 'claude-empty-mcp.json')
+    try { if (!fs.existsSync(file)) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, '{"mcpServers":{}}') } } catch { /* senza il file Claude parte comunque, con la sua configurazione */ }
+    return file
+  }
   const keyProvider = (provider) => (KEY_PROVIDERS.includes(provider) ? provider : 'ollama-cloud')
   const credentialPath = (provider) => path.join(app.getPath('userData'), `${keyProvider(provider)}-key.bin`)
 
@@ -451,8 +465,18 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     return settings
   }
 
-  const activeProvider = () => getSettings().provider
-  const providerConfig = (provider = activeProvider()) => getSettings().providers[provider] || normalizeProviderConfig(provider)
+  // Un provider con la chiave API si può usare solo se la chiave c'è su questo computer.
+  const usableProvider = (provider) => !KEY_PROVIDERS.includes(provider) || Boolean(apiKey(provider))
+  // Le impostazioni in vigore: quelle generali, con sopra il modello scelto dal progetto aperto (se c'è e si può usare qui).
+  // getSettings() resta quello che si legge e si scrive nella pagina delle impostazioni generali.
+  function getEffectiveSettings() {
+    const base = getSettings()
+    const applied = applyModelChoice(base, getProjectModel(), { reasoningLevels: REASONING_LEVELS, usable: usableProvider })
+    // I parametri del progetto passano dalla stessa pulizia di quelli generali (limiti, valori ammessi).
+    return applied === base ? base : { ...applied, providers: { ...applied.providers, [applied.provider]: normalizeProviderConfig(applied.provider, applied.providers[applied.provider]) } }
+  }
+  const activeProvider = () => getEffectiveSettings().provider
+  const providerConfig = (provider = activeProvider()) => getEffectiveSettings().providers[provider] || normalizeProviderConfig(provider)
   // Livello di temperatura (0-1) in vigore: quello della conversazione, se c'è, altrimenti quello del progetto aperto ('' = nessuno).
   const levelFor = (conversation = '') => {
     const own = cleanTemperature(conversation)
@@ -510,8 +534,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
   // Livello di ragionamento di una richiesta: quello impostato, ridotto se il chiamante lo chiede (`cap`: 'low' o 'instant').
   // "default" è il livello scelto dal modello, che può essere alto: con un tetto diventa "low". Dove "instant" non esiste si ripiega su "low".
   const LEVEL_RANK = { instant: 0, low: 1, medium: 2, high: 3, xhigh: 4, max: 5, default: 3 }
-  function reasoningLevel(provider, cap) {
-    const level = providerConfig(provider).reasoning
+  function reasoningLevel(provider, cap, level = providerConfig(provider).reasoning) {
     if (cap !== 'low' && cap !== 'instant') return level
     const wanted = cap === 'instant' && REASONING_LEVELS[provider].includes('instant') ? 'instant' : 'low'
     return (LEVEL_RANK[level] ?? 3) > LEVEL_RANK[wanted] ? wanted : level
@@ -542,8 +565,8 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
   // Invia il prompt alla CLI in modalità streaming e traduce i suoi eventi in { type: 'text' | 'thinking' | 'status', ... }.
   // `images`: [{ mime, data(base64) }] allegate al prompt, nello stesso ordine dei segnaposto [Immagine N] nel testo.
   // `documents`: [{ mime: 'application/pdf', name, data(base64) }], segnaposto [Document N: nome]; li legge solo Claude.
-  async function streamCliPrompt(provider, prompt, onEvent, signal, images = [], documents = [], level = providerConfig(provider).reasoning, temperatureLevel = levelFor()) {
-    const rawModel = String(providerConfig(provider).model || '').trim()
+  async function streamCliPrompt(provider, prompt, onEvent, signal, images = [], documents = [], level = providerConfig(provider).reasoning, temperatureLevel = levelFor(), modelName = '') {
+    const rawModel = String(modelName || providerConfig(provider).model || '').trim()
     const model = /^[A-Za-z0-9._:/-]+$/.test(rawModel) ? rawModel : ''
     const reasoning = level
     const effort = reasoning === 'default' ? '' : reasoning
@@ -625,7 +648,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     }
 
     const structured = images.length > 0 || documents.length > 0
-    const args = ['-p', ...(structured ? ['--input-format', 'stream-json'] : []), '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', '', ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : [])]
+    const args = ['-p', ...(structured ? ['--input-format', 'stream-json'] : []), '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--tools', '', ...claudeIsolationArgs(emptyMcpConfig()), ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : [])]
     // Con immagini o PDF il prompt viaggia come messaggio "stream-json" con blocchi di testo, immagine e documento.
     const claudeInput = structured
       ? `${JSON.stringify({ type: 'user', message: { role: 'user', content: [
@@ -872,12 +895,15 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
    * Restituisce il testo finale della risposta.
    */
   // `use`: { provider, model } per una singola richiesta con un altro modello (l'assistente di ricerca), solo provider con strumenti nativi.
-  async function chatStream(messages, { onEvent = () => {}, signal, tools = [], reasoningCap = null, use = null, temperature: conversationTemperature = '' } = {}) {
+  // `selection`: { provider, model, reasoning } scelto per la conversazione, che vale al posto del modello del progetto e delle impostazioni generali.
+  async function chatStream(messages, { onEvent = () => {}, signal, tools = [], reasoningCap = null, use = null, selection = null, temperature: conversationTemperature = '' } = {}) {
     const other = use && RESEARCH_PROVIDERS.includes(use.provider) ? { provider: use.provider, model: String(use.model || '').trim() } : null
-    const provider = other ? other.provider : activeProvider()
-    assertConfigured(provider, other?.model)
-    const config = { ...providerConfig(provider), ...(other?.model ? { model: other.model } : {}) }
-    const level = reasoningLevel(provider, reasoningCap)
+    const chosen = other ? null : cleanModelChoice(selection)
+    const provider = other ? other.provider : chosen ? chosen.provider : activeProvider()
+    const modelName = other?.model || chosen?.model || ''
+    assertConfigured(provider, modelName)
+    const config = { ...providerConfig(provider), ...(modelName ? { model: modelName } : {}) }
+    const level = reasoningLevel(provider, reasoningCap, chosen && REASONING_LEVELS[provider].includes(chosen.reasoning) ? chosen.reasoning : undefined)
     const temperature = temperatureFor(provider, conversationTemperature)
     const list = (Array.isArray(messages) ? messages : []).map((message) => ({
       role: message?.role || 'user',
@@ -914,7 +940,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     }).join('\n\n')
     // Ultimo prompt inviato alla CLI, per capire cosa vede il modello quando si comporta in modo inatteso (viene sovrascritto a ogni richiesta, resta in locale).
     try { fs.writeFileSync(path.join(app.getPath('userData'), 'ai-last-prompt.txt'), prompt) } catch { /* solo diagnostica */ }
-    return streamCliPrompt(provider, prompt, onEvent, signal, attached, documents, level, levelFor(conversationTemperature))
+    return streamCliPrompt(provider, prompt, onEvent, signal, attached, documents, level, levelFor(conversationTemperature), modelName)
   }
 
   const chat = (messages) => chatStream(messages)
@@ -953,8 +979,8 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     }
   }
 
-  function getCapabilities(modelOverride) {
-    const provider = activeProvider()
+  function getCapabilities(modelOverride, providerOverride) {
+    const provider = PROVIDERS.includes(providerOverride) ? providerOverride : activeProvider()
     const config = providerConfig(provider)
     return modelCapabilities(provider, String(modelOverride || config.model || ''), config.endpoint)
   }
@@ -1118,7 +1144,7 @@ function createAiProviders({ app, safeStorage, getWorkingDirectory = () => undef
     return names(await requestJson(`${target}/api/tags`))
   }
 
-  return { getSettings, saveSettings, hasApiKey: (provider = 'ollama-cloud') => Boolean(loadApiKey(provider)), saveApiKey, getStatus, login, submitLoginCode, stopLogin, listModels, listModelInputs, chat, chatStream, getCapabilities }
+  return { getSettings, getEffectiveSettings, saveSettings, hasApiKey: (provider = 'ollama-cloud') => Boolean(loadApiKey(provider)), saveApiKey, getStatus, login, submitLoginCode, stopLogin, listModels, listModelInputs, chat, chatStream, getCapabilities }
 }
 
-module.exports = { createAiProviders }
+module.exports = { createAiProviders, claudeIsolationArgs }

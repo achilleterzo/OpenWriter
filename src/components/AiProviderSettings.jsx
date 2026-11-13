@@ -2,27 +2,15 @@ import { useCallback, useEffect, useState } from 'react'
 import { Bot, CheckCircle2, RefreshCw } from 'lucide-react'
 import { reasoningByProvider } from '../lib/aiOptions.js'
 import ParameterSlider, { InfoTip } from './ParameterSlider.jsx'
-import ollamaLogo from '../assets/provider-logos/ollama.svg'
-import openRouterLogo from '../assets/provider-logos/openrouter.svg'
-import codexLogo from '../assets/provider-logos/codex.svg'
-import claudeCodeLogo from '../assets/provider-logos/claude-code.svg'
-import geminiLogo from '../assets/provider-logos/gemini.svg'
 import { t } from '../i18n/index.js'
 import { toolOptions } from '../lib/toolOptions.js'
 import ModelPicker from './ModelPicker.jsx'
 import Switch from './Switch.jsx'
+import ProviderCards, { providers } from './ProviderCards.jsx'
 
-const ai = window.electronAPI?.ai
+const electronAPI = window.electronAPI
+const ai = electronAPI?.ai
 
-const providers = [
-  { value: 'ollama', label: 'Ollama', description: t('Local HTTP service') },
-  { value: 'ollama-cloud', label: 'Ollama Cloud', description: t('Hosted API with an API key') },
-  { value: 'openrouter', label: 'OpenRouter', description: t('Hundreds of models with one API key') },
-  { value: 'codex', label: 'Codex', description: t('Native CLI with ChatGPT OAuth') },
-  { value: 'claude', label: 'Claude', description: t('Native CLI with Claude OAuth') },
-  { value: 'gemini', label: 'Gemini', description: t('Google AI Studio API key') },
-]
-const logos = { ollama: ollamaLogo, 'ollama-cloud': ollamaLogo, openrouter: openRouterLogo, codex: codexLogo, claude: claudeCodeLogo, gemini: geminiLogo }
 // Provider che si usano con una chiave API salvata dall'app.
 const keyProviders = ['ollama-cloud', 'openrouter', 'gemini']
 const languages = ['Italiano', 'English', 'Español', 'Français', 'Deutsch', 'Português']
@@ -33,7 +21,9 @@ const RESEARCH_PROVIDERS = ['ollama', 'ollama-cloud', 'openrouter', 'gemini']
 const fieldClass = 'mt-2 w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2.5 text-slate-100 outline-none placeholder:text-slate-500 focus:border-accent-400 disabled:opacity-60'
 const buttonClass = 'rounded-md bg-slate-700 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-slate-600 disabled:cursor-wait disabled:opacity-60'
 
-export default function AiProviderSettings() {
+// `project`: { directory, choice, onChoice } quando la pagina è nella finestra di un progetto. È la stessa pagina: chiavi API, endpoint e accesso ai client restano le impostazioni
+// del computer e si cambiano da entrambe; provider, modello e ragionamento, nel progetto, diventano la scelta di quel progetto (vedi model-choice.cjs).
+export default function AiProviderSettings({ project = null }) {
   const [settings, setSettings] = useState(null)
   const [autoApprove, setAutoApprove] = useState(() => window.electronAPI?.preferences?.values?.['openwriter.autoApprove'] === 'on')
   const [models, setModels] = useState([])
@@ -53,8 +43,13 @@ export default function AiProviderSettings() {
       .then((values) => setSavedKeys(Object.fromEntries(keyProviders.map((name, index) => [name, Boolean(values[index])]))))
   }, [])
 
-  const provider = settings?.provider
-  const config = settings?.providers?.[provider] || {}
+  // La scelta del progetto, se c'è: provider, modello e ragionamento vengono da lì; il resto della configurazione del provider resta quello generale.
+  const choice = project?.choice || null
+  const provider = choice ? choice.provider : settings?.provider
+  const general = settings?.providers?.[provider] || {}
+  const config = choice
+    ? { ...general, ...(choice.params || {}), model: choice.model || general.model, reasoning: reasoningByProvider[provider]?.some((option) => option.value === choice.reasoning) ? choice.reasoning : general.reasoning }
+    : general
   const native = provider === 'codex' || provider === 'claude'
   const cliTemperatureNote = t('Claude and Codex have no temperature setting. The temperature chosen in the project settings reaches them only as a style hint in the prompt, and only at the extremes (very low or very high).')
   const cloud = provider === 'ollama-cloud'
@@ -84,7 +79,23 @@ export default function AiProviderSettings() {
   }, [settings?.aiEnabled, researcher.enabled, researcher.provider, researchEndpoint])
   const updateResearcher = (changes) => persist({ ...settings, researcher: { ...researcher, ...changes } })
 
-  const updateConfig = (changes) => persist({ ...settings, providers: { ...settings.providers, [provider]: { ...config, ...changes } } })
+  async function saveChoice(next) {
+    try { project.onChoice(await electronAPI.setProjectModelChoiceFor(project.directory, next)) } catch (reason) { setError(reason.message) }
+  }
+  const updateConfig = (changes) => {
+    if (!project) { persist({ ...settings, providers: { ...settings.providers, [provider]: { ...config, ...changes } } }); return }
+    // Nel progetto, modello, ragionamento e parametri di generazione sono la scelta del progetto; l'endpoint è del computer e resta generale.
+    const { model, reasoning, endpoint, ...params } = changes
+    if (model !== undefined || reasoning !== undefined || Object.keys(params).length) {
+      saveChoice({ provider, model: model ?? config.model ?? '', reasoning: reasoning ?? config.reasoning ?? '', params: { ...(choice?.params || {}), ...params } })
+    }
+    if (endpoint !== undefined) persist({ ...settings, providers: { ...settings.providers, [provider]: { ...general, endpoint } } })
+  }
+  const chooseProvider = (value) => {
+    if (!project) { persist({ ...settings, provider: value }); return }
+    const base = settings.providers[value] || {}
+    saveChoice({ provider: value, model: base.model || '', reasoning: base.reasoning || '' })
+  }
 
   const loadModels = useCallback(async (request = {}) => {
     setModelsLoading(true)
@@ -119,7 +130,7 @@ export default function AiProviderSettings() {
   // Il modello scelto sa guardare le immagini? Serve per l'opzione "Immagini e schermate".
   useEffect(() => {
     if (!settings?.aiEnabled || !provider) return
-    ai.getCapabilities().then(setCapabilities).catch(() => setCapabilities(null))
+    ai.getCapabilities(config.model, provider).then(setCapabilities).catch(() => setCapabilities(null))
   }, [settings?.aiEnabled, provider, config.model])
 
   async function saveKey() {
@@ -196,32 +207,19 @@ export default function AiProviderSettings() {
           <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${settings.aiEnabled ? 'left-[22px]' : 'left-0.5'}`} />
         </button>
       </div>
+      {project && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 px-3 py-2 text-xs text-slate-400">
+          <span>{choice ? t('This project uses its own provider and model.') : t('Inherited from the general settings: changing the provider or its settings here applies to this project only. Keys and endpoints are the same everywhere.')}</span>
+          {choice && <button type="button" className="shrink-0 rounded-md bg-slate-700 px-3 py-1.5 font-medium text-slate-100 transition hover:bg-slate-600" onClick={() => saveChoice(null)}>{t('Use the general settings')}</button>}
+        </div>
+      )}
+      {project && !settings.aiEnabled && <p className="mt-4 text-xs text-slate-500">{t('Turning the assistant on or off applies to every project; the choices below are those of this project.')}</p>}
 
       {settings.aiEnabled && (
         <div className="mt-6 grid grid-cols-1 gap-4">
           <div className="grid gap-2">
             <span className="text-sm text-slate-300">{t('Provider')}</span>
-            <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t('AI provider')}>
-              {providers.map((option) => {
-                const active = provider === option.value
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    className={`flex min-w-0 items-center gap-3 rounded-lg border px-3 py-3 text-left transition ${active ? 'border-teal-700 bg-teal-950/60 text-teal-300 ring-1 ring-inset ring-teal-900' : 'border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-500 hover:bg-slate-800 hover:text-slate-100'}`}
-                    onClick={() => persist({ ...settings, provider: option.value })}
-                  >
-                    <img src={logos[option.value]} alt="" aria-hidden="true" className="h-7 w-7 shrink-0 rounded-md bg-stone-100 object-contain p-1" />
-                    <span className="grid min-w-0 gap-0.5">
-                      <strong className="truncate text-sm font-semibold">{option.label}</strong>
-                      <small className={`truncate text-xs ${active ? 'text-teal-200/70' : 'text-slate-500'}`}>{option.description}</small>
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
+            <ProviderCards value={provider} onChange={chooseProvider} />
           </div>
 
           {native && (
@@ -288,11 +286,13 @@ export default function AiProviderSettings() {
             </div>
           </div>
 
-          <label className="text-sm text-slate-300">{t('Reply language')}<select className={fieldClass} value={settings.language} onChange={(event) => persist({ ...settings, language: event.target.value })}>
-              <option value="">{t('Same as the interface')}</option>
-              {[...new Set([...languages, settings.language].filter(Boolean))].map((language) => <option key={language} value={language}>{language}</option>)}
-            </select>
-          </label>
+          {!project && (
+            <label className="text-sm text-slate-300">{t('Reply language')}<select className={fieldClass} value={settings.language} onChange={(event) => persist({ ...settings, language: event.target.value })}>
+                <option value="">{t('Same as the interface')}</option>
+                {[...new Set([...languages, settings.language].filter(Boolean))].map((language) => <option key={language} value={language}>{language}</option>)}
+              </select>
+            </label>
+          )}
 
           <label className="text-sm text-slate-300">{t('Reasoning')}<select className={fieldClass} value={config.reasoning || reasoningByProvider[provider][0].value} onChange={(event) => updateConfig({ reasoning: event.target.value })}>
               {reasoningByProvider[provider].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -306,7 +306,7 @@ export default function AiProviderSettings() {
               <div className="mt-3 grid gap-4">
                 {!openRouter && !gemini && <ParameterSlider id="ollama-num-ctx" label={t('Context window (num_ctx)')} help={t('How much text the model can keep in mind at once: your documents, the conversation and the instructions together. Larger values let the assistant read longer documents but use more memory and make replies slower. Typical values: 4096 to 32768.')} value={config.numCtx} onChange={(value) => updateConfig({ numCtx: value })} stops={[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]} format={(value) => value.toLocaleString()} />}
                 <ParameterSlider id="ollama-num-predict" label={openRouter || gemini ? t('Maximum reply tokens (max_tokens)') : t('Maximum reply tokens (num_predict)')} help={t('Upper limit on the length of a single reply, in tokens (about three quarters of a word each). Lower it to keep replies short and fast; if replies are cut off, raise it. Reasoning models count their thinking too.')} value={config.numPredict} onChange={(value) => updateConfig({ numPredict: value })} stops={[64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]} format={(value) => value.toLocaleString()} />
-                <ParameterSlider id="ollama-temperature" label={t('Temperature')} help={t('How much freedom the model takes. Low values (0 to 0.3) give precise, repeatable replies, good for proofreading; high values (0.8 to 1.5) give more varied, creative wording. Above 1.5 the text may become incoherent.')} value={config.temperature} onChange={(value) => updateConfig({ temperature: value })} min={0} max={2} step={0.1} format={(value) => value.toFixed(1)} />
+                {!project && <ParameterSlider id="ollama-temperature" label={t('Temperature')} help={t('How much freedom the model takes. Low values (0 to 0.3) give precise, repeatable replies, good for proofreading; high values (0.8 to 1.5) give more varied, creative wording. Above 1.5 the text may become incoherent.')} value={config.temperature} onChange={(value) => updateConfig({ temperature: value })} min={0} max={2} step={0.1} format={(value) => value.toFixed(1)} />}
                 {provider === 'ollama' && (
                   <div className="relative block text-xs text-slate-400">
                     <div className="flex items-center gap-1.5">
@@ -346,6 +346,8 @@ export default function AiProviderSettings() {
             </details>
           )}
 
+          {!project && (
+            <>
           <fieldset className="grid gap-3 rounded-lg border border-slate-800 p-4">
             <legend className="px-1 text-sm text-slate-300">{t('Assistant tools')}</legend>
             {toolOptions.map(({ key, label, help }) => (
@@ -428,6 +430,9 @@ export default function AiProviderSettings() {
               </>
             )}
           </fieldset>
+
+            </>
+          )}
 
           {error && <p className="text-sm text-rose-400">{error}</p>}
         </div>
