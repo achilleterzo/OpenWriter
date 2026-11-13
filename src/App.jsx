@@ -30,6 +30,7 @@ import IndexProgress from './components/IndexProgress.jsx'
 import { notify } from './lib/toasts.js'
 import PanelResizer from './components/PanelResizer.jsx'
 import SettingsScreen from './components/SettingsScreen.jsx'
+import ProjectSettings from './components/ProjectSettings.jsx'
 import TabBar from './components/TabBar.jsx'
 import useDocumentFileCommands from './hooks/useDocumentFileCommands.js'
 import { setAnnotations } from './lib/annotationExtension.js'
@@ -206,6 +207,9 @@ export default function App() {
   })
   // Scheda con cui si aprono le impostazioni: Generale, salvo dall'ingranaggio dell'assistente (IA).
   const [settingsSection, setSettingsSection] = useState('general')
+  // Le impostazioni del progetto aperto (menu «Progetto») e il comando del menu per l'albero dei file, consegnato quando l'albero c'è (vedi FileExplorer).
+  const [projectSettingsOpen, setProjectSettingsOpen] = useState(false)
+  const [explorerCommand, setExplorerCommand] = useState(null)
   // Note mostrate: 'open' (predefinito) | 'all' | 'mine' (scritte dall'utente) | 'none' (nascoste). Vale per l'elenco e per le evidenziazioni nel testo.
   const [noteView, setNoteViewState] = useState(() => { const saved = getPreference('openwriter.noteView'); return ['open', 'all', 'mine', 'none'].includes(saved) ? saved : 'open' })
   const setNoteView = (value) => { setNoteViewState(value); setPreference('openwriter.noteView', value) }
@@ -546,10 +550,14 @@ export default function App() {
       if (command === 'about' || command === 'check-updates') { setAboutCheck(command === 'check-updates'); setAboutOpen(true) }
       if (command === 'settings') openSettings()
       if (command === 'open-project') chooseProject()
+      // Menu «Progetto»: le impostazioni si aprono qui; le azioni sull'albero dei file passano da lì (si mostra, se era chiuso).
+      if (command === 'project-settings') setProjectSettingsOpen(true)
+      else if (command === 'project-reveal') electronAPI.openProjectFolder().catch((reason) => setStatus(reason.message))
+      else if (command.startsWith('project-')) { setSideTab('files'); setExplorerCommand({ name: command, id: Date.now() }) }
       if (command === 'view-endless' || command === 'view-pages') updateAppearance({ view: command.slice(5) })
       if (command === 'nav-back' || command === 'nav-forward') jumpsRef.current?.(command === 'nav-back' ? 'back' : 'forward')
     })
-  }, [chooseProject])
+  }, [chooseProject, setSideTab])
 
   // Errori e avvisi del processo principale (anche quelli che finora si vedevano solo nel terminale) diventano notifiche.
   useEffect(() => {
@@ -1659,7 +1667,7 @@ export default function App() {
             </div>
             {sideTab === 'projects' && <SettingsActionsContext.Provider value={sideActions}><ProjectsPanel project={project} onMove={moveProject} onOpenFile={(file) => openFromExplorer(file)} onOpen={(directory) => showFiles(openProject(directory))} onChoose={() => showFiles(chooseProject())} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} onListChanged={() => setProjectsVersion((value) => value + 1)} /></SettingsActionsContext.Provider>}
             {sideTab === 'files' && (
-              <FileExplorer project={project} activePath={activeTab?.kind === 'image' ? activeTab.imagePath : activeTab?.kind === 'text' ? activeTab.textPath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} settingsVersion={settingsVersion} />
+              <FileExplorer project={project} activePath={activeTab?.kind === 'image' ? activeTab.imagePath : activeTab?.kind === 'text' ? activeTab.textPath : contextTab?.sourcePath} refreshToken={explorerRefresh} expandedPaths={expandedPaths} onToggle={toggleExpanded} onChooseProject={chooseProject} onOpenProject={openProject} onOpenFile={openFromExplorer} onStatus={setStatus} onRenamed={workspace.pathRenamed} onDeleted={workspace.pathDeleted} onSettingsChanged={() => setSettingsVersion((value) => value + 1)} settingsVersion={settingsVersion} command={explorerCommand} onCommandHandled={() => setExplorerCommand(null)} />
             )}
             {sideTab === 'outline' && <OutlinePanel editor={editors[contextTab?.id]} onJump={rememberPlace} />}
             {sideTab === 'anchors' && <AnchorsPanel editor={editors[contextTab?.id]} onJump={rememberPlace} />}
@@ -1754,7 +1762,17 @@ export default function App() {
       )}
       {modelsIntroOpen && <FirstRunModelsDialog onClose={closeModelsIntro} />}
       {aboutOpen && <AboutDialog version={appVersion} release={updateRelease} checkOnOpen={aboutCheck} onCheck={() => checkForUpdate(false)} onClose={() => setAboutOpen(false)} />}
-      {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} onMoveProject={moveProject} version={appVersion} release={updateRelease} onCheckUpdate={() => checkForUpdate(false)} onOpenFile={(file) => { setScreen('editor'); setSettingsVersion((value) => value + 1); openFromExplorer(file) }} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
+      {projectSettingsOpen && project && (
+        <ProjectSettings
+          path={project}
+          label={t('Project settings')}
+          onClose={() => { setProjectSettingsOpen(false); setSettingsVersion((value) => value + 1) }}
+          onMove={moveProject}
+          onEditContext={(file) => { setProjectSettingsOpen(false); setSettingsVersion((value) => value + 1); openFromExplorer(file) }}
+          onChanged={() => setSettingsVersion((value) => value + 1)}
+        />
+      )}
+      {screen === 'settings' && <SettingsScreen initialSection={settingsSection} project={project} version={appVersion} release={updateRelease} onCheckUpdate={() => checkForUpdate(false)} onBack={() => { setScreen('editor'); setSettingsVersion((value) => value + 1) }} />}
     </ContextMenuContext.Provider>
   )
 }

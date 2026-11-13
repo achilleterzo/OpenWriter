@@ -5,7 +5,7 @@ import FileIcon from './FileIcon.jsx'
 import { ContextMenuContext } from './ContextMenu.jsx'
 import ProjectIcon, { ProjectAvatar } from './ProjectIcon.jsx'
 import { isImageFile } from '../lib/imagePaths.js'
-import ProjectSettingsDialog from './ProjectSettingsDialog.jsx'
+import ProjectSettings from './ProjectSettings.jsx'
 import { t } from '../i18n/index.js'
 import { isInsidePath, samePath } from '../lib/pathCompare.js'
 
@@ -240,7 +240,7 @@ function TreeNode({ entry, depth, activePath, refreshToken, expandedPaths, onTog
   )
 }
 
-export default function FileExplorer({ project, activePath, refreshToken, expandedPaths, onToggle, onChooseProject, onOpenProject, onOpenFile, onStatus, onRenamed, onDeleted, onSettingsChanged, settingsVersion = 0 }) {
+export default function FileExplorer({ project, activePath, refreshToken, expandedPaths, onToggle, onChooseProject, onOpenProject, onOpenFile, onStatus, onRenamed, onDeleted, onSettingsChanged, settingsVersion = 0, command = null, onCommandHandled }) {
   // Il nome scelto nelle impostazioni del progetto (vuoto: si mostra il nome della cartella). Si rilegge quando le impostazioni cambiano.
   const [projectName, setProjectName] = useState('')
   useEffect(() => {
@@ -693,6 +693,18 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [subSettings])
 
+  // Un comando del menu «Progetto» (lo stesso dei pulsanti dell'intestazione): lo si esegue una volta sola, poi si dice a chi l'ha mandato.
+  useEffect(() => {
+    if (!command || !project) return
+    if (command.name === 'project-new-folder') startCreate(creationTarget(), 'directory')
+    else if (command.name === 'project-new-document') startCreate(creationTarget(), 'file')
+    else if (command.name === 'project-add-reference') addReference()
+    else if (command.name === 'project-move-here') moveProjectIn(project)
+    else if (command.name === 'project-refresh') setLocalRefresh((value) => value + 1)
+    onCommandHandled?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [command?.id])
+
   if (!project) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
@@ -719,7 +731,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
         </div>
       </div>
       {subSettings && (
-        <ProjectSettingsDialog
+        <ProjectSettings
           title={subSettings.name}
           path={subSettings.path}
           label={subSettings.path === project ? t('Project settings') : t('Sub-project settings')}

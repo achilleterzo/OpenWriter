@@ -311,20 +311,7 @@ export function ProjectQuickActions({ project, projectPath = null, plain = false
   )
 }
 
-// Azioni rapide: generali (di tutta l'app) o del progetto aperto.
-export default function QuickActionsSettings({ project = null }) {
-  const [scope, setScope] = useState('general')
-  const tabs = [['general', t('General')], ['project', t('This project')]]
-  return (
-    <div className="grid gap-4">
-      {project && (
-        <div role="tablist" aria-label={t('Quick actions')} className="flex gap-1">
-          {tabs.map(([id, label]) => (
-            <button key={id} type="button" role="tab" aria-selected={scope === id} className={`rounded-md px-3 py-1.5 text-sm transition ${scope === id ? 'bg-accent-500/15 font-medium text-accent-400' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-50'}`} onClick={() => setScope(id)}>{label}</button>
-          ))}
-        </div>
-      )}
-      {scope === 'project' && project ? <ProjectQuickActions project={project} /> : <GeneralQuickActions />}
-    </div>
-  )
+// Azioni rapide generali (di tutta l'app). Quelle di un progetto si modificano nella finestra delle sue impostazioni (ProjectQuickActions).
+export default function QuickActionsSettings() {
+  return <GeneralQuickActions />
 }

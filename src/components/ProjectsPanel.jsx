@@ -2,7 +2,7 @@ import { useCallback, useContext, useEffect, useState } from 'react'
 import { Plus, Settings, X } from 'lucide-react'
 import { ContextMenuContext } from './ContextMenu.jsx'
 import { ProjectAvatar } from './ProjectIcon.jsx'
-import ProjectSettingsDialog from './ProjectSettingsDialog.jsx'
+import ProjectSettings from './ProjectSettings.jsx'
 import WorkspaceSelector from './WorkspaceSelector.jsx'
 import useWorkspaces from '../hooks/useWorkspaces.js'
 import { formatDateTime, t } from '../i18n/index.js'
@@ -117,7 +117,7 @@ export default function ProjectsPanel({ project, onMove, onOpen, onOpenFile, onC
         {!projects.length && <li className="px-3 py-2 text-xs text-slate-500">{activeWorkspace ? t('This workspace has no projects. Choose “Edit” in the workspace menu above to add some.') : t('No projects yet. Create one or open an existing folder.')}</li>}
       </ul>
       {settingsFor && (
-        <ProjectSettingsDialog
+        <ProjectSettings
           title={settingsFor.name}
           path={settingsFor.path}
           onClose={() => setSettingsFor(null)}

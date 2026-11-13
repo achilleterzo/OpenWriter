@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, RefreshCw, Search, Sparkles, WholeWord, X } from 'lucide-react'
 import ProjectGraph from './ProjectGraph.jsx'
-import ProjectSettingsDialog from './ProjectSettingsDialog.jsx'
+import ProjectSettings from './ProjectSettings.jsx'
 import WorkspaceSelector from './WorkspaceSelector.jsx'
 import useWorkspaces from '../hooks/useWorkspaces.js'
 import { pruneLayouts } from '../lib/graphLayoutStore.js'
@@ -439,7 +439,7 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
         </div>
       )}
       {settingsFor && (
-        <ProjectSettingsDialog
+        <ProjectSettings
           title={settingsFor.name}
           path={settingsFor.path}
           onClose={() => setSettingsFor(null)}
