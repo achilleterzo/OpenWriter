@@ -45,8 +45,8 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [ProjectIcon.jsx](pages/ProjectIcon.jsx.md) — Project icon image and round avatar
 - [AssociationSettings.jsx](pages/AssociationSettings.jsx.md) — Settings section to associate Markdown files and add the folder entry of the file manager
 - [FirstRunModelsDialog.jsx](pages/FirstRunModelsDialog.jsx.md) — First-run window to choose and download the local model
-- [ProjectSettings.jsx](pages/ProjectSettings.jsx.md) — Project settings: name, icon, context, languages, skills
-- [ProjectSettingsDialog.jsx](pages/ProjectSettingsDialog.jsx.md) — Window holding the settings of a project
+- [ProjectSettings.jsx](pages/ProjectSettings.jsx.md) — Project settings: name, icon, context, languages, skills, services
+- [SettingsShell.jsx](pages/SettingsShell.jsx.md) — The frame shared by the general and the project settings windows
 - [ProjectsPanel.jsx](pages/ProjectsPanel.jsx.md) — Projects view with avatars and context menu
 - [ProjectsHome.jsx](pages/ProjectsHome.jsx.md) — Home: network of projects and search by meaning
 - [ProjectGraph.jsx](pages/ProjectGraph.jsx.md) — Bubbles and synapses of the Home network
@@ -57,6 +57,7 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [SelectionToolbar.jsx](pages/SelectionToolbar.jsx.md) — Floating bar of the selection: marks, links, images
 - [SettingsActions.jsx](pages/SettingsActions.jsx.md) — Actions of a settings section shown at the right of the settings header
 - [SettingsScreen.jsx](pages/SettingsScreen.jsx.md) — Settings window with its sections
+- [ServicesSettings.jsx](pages/ServicesSettings.jsx.md) — Services (MCP servers): general settings and the project tab
 - [SkillsManager.jsx](pages/SkillsManager.jsx.md) — Writing skills manager: library, editor, generation
 - [SourceEditor.jsx](pages/SourceEditor.jsx.md) — Markdown source view with line numbers
 - [SpellcheckLanguages.jsx](pages/SpellcheckLanguages.jsx.md) — Spell-check language selection

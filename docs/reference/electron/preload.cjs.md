@@ -32,6 +32,8 @@ Secure bridge between the renderer and the main process, exposed as `window.elec
 
 `onAppNotice(callback)`: the errors and warnings of the main process, arriving on `app:notice` as `{ level, message, detail }` and shown as notifications ([toasts.js](../../src/lib/toasts.js.md)).
 
+`mcp`: the client side of MCP for the settings and the chat (`list`, `saveServer`, `removeServer`, `setUse`, `trustServer`, `testServer`, `tools`, `callTool`), see [mcp-service.cjs](mcp-service.cjs.md).
+
 `setHomeOpen(open)`: tells the main process that the projects Home is open (`home:changed`), so the menu disables the entries that act on a document that is not on screen ([menu.cjs](menu.cjs.md)). `searchKnowledgeForAi(args)` is the search of the assistant over the index (`tools:search-knowledge`), and the AI requests carry the temperature level with the other options (`ai:chat-stream`).
 
 Workspaces: `listAllProjects` (`workspaces:all-projects`, every project on disk regardless of the workspace), `listWorkspaces`, `createWorkspace`, `renameWorkspace`, `setWorkspaceMembers`, `addProjectToWorkspace`, `removeProjectFromWorkspace`, `removeWorkspace`, `setActiveWorkspace`, `addTemporaryProject`, `dismissTemporaryProject`, `adoptTemporaryProject`, `onWorkspacesChanged(callback)` (see [workspaces-store.cjs](workspaces-store.cjs.md)).

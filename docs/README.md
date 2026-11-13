@@ -199,6 +199,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [markdown-images.cjs.md](reference/electron/markdown-images.cjs.md) ([markdown-images.cjs](../electron/markdown-images.cjs)) — Images of a document found and rewritten through the tokens
   - [markdown-embed.cjs.md](reference/electron/markdown-embed.cjs.md) ([markdown-embed.cjs](../electron/markdown-embed.cjs)) — Self-contained Markdown export with embedded images
   - [markdown-extract.cjs.md](reference/electron/markdown-extract.cjs.md) ([markdown-extract.cjs](../electron/markdown-extract.cjs)) — The reverse: base64 images become files beside the document
+  - [model-choice.cjs.md](reference/electron/model-choice.cjs.md) ([model-choice.cjs](../electron/model-choice.cjs)) — The AI model chosen for a project or a conversation, applied on top of the general settings
   - [temperature.cjs.md](reference/electron/temperature.cjs.md) ([temperature.cjs](../electron/temperature.cjs)) — The temperature level converted into each provider's degrees, with its style hint
   - [document-images.cjs.md](reference/electron/document-images.cjs.md) ([document-images.cjs](../electron/document-images.cjs)) — Images following a document that is moved
   - [pdf-import.cjs.md](reference/electron/pdf-import.cjs.md) ([pdf-import.cjs](../electron/pdf-import.cjs)) — PDF text extraction with the images in place
@@ -209,6 +210,10 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [mcp-server.cjs.md](reference/electron/mcp-server.cjs.md) ([mcp-server.cjs](../electron/mcp-server.cjs)) — MCP server for external agents, on stdio or HTTP
   - [mcp-http.cjs.md](reference/electron/mcp-http.cjs.md) ([mcp-http.cjs](../electron/mcp-http.cjs)) — HTTP transport of the MCP server, started by the app
   - [mcp-bridge.cjs.md](reference/electron/mcp-bridge.cjs.md) ([mcp-bridge.cjs](../electron/mcp-bridge.cjs)) — Local bridge from the MCP server to the running app
+  - [mcp-servers-store.cjs.md](reference/electron/mcp-servers-store.cjs.md) ([mcp-servers-store.cjs](../electron/mcp-servers-store.cjs)) — Servers the assistant connects to as an MCP client: global and per project, encrypted credentials, trust of project servers
+  - [mcp-client.cjs.md](reference/electron/mcp-client.cjs.md) ([mcp-client.cjs](../electron/mcp-client.cjs)) — MCP client on the official SDK: stdio and HTTP, lazy start, timeouts
+  - [mcp-oauth.cjs.md](reference/electron/mcp-oauth.cjs.md) ([mcp-oauth.cjs](../electron/mcp-oauth.cjs)) — OAuth sign-in for MCP services: discovery, PKCE with a local redirect, token refresh
+  - [mcp-service.cjs.md](reference/electron/mcp-service.cjs.md) ([mcp-service.cjs](../electron/mcp-service.cjs)) — The MCP client as the assistant sees it: tools offered, confirmation before a call, limits
   - [path-compare.cjs.md](reference/electron/path-compare.cjs.md) ([path-compare.cjs](../electron/path-compare.cjs)) — Platform-aware path comparison
   - [primary-instance.cjs.md](reference/electron/primary-instance.cjs.md) ([primary-instance.cjs](../electron/primary-instance.cjs)) — Lock that elects the instance running the MCP bridge and HTTP server
   - [instance-registry.cjs.md](reference/electron/instance-registry.cjs.md) ([instance-registry.cjs](../electron/instance-registry.cjs)) — Which project each window has open, and the focus request to bring it forward

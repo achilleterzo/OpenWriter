@@ -6,6 +6,8 @@ What a project is on disk, the file explorer, sub-projects, linked documents, th
 
 A project is a working directory. When it is opened, OpenWriter creates or reuses a `.ow` directory containing project settings, assistant context, skills, conversations, attachments, notes, memory, and document history. These files are plain text or JSON and can be committed to Git or added to `.gitignore`.
 
+The Project menu of the application holds what the file explorer header offers (new document, new folder, reference folder, moving a project here, refresh, showing the folder in the file manager) and the project settings. The settings of a project open in a window like the general settings, with the same tabs where they apply — General (name, icon, context, languages, spell checker), Appearance (editor font and accent color, previewed at once for the open project and kept only when saved), AI (model, reply language, temperature, tools, approval), Quick actions, Skills and Advanced (versions, search index, setup sharing, context copy); what concerns the whole application (associations, local models, agents, updates) stays in the general settings.
+
 The projects view lists the known projects with an avatar (the project's icon, or one generated from its name), and a context menu to open, configure, move, reveal, or remove them. A project can have a name of its own in its settings (the field starts with the folder name; the `@` in front is only decoration): the name is used in the lists, the graph, the explorer, and by agents, and the `@alias` of a project in the searches of other projects comes from it.
 
 ### File explorer

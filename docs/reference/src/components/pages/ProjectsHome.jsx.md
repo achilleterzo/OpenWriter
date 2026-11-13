@@ -36,7 +36,7 @@ The "Show less relevant too" action is styled as a link (accent colour, underlin
 
 **Project menu.** Right click on a bubble of the graph opens the same kind of menu as the projects list:
 
- Open (if it is not the open project), Open in a new window (`openProjectInNewWindow`, with the error of the main process shown under the search field when the project is already open in another window), Project settings…, Move…, Show in the file manager (`revealProject`; the label follows the system: "Show in File Explorer", "Reveal in Finder", "Show in file manager"). The settings open in the same window as in the list ([ProjectSettingsDialog.jsx](ProjectSettingsDialog.jsx.md)), drawn outside the dark graph area so it follows the app theme; after a change or a move the graph is reloaded. [App.jsx](../../App.jsx.md) passes `onMove`, `onOpenFile` and `onSettingsChanged`. A bubble with no project behind it (`missing`) gets no menu.
+ Open (if it is not the open project), Open in a new window (`openProjectInNewWindow`, with the error of the main process shown under the search field when the project is already open in another window), Project settings…, Move…, Show in the file manager (`revealProject`; the label follows the system: "Show in File Explorer", "Reveal in Finder", "Show in file manager"). The settings open in the same window as in the list ([ProjectSettings.jsx](ProjectSettings.jsx.md)), drawn outside the dark graph area so it follows the app theme; after a change or a move the graph is reloaded. [App.jsx](../../App.jsx.md) passes `onMove`, `onOpenFile` and `onSettingsChanged`. A bubble with no project behind it (`missing`) gets no menu.
 
 
 
