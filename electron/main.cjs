@@ -8,6 +8,10 @@ const mammoth = require('mammoth')
 const { createApplicationMenu } = require('./menu.cjs')
 const { createAiProviders } = require('./ai-providers.cjs')
 const { createProjectFile } = require('./project-file.cjs')
+const { createMcpServersStore } = require('./mcp-servers-store.cjs')
+const { createMcpClient } = require('./mcp-client.cjs')
+const { createMcpService } = require('./mcp-service.cjs')
+const mcpOauth = require('./mcp-oauth.cjs')
 const { cleanTemperature } = require('./temperature.cjs')
 const { createProjectsStore } = require('./projects.cjs')
 const { execFile, spawn } = require('node:child_process')
@@ -123,6 +127,7 @@ const aiProviders = createAiProviders({
   safeStorage,
   getWorkingDirectory: () => projectPath || undefined,
   getProjectTemperature: () => projectFile.getTemperature(),
+  getProjectModel: () => projectFile.getModelChoice(),
   })
 
 const markdownFilter = {
@@ -531,6 +536,8 @@ async function setProject(directory, { join = true } = {}) {
   projectsStore.touch(projectPath)
   if (join && !known) { try { if (workspacesStore.joinActive(projectPath)) notifyWorkspaces() } catch (error) { console.error('Spazio di lavoro non aggiornato:', error.message) } }
   applySpellcheck()
+  // Le voci del menu «Progetto» si accendono quando c'è un progetto.
+  buildMenu()
   return projectPath
 }
 
@@ -1191,6 +1198,12 @@ ipcMain.handle('skills:set-active', (_event, { directory, active } = {}) => {
   return projectFile.setActiveSkills(active)
 })
 ipcMain.handle('project:get-settings', () => projectFile.getSettings())
+// Il modello AI di un progetto qualsiasi (anche non aperto, o un sotto-progetto; null = quello generale): si salva da solo, dalla finestra apposita.
+ipcMain.handle('projects:set-model-choice', (_event, { directory, choice } = {}) => {
+  const { file } = projectFileFor(directory)
+  file.initialize()
+  return file.setModelChoice(choice)
+})
 // Azioni rapide del progetto aperto (vedi project-file.cjs).
 ipcMain.handle('project:set-quick-actions', (_event, value) => projectFile.setQuickActions(value))
 // Le azioni rapide di un progetto qualsiasi (anche non aperto, o un sotto-progetto), dalle sue impostazioni.
@@ -1209,7 +1222,7 @@ ipcMain.handle('project:save-settings', (_event, settings) => {
   return saved
 })
 // Chat in streaming: gli eventi (testo, ragionamento, stato) arrivano al renderer man mano, e la richiesta si può interrompere.
-ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools, reasoningCap, use, temperature }) => {
+ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools, reasoningCap, use, selection, temperature }) => {
   const controller = new AbortController()
   aiRequests.set(requestId, controller)
   try {
@@ -1218,6 +1231,7 @@ ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools, rea
       tools: Array.isArray(tools) ? tools : [],
       reasoningCap: reasoningCap === 'low' || reasoningCap === 'instant' ? reasoningCap : null,
       temperature: cleanTemperature(temperature),
+      selection: selection && typeof selection === 'object' ? selection : null,
       use: use && typeof use === 'object' ? { provider: String(use.provider || ''), model: String(use.model || '') } : null,
       onEvent: (payload) => { if (!event.sender.isDestroyed()) event.sender.send('ai:stream', { requestId, event: payload }) },
     })
@@ -1606,7 +1620,7 @@ ipcMain.handle('tools:read-file', async (_event, { path: relativePath, offset, l
   if (prefix) result.path = withPrefix(prefix, result.path)
   return result
 })
-ipcMain.handle('ai:capabilities', (_event, model) => aiProviders.getCapabilities(model))
+ipcMain.handle('ai:capabilities', (_event, model, provider) => aiProviders.getCapabilities(model, provider))
 ipcMain.handle('images:fetch', (_event, url) => images.fetchImage(String(url)))
 ipcMain.handle('images:read-file', async (_event, relativePath) => { const { tools, relative } = toolsFor(relativePath); return images.prepareBuffer(await tools.readImage(relative)) })
 // Descrizione di un'immagine del progetto, salvata dall'assistente in .ow/image-descriptions/ (un file .md per immagine) e riletta al posto
@@ -2361,7 +2375,83 @@ ipcMain.handle('document:export-pdf', async (_event, { html, documentPath, name 
   await exportPdf(html, pdfPath)
   return pdfPath
 })
+// --- Client MCP: servizi esterni (stdio o HTTP) i cui strumenti l'assistente può usare. Si costruisce al primo uso (la cartella dei dati è nota solo a app avviata).
+let mcpParts = null
+function mcp() {
+  if (mcpParts) return mcpParts
+  const secrets = {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+    decrypt: (value) => safeStorage.decryptString(Buffer.from(value, 'base64')),
+  }
+  // Per il progetto aperto vale la catena dei progetti che lo contengono (un sotto-progetto eredita); per un altro, solo la sua cartella.
+  const getChain = (directory) => {
+    if (!projectPath || !samePath(directory, projectPath)) return [directory]
+    const chain = projectFile.getContextChain(null).filter((entry) => entry.path !== null).map((entry) => path.resolve(projectPath, entry.path))
+    if (!chain.some((entry) => samePath(entry, projectPath))) chain.push(path.resolve(projectPath))
+    return [...new Map(chain.map((entry) => [entry.toLowerCase(), entry])).values()]
+  }
+  const store = createMcpServersStore({ directory: app.getPath('userData'), secrets, getChain })
+  const client = createMcpClient({ log: (message) => aiProviders.log?.(message) })
+  // Prima di una chiamata che può scrivere si chiede all'utente, mostrando il servizio, lo strumento e gli argomenti per intero (per i servizi "a passaggio",
+  // come quello che esegue qualunque funzione del sito, sono gli argomenti a dire che cosa succede).
+  const confirm = async ({ server, tool, args, readOnly, alwaysAsk }) => {
+    let detail = ''
+    try { detail = JSON.stringify(args ?? {}, null, 2) } catch { detail = String(args) }
+    if (detail.length > 1500) detail = `${detail.slice(0, 1500)}
+…`
+    const reason = alwaysAsk ? t('You set this service to ask every time.') : readOnly ? '' : t('The service does not declare this tool as read-only.')
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'question',
+      buttons: [t('Allow'), t("Don't allow")],
+      defaultId: 1,
+      cancelId: 1,
+      title: t('Service call'),
+      message: t('Allow the assistant to use “{tool}” of “{server}”?', { tool, server }),
+      detail: `${reason ? `${reason}
+
+` : ''}${t('Arguments')}:
+${detail}`,
+      noLink: true,
+    })
+    return response === 0
+  }
+  mcpParts = { store, client, service: createMcpService({ store, client, confirm, oauth: mcpOauth, openExternal: (url) => (/^https:\/\//.test(url) ? shell.openExternal(url) : false), log: (message) => aiProviders.log?.(message) }) }
+  return mcpParts
+}
+const mcpProject = (directory) => (directory ? path.resolve(String(directory)) : projectPath)
+const mcpKeys = (id) => [`g:${id}`, `p:${id}`]
+ipcMain.handle('mcp:list', (_event, { directory } = {}) => mcp().store.list(mcpProject(directory)))
+ipcMain.handle('mcp:save-server', async (_event, { directory = null, server, credentials } = {}) => {
+  const { store, service } = mcp()
+  const saved = store.save({ project: directory ? mcpProject(directory) : null, server, credentials })
+  // Un server modificato riparte con la nuova configurazione.
+  await Promise.all(mcpKeys(saved.id).map((key) => service.forget(key)))
+  return saved
+})
+ipcMain.handle('mcp:remove-server', async (_event, { directory = null, id } = {}) => {
+  const { store, service } = mcp()
+  const removed = store.remove({ project: directory ? mcpProject(directory) : null, id })
+  await Promise.all(mcpKeys(id).map((key) => service.forget(key)))
+  return removed
+})
+ipcMain.handle('mcp:set-use', (_event, { directory, ids } = {}) => mcp().store.setUse(mcpProject(directory), ids))
+// La conferma arriva dall'utente che ha visto comando o indirizzo per intero (la schermata lo mostra), mai da un'azione dell'assistente.
+ipcMain.handle('mcp:trust-server', (_event, { directory, id } = {}) => mcp().store.trust(mcpProject(directory), id))
+ipcMain.handle('mcp:test-server', (_event, { directory = null, id } = {}) => mcp().service.test(directory ? mcpProject(directory) : projectPath, id))
+// Gli strumenti dei servizi che il progetto aperto usa, per il modello; un servizio che non parte finisce tra i problemi senza bloccare gli altri.
+// Accesso OAuth a un servizio: si apre il browser e la risposta torna su un indirizzo locale; dura finché l'utente non esce o l'accesso non è revocato.
+ipcMain.handle('mcp:sign-in', (_event, { directory = null, id } = {}) => mcp().service.signIn(directory ? mcpProject(directory) : projectPath, id))
+ipcMain.handle('mcp:sign-out', (_event, { directory = null, id } = {}) => mcp().service.signOut(directory ? mcpProject(directory) : projectPath, id))
+ipcMain.handle('mcp:tools', async () => (projectPath ? mcp().service.tools(projectPath) : { tools: [], problems: [] }))
+ipcMain.handle('mcp:call-tool', (_event, { name, args } = {}) => {
+  if (!projectPath) throw new Error('No project open')
+  return mcp().service.call(projectPath, String(name), args)
+})
+app.on('before-quit', () => { if (mcpParts) mcpParts.service.closeAll().catch(() => {}) })
 ipcMain.handle('ai:get-settings', () => aiProviders.getSettings())
+// Le impostazioni in vigore nel progetto aperto: le generali con sopra il modello scelto dal progetto.
+ipcMain.handle('ai:get-effective-settings', () => aiProviders.getEffectiveSettings())
 ipcMain.handle('ai:save-settings', (_event, settings) => aiProviders.saveSettings(settings))
 ipcMain.handle('ai:status', (_event, provider) => aiProviders.getStatus(provider))
 ipcMain.handle('ai:login', (_event, provider) => aiProviders.login(provider, {
@@ -2481,9 +2571,9 @@ function buildMenu() {
       else mainWindow?.webContents.send('document:command', 'select-all')
       return
     }
-    if (['settings', 'open-project', 'about', 'check-updates', 'view-endless', 'view-pages'].includes(command)) mainWindow?.webContents.send('app:command', command)
+    if (['settings', 'open-project', 'about', 'check-updates', 'view-endless', 'view-pages'].includes(command) || command.startsWith('project-')) mainWindow?.webContents.send('app:command', command)
     else mainWindow?.webContents.send('document:command', command)
-  }, { view: viewMode, home: homeOpen })
+  }, { view: viewMode, home: homeOpen, project: Boolean(projectPath) })
 }
 
 ipcMain.on('view:changed', (_event, mode) => {
