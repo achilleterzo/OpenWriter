@@ -279,6 +279,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [graphLayout.js.md](reference/src/lib/graphLayout.js.md) ([graphLayout.js](../src/lib/graphLayout.js)) — Physics of the Home network of projects
     - [graphRenderer.js.md](reference/src/lib/graphRenderer.js.md) ([graphRenderer.js](../src/lib/graphRenderer.js)) — WebGL2 drawing of the Home network
     - [queryExpansion.js.md](reference/src/lib/queryExpansion.js.md) ([queryExpansion.js](../src/lib/queryExpansion.js)) — Synonyms of a search asked to the language model
+    - [searchStages.js.md](reference/src/lib/searchStages.js.md) ([searchStages.js](../src/lib/searchStages.js)) — Rules for the stages of a search that arrives little by little: a stage never removes what is shown
     - [synonymCache.js.md](reference/src/lib/synonymCache.js.md) ([synonymCache.js](../src/lib/synonymCache.js)) — Remembers the synonyms already asked to the model
     - [quickActions.js.md](reference/src/lib/quickActions.js.md) ([quickActions.js](../src/lib/quickActions.js)) — Chat quick actions and their defaults
     - [rawMarkdownExtensions.js.md](reference/src/lib/rawMarkdownExtensions.js.md) ([rawMarkdownExtensions.js](../src/lib/rawMarkdownExtensions.js)) — Front matter and HTML kept as raw text

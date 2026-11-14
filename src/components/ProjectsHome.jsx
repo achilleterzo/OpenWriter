@@ -14,6 +14,7 @@ import { expansionMessages, parseExpansion } from '../lib/queryExpansion.js'
 import { getPreference, setPreference } from '../lib/preferences.js'
 import { createSynonymCache, synonymKey } from '../lib/synonymCache.js'
 import { snippetTokens } from '../lib/snippetMarkdown.js'
+import { keepsHits } from '../lib/searchStages.js'
 import { t, tp } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
@@ -128,6 +129,7 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
   const toggleWhole = () => setWhole((current) => { const next = !current; setPreference(WHOLE_KEY, next ? '1' : '0'); return next })
   const toggleSynonyms = () => setSynonyms((current) => { const next = !current; setPreference(SYNONYMS_KEY, next ? '1' : '0'); return next })
   const sequence = useRef(0)
+  const searchId = useRef(null)
   const input = useRef(null)
   // Pannello dei risultati: ancorato a destra, si allarga verso sinistra; la larghezza scelta si ricorda. Non può superare lo spazio della Home.
   const sectionRef = useRef(null)
@@ -206,6 +208,8 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
     if (memory.done && memory.done.query === text && memory.done.synonyms === synonyms && memory.done.whole === whole && memory.done.scope === scope) return undefined
     const mine = ++sequence.current
     const stale = () => mine !== sequence.current
+    // Ogni ricerca ha un suo id: se la domanda cambia, quella che stava lavorando si ferma (e i suoi stadi, arrivando, si ignorano comunque).
+    const startSearch = () => { electronAPI.cancelProjectSearch?.(searchId.current); searchId.current = crypto.randomUUID(); return searchId.current }
     const timer = setTimeout(async () => {
       memory.done = null
       memory.scrollTop = 0
@@ -218,7 +222,14 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
       const aiTerms = synonyms && aiOn && !whole ? expandQuery(text, researchModel, modelId) : null
       aiTerms?.catch(() => {})
       try {
-        const answer = await electronAPI.searchProjects({ query: text, maxResults: 20, local: synonyms, exact: whole, workspace: scope })
+        // I risultati arrivano mentre si trovano (prima le parole, poi un aggiornamento per ogni sinonimo locale), non tutti insieme alla fine.
+        // Uno stadio non toglie ciò che si sta già guardando (searchStages.js): la risposta finale, sì.
+        const answer = await electronAPI.searchProjects({ query: text, maxResults: 20, local: synonyms, exact: whole, workspace: scope, stream: startSearch() }, (partial) => {
+          if (stale()) return
+          setSearch((current) => (current.query === text && !keepsHits(current.results, partial.results)
+            ? current
+            : { state: 'loading', results: partial.results, partial: Boolean(partial.partial), weakCount: partial.weakCount || 0, error: '', query: text, localTerms: partial.localTerms || [] }))
+        })
         if (stale()) return
         setSearch({ state: 'done', results: answer.results, partial: Boolean(answer.partial), weakCount: answer.weakCount || 0, error: '', query: text, localTerms: answer.localTerms || [] })
       } catch (reason) {
@@ -233,7 +244,13 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
         if (stale()) return
         if (!terms.length) { setExpansion({ state: 'done', terms: [], error: '' }); finished(); return }
         setExpansion({ state: 'searching', terms, error: '' })
-        const answer = await electronAPI.searchProjects({ query: text, terms, maxResults: weakLoaded.current ? 30 : 20, includeWeak: weakLoaded.current, workspace: scope })
+        // Qui l'elenco mostrato è già quello della prima ricerca (con i sinonimi locali): gli stadi con meno passaggi (le sole parole, o solo alcuni sinonimi) non lo sostituiscono.
+        const answer = await electronAPI.searchProjects({ query: text, terms, maxResults: weakLoaded.current ? 30 : 20, includeWeak: weakLoaded.current, workspace: scope, stream: startSearch() }, (partial) => {
+          if (stale()) return
+          setSearch((current) => (current.query === text && !keepsHits(current.results, partial.results)
+            ? current
+            : { state: 'done', results: partial.results, partial: Boolean(partial.partial), weakCount: partial.weakCount || 0, error: '', query: text, localTerms: partial.localTerms || [] }))
+        })
         if (stale()) return
         setSearch({ state: 'done', results: answer.results, partial: Boolean(answer.partial), weakCount: answer.weakCount || 0, error: '', query: text, localTerms: answer.localTerms || [] })
         setExpansion({ state: 'done', terms, error: '' })
@@ -243,7 +260,7 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
         finished()
       }
     }, DEBOUNCE_MS)
-    return () => clearTimeout(timer)
+    return () => { clearTimeout(timer); if (searchId.current) electronAPI.cancelProjectSearch?.(searchId.current) }
   }, [query, synonyms, whole, aiOn, researchModel, modelId, rerun, scope])
 
   const nodes = graph?.nodes || []
