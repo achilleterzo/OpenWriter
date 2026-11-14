@@ -183,7 +183,10 @@ function LiveDocumentPane({ tab, project, active, onOpenFull, onFocusOwner, onEx
     content: tab.content,
     contentType: tab.contentType,
     editable: !tab.readOnly,
-    onUpdate: () => {
+    onUpdate: ({ transaction }) => {
+      // Una transazione che non cambia il testo (per esempio il `focus` all'apertura) non è una modifica: con quella il pulsante «Salva» si accendeva per un attimo,
+      // finché il controllo qui sotto non riportava la scheda a «non modificata».
+      if (!transaction.docChanged) return
       onDirty(tab.id)
       // Dopo una pausa si confronta con il testo salvato: se coincide (es. dopo "Annulla") la scheda torna "non modificata".
       clearTimeout(cleanTimer.current)
@@ -200,7 +203,8 @@ function LiveDocumentPane({ tab, project, active, onOpenFull, onFocusOwner, onEx
 
   // Un documento che un'altra finestra sta modificando è di sola lettura qui; quando si libera torna modificabile (e viceversa).
   useEffect(() => {
-    if (editor && !editor.isDestroyed) editor.setEditable(!tab.readOnly)
+    // Solo se cambia davvero, e senza emettere l'aggiornamento: con quello, aprire un documento lo segnava come modificato (il pulsante di salvataggio si accendeva per un attimo).
+    if (editor && !editor.isDestroyed && editor.isEditable === Boolean(tab.readOnly)) editor.setEditable(!tab.readOnly, false)
   }, [editor, tab.readOnly])
 
   // Quando la scheda non è modificata (appena aperta o salvata) quello che c'è nell'editor è il testo di riferimento.
