@@ -19,6 +19,7 @@ import { activeSkillIds, skillsPromptText } from '../lib/skills.js'
 import { abbreviateEmbeddedImages } from '../lib/embeddedImages.js'
 import { MAX_MODEL_USER_IMAGES, MAX_MODEL_USER_PDFS, MAX_PENDING_ATTACHMENTS, blobToBase64, canAttach, formatBytes, formatTokens, prepareImage, readAttachmentFile, totalUsage } from '../lib/chatAttachments.js'
 import { canResumeMessages, prepareResume, RESUME_NOTE } from '../lib/chatResume.js'
+import useSharedChatRun from '../hooks/useSharedChatRun.js'
 
 const api = window.electronAPI
 const ai = api?.ai
@@ -637,7 +638,11 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const pinnedIds = contextPins.pinnedIds
   const setIncludeDocument = (value) => onContextPinsChange({ ...contextPins, includeActive: value })
   const setPinnedIds = (value) => onContextPinsChange({ ...contextPins, pinnedIds: value })
-  const [busy, setBusy] = useState(false)
+  // `driving`: il ciclo dell'assistente gira in questa finestra. `busy` vale anche quando lo guida un'altra finestra sullo stesso progetto: la conversazione si vede
+  // al lavoro, e quello che si scrive va in coda (vedi chat-runs.cjs e useSharedChatRun.js).
+  const [driving, setBusy] = useState(false)
+  const remote = useSharedChatRun({ api, project, conversationId: current.id, driving, onChanged: (event) => onSharedChange(event), onCancel: (event) => onSharedCancel(event) })
+  const busy = driving || remote.running
   const dialogs = useDialogs()
   const [live, setLive] = useState(null)
   const [error, setError] = useState('')
@@ -789,7 +794,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     const last = current.messages[current.messages.length - 1]
     if (last?.role === 'user' && !last.queued) stickRef.current = true
     if (stickRef.current) scrollToEnd()
-  }, [current.messages, live, busy, pendingAsk, queued])
+  }, [current.messages, live, remote.live, busy, pendingAsk, queued])
 
   const providerLabel = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', openrouter: 'OpenRouter', codex: 'Codex', claude: 'Claude', gemini: 'Gemini' }[provider]
   const enabled = Boolean(settings?.aiEnabled)
@@ -818,6 +823,26 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
 
   const refreshList = async () => { if (project) setConversations(await api.listConversations()) }
 
+  // Un'altra finestra dello stesso progetto ha cambiato una conversazione: l'elenco si aggiorna e, se è quella mostrata, si rilegge. La coda arriva già intera.
+  // Chi sta guidando il lavoro ha già il suo stato: rilegge solo la coda.
+  function onSharedChange(event) {
+    refreshList()
+    if (event.conversationId !== current.id) return
+    if (event.kind === 'queue') {
+      queueRef.current = (event.queue || []).map((item) => ({ ...item }))
+      setQueued(queueRef.current)
+      return
+    }
+    if (event.kind === 'deleted') { setCurrent(blankConversation()); onConversationChange(null); return }
+    if (driving || editingIndex !== null) return
+    const id = current.id
+    api.getConversation(id).then((saved) => setCurrent((now) => (now.id === id ? saved : now))).catch(() => { /* resta quella che si vede */ })
+  }
+  // Un'altra finestra chiede di fermare il lavoro che guida questa.
+  function onSharedCancel(event) {
+    if (event.conversationId === runRef.current.conversationId) stop()
+  }
+
   // Salva (o crea) la conversazione su disco; un errore di scrittura non interrompe il dialogo.
   async function persist(conversation) {
     if (!project) return conversation
@@ -833,7 +858,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   }
 
   async function openConversation(id) {
-    if (busy) return
+    if (driving) return
     setError('')
     if (!id) { setCurrent(blankConversation()); onConversationChange(null); return }
     try {
@@ -924,6 +949,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = null
       setLive({ ...liveRef.current })
+      // Le altre finestre sullo stesso progetto vedono lo stesso testo (chat-runs.cjs).
+      if (runRef.current.conversationId) api.chatRuns?.live(runRef.current.conversationId, liveRef.current)
     })
   }
 
@@ -1013,7 +1040,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
 
   // Aprendo una conversazione si ritrova la sua coda salvata (task rimasti dopo un riavvio o un arresto improvviso). Un'iniezione mai consegnata vale ormai come un task.
   useEffect(() => {
-    if (busy) return
+    if (driving) return
     const saved = (current.queue || []).map((item) => ({ ...item, now: false }))
     queueRef.current = saved
     setQueued(saved)
@@ -1033,7 +1060,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   //    eseguendo uno strumento aspetta che finisca.
   // La coda sta anche nel file della conversazione (.ow/chat): dopo un arresto improvviso o un aggiornamento dell'app i task in attesa si ritrovano.
   function saveQueue() {
-    const id = busy ? runRef.current.conversationId : current.id
+    const id = driving ? runRef.current.conversationId : current.id
     if (project && id) api.setConversationQueue(id, queueRef.current).catch((reason) => console.error(reason))
   }
 
@@ -1097,6 +1124,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       pendingAskRef.current = null
       setPendingAsk(null)
       setLive(null)
+      if (runRef.current.conversationId) api.chatRuns?.end(runRef.current.conversationId)
       setBusy(false)
       if (queueRef.current.length) {
         const leftover = queueRef.current.map((item) => item.text).join('\n\n')
@@ -1146,6 +1174,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     setCurrent(conversation)
     conversation = await persist(conversation)
     runRef.current.conversationId = conversation.id
+    api.chatRuns?.start(conversation.id)
     setCurrent(conversation)
     // Chi ha inviato la richiesta (un agente esterno, via MCP) saprà in quale chat e a quale messaggio è finita.
     onStarted?.({ conversationId: conversation.id, messageIndex: conversation.messages.length - 1 })
@@ -1557,6 +1586,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   }
 
   function stop() {
+    // Il lavoro lo guida un'altra finestra: si chiede a lei di fermarsi.
+    if (!driving && remote.running) { api.chatRuns?.cancel(current.id).catch(() => {}); return }
     runRef.current.cancelled = true
     runRef.current.cancel?.()
     pendingAskRef.current?.({ answers: [], cancelled: true })
@@ -1566,7 +1597,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const attachable = conversations.filter((item) => item.id !== current.id && !current.contextFrom.includes(item.id))
   const titleOf = (id) => conversations.find((item) => item.id === id)?.title || t('Deleted conversation')
   const iconButton = 'rounded p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-50 disabled:opacity-40'
-  const liveShown = live ? visibleText(live.text) : null
+  const liveView = live || remote.live
+  const liveShown = liveView ? visibleText(liveView.text) : null
   const usage = totalUsage(current.messages)
   const attachTitle = capabilities?.vision && capabilities?.pdf ? t('Attach images or PDF files')
     : capabilities?.vision ? t('Attach images. {model} cannot read PDF files: to attach a PDF choose a model that supports them (e.g. Claude or Gemini)', { model: model || providerLabel })
@@ -1655,11 +1687,11 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
 
             {busy && (
               <div className="flex flex-col items-start gap-1.5">
-                {live?.thinking && <ThinkingBlock text={live.thinking} live />}
+                {liveView?.thinking && <ThinkingBlock text={liveView.thinking} live />}
                 {liveShown?.text && <div className="max-w-[92%] break-words rounded-xl bg-slate-800 px-3 py-2 text-sm leading-6 text-slate-200"><MarkdownMessage>{liveShown.text}</MarkdownMessage></div>}
                 <p className="flex items-center gap-1.5 text-xs text-slate-500">
                   <Loader2 size={13} className="animate-spin" />
-                  {liveShown?.calling ? t('Preparing a tool call…') : live?.status || (liveShown?.text ? t('Writing…') : t('Working…'))}
+                  {liveShown?.calling ? t('Preparing a tool call…') : liveView?.status || (liveShown?.text ? t('Writing…') : t('Working…'))}
                 </p>
               </div>
             )}

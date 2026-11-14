@@ -26,3 +26,14 @@ Errors are logged and surface as a generic status message.
 Source: [`src/hooks/useWorkspaces.js`](../../../src/hooks/useWorkspaces.js)
 
 The workspaces for the interface: `{ active, workspaces, temporary, activeWorkspace, refresh }`. `active` is the id of the active workspace (`all` = every project), `activeWorkspace` its definition (null for All), `temporary` the paths of the temporary members (projects opened by an agent). It also says whether the data have `loaded` (before that the list is empty, which does not mean there are no workspaces). It reads again whenever something changes (`workspaces:changed`), also when an agent changed it. Used by [WorkspaceSelector.jsx](components/pages/WorkspaceSelector.jsx.md), [ProjectsPanel.jsx](components/pages/ProjectsPanel.jsx.md) and [ProjectsHome.jsx](components/pages/ProjectsHome.jsx.md).
+
+## useSharedChatRun.js
+
+Source: [`src/hooks/useSharedChatRun.js`](../../../src/hooks/useSharedChatRun.js)
+
+The work of the assistant on a conversation, seen from a window that is not driving it. `useSharedChatRun({ api, project, conversationId, driving, onChanged, onCancel })` returns `{ running, live }`: `running` is true only while another window drives the conversation shown here, `live` is the text so far (`{ text, thinking, status }`) or `null`.
+
+- When the conversation (or the project) changes it asks for the snapshot (`chatRuns.list`), so a window that opens late finds the text already written; then it follows `chatRuns.onState` and `chatRuns.onLive`.
+- `onChanged(event)` is called for every `chat:changed` from the other windows (a conversation saved, its queue changed, a conversation deleted) and when a run ends, so the panel can reload what is on disk.
+- `onCancel(event)` is called, on the driving window only, when another window asks to stop the work.
+
