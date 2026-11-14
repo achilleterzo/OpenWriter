@@ -155,11 +155,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createConversation: (conversation) => ipcRenderer.invoke('chat:create', conversation),
   saveConversation: (conversation) => ipcRenderer.invoke('chat:save', conversation),
   setConversationQueue: (id, queue) => ipcRenderer.invoke('chat:set-queue', { id, queue }),
+  // Consuma voci della coda (per inviarle): le ottiene una finestra sola. → le voci prese ({ id, text, now }).
+  takeQueueItems: (id, ids) => ipcRenderer.invoke('chat:take-queue', { id, ids }),
   deleteConversation: (id) => ipcRenderer.invoke('chat:delete', id),
   // Il lavoro dell'assistente su una conversazione, condiviso tra le finestre dello stesso progetto (chat-runs.cjs). La finestra che lo guida usa start / live / end;
   // le altre ascoltano lo stato (`onState`), il testo che arriva (`onLive`) e le modifiche salvate (`onChanged`), e possono chiedere di fermarlo (`cancel`).
   chatRuns: {
-    start: (id) => ipcRenderer.send('chat:run-start', id),
+    // → true se questa finestra guida la conversazione; false se un'altra la sta già guidando (allora non si avvia nulla).
+    start: (id) => ipcRenderer.invoke('chat:run-start', id),
     live: (id, live) => ipcRenderer.send('chat:run-live', id, live),
     end: (id) => ipcRenderer.send('chat:run-end', id),
     list: () => ipcRenderer.invoke('chat:runs'),
@@ -273,7 +276,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getMainProject: () => ipcRenderer.invoke('workspace:get-main'),
   listProjects: () => ipcRenderer.invoke('workspace:list-projects'),
   getProjectGraph: (options) => ipcRenderer.invoke('projects:graph', options),
-  searchProjects: (args) => ipcRenderer.invoke('projects:search', args),
+  // La ricerca della Home. Con `onPartial(risposta)` (e un `args.stream`, un id scelto da chi chiede) i risultati arrivano a stadi mentre si trovano: prima le parole cercate, poi
+  // un aggiornamento per ogni sinonimo; la risposta finale è la stessa di sempre. `cancelProjectSearch(id)` ferma il lavoro che resta.
+  searchProjects: (args, onPartial) => {
+    if (typeof onPartial !== 'function' || typeof args?.stream !== 'string') return ipcRenderer.invoke('projects:search', args)
+    const listener = (_event, payload) => { if (payload.id === args.stream) onPartial(payload.partial) }
+    ipcRenderer.on('projects:search-partial', listener)
+    return ipcRenderer.invoke('projects:search', args).finally(() => ipcRenderer.removeListener('projects:search-partial', listener))
+  },
+  cancelProjectSearch: (id) => ipcRenderer.send('projects:search-cancel', id),
   openProject: (directory, options) => ipcRenderer.invoke('workspace:open-project', directory, options),
   createProject: (name) => ipcRenderer.invoke('workspace:create-project', name),
   removeProject: (directory) => ipcRenderer.invoke('workspace:remove-project', directory),

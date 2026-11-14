@@ -1479,15 +1479,17 @@ async function localSynonyms(query) {
   } catch { return [] }
 }
 
-async function searchProjectsForHome(args = {}) {
+// `onPartial(risposta)`: la ricerca arriva a stadi, con la stessa forma della risposta finale: prima la ricerca principale (senza aspettare i sinonimi), poi un aggiornamento
+// per ogni sinonimo la cui ricerca finisce, con i risultati uniti fin lì. `cancelled()`: chi ha chiesto non la vuole più (ha cambiato la domanda): non si parte con altro lavoro.
+async function searchProjectsForHome(args = {}, { onPartial = null, cancelled = () => false } = {}) {
   const maxResults = Math.min(30, Math.max(1, Number(args.maxResults) || 20))
   const query = String(args.query || '').trim()
   // `terms`: sinonimi e termini affini chiesti dall'interfaccia al modello linguistico; ognuno si cerca a parte (parole e significato) e i risultati si uniscono.
   // Ai sinonimi dell'IA (se ci sono) si aggiungono sempre quelli locali: le parole dei testi più vicine per significato a quelle cercate (`local: false` li esclude).
   // `exact` («Parole intere»): la frase scritta, parole intere, senza sinonimi né significato.
   const exact = args.exact === true
-  const localTerms = args.local === false || exact ? [] : await localSynonyms(query)
-  const terms = exact ? [] : cleanTerms([...(Array.isArray(args.terms) ? args.terms : []), ...localTerms], query, 12)
+  // I sinonimi locali (vettori) partono insieme alla ricerca principale invece che prima: la ricerca per parole non deve aspettarli.
+  const localPromise = args.local === false || exact ? Promise.resolve([]) : localSynonyms(query)
   // `includeWeak`: anche i passaggi che il filtro di pertinenza scarta ("meno pertinenti"), con `weak: true`, ordinati per pertinenza.
   const includeWeak = args.includeWeak === true
   // `workspace`: dove cerca la Home: non indicato = lo spazio di lavoro attivo; 'all' = tutti i progetti; un id = quello spazio (lo sceglie l'utente accanto al campo di ricerca).
@@ -1516,20 +1518,44 @@ async function searchProjectsForHome(args = {}) {
   const exactly = (entries) => entries.map((entry) => (entry.relevance !== undefined && entry.via !== 'meaning' && found.mode !== 'or' && !found.partial ? { ...entry, relevance: Math.max(entry.relevance, 0.9) } : entry))
   let results = exactly(shape(found.results))
   let weakCount = found.weakCount || 0
-  if (terms.length) {
-    const extra = await Promise.all(terms.map(async (term) => {
+  // `partial`: nessun passaggio contiene tutte le parole (si mostrano quelli che ne hanno qualcuna).
+  const answer = (list, terms = [], localTerms = []) => ({ query, terms, localTerms: terms.filter((term) => localTerms.includes(term)), mode: found.mode, partial: found.mode === 'or' || Boolean(found.partial), weakCount, files, results: list })
+  // Primo stadio: le parole cercate, subito.
+  if (onPartial && !cancelled()) onPartial(answer(results))
+  const localTerms = await localPromise
+  const terms = exact ? [] : cleanTerms([...(Array.isArray(args.terms) ? args.terms : []), ...localTerms], query, 12)
+  if (terms.length && !cancelled()) {
+    // Una ricerca per sinonimo, tutte insieme: a ogni risposta si uniscono quelle arrivate (nell'ordine dei termini, come nella risposta finale) e si manda l'aggiornamento.
+    const extra = new Array(terms.length)
+    const merged = () => mergeSearches([{ term: query, original: true, results }, ...extra.filter(Boolean)], { limit: maxResults + 10 })
+    await Promise.all(terms.map(async (term, index) => {
       try {
         const { found: termFound } = await runKnowledgeSearch({ query: term, maxResults: 10, includeWeak, workspace }, { home: true })
         weakCount += termFound.weakCount || 0
-        return { term, original: false, results: shape(termFound.results, term) }
-      } catch { return { term, original: false, results: [] } }
+        extra[index] = { term, original: false, results: shape(termFound.results, term) }
+      } catch { extra[index] = { term, original: false, results: [] } }
+      if (onPartial && !cancelled()) onPartial(answer(merged(), terms, localTerms))
     }))
-    results = mergeSearches([{ term: query, original: true, results }, ...extra], { limit: maxResults + 10 })
+    results = merged()
   }
-  // `partial`: nessun passaggio contiene tutte le parole (si mostrano quelli che ne hanno qualcuna).
-  return { query, terms, localTerms: terms.filter((term) => localTerms.includes(term)), mode: found.mode, partial: found.mode === 'or' || Boolean(found.partial), weakCount, files, results }
+  return answer(results, terms, localTerms)
 }
-ipcMain.handle('projects:search', (_event, args) => searchProjectsForHome(args))
+// Con `stream` (un id scelto da chi chiede) la ricerca manda gli stadi con `projects:search-partial`; `projects:search-cancel` la ferma. La risposta finale è sempre la stessa.
+const activeSearches = new Map() // id → { cancelled }
+ipcMain.handle('projects:search', async (event, args = {}) => {
+  const id = typeof args.stream === 'string' ? args.stream.slice(0, 80) : ''
+  const state = { cancelled: false }
+  if (id) activeSearches.set(id, state)
+  try {
+    return await searchProjectsForHome(args, {
+      onPartial: id ? (partial) => { events.toContents(event.sender, 'projects:search-partial', { id, partial }) } : null,
+      cancelled: () => state.cancelled,
+    })
+  } finally {
+    if (id) activeSearches.delete(id)
+  }
+})
+ipcMain.on('projects:search-cancel', (_event, id) => { const state = activeSearches.get(String(id || '')); if (state) state.cancelled = true })
 
 // Spazi di lavoro (workspace): le definizioni, quello attivo e i membri temporanei. Ogni modifica avvisa l'interfaccia (`workspaces:changed`).
 function notifyWorkspaces() {
@@ -1918,10 +1944,33 @@ ipcMain.handle('chat:get', (_event, id) => chatStore.get(id))
 const announceChat = (event, id, kind, extra = {}) => chatRuns.changed({ sender: event.sender, project: windowContext.project, conversationId: String(id || ''), kind, ...extra })
 ipcMain.handle('chat:create', async (event, conversation) => { const saved = await chatStore.create(conversation || {}); announceChat(event, saved?.id, 'content'); return saved })
 ipcMain.handle('chat:save', async (event, conversation) => { const saved = await chatStore.save(conversation); announceChat(event, saved?.id || conversation?.id, 'content'); return saved })
-ipcMain.handle('chat:set-queue', async (event, { id, queue } = {}) => { const saved = await chatStore.setQueue(String(id || ''), queue); announceChat(event, id, 'queue', { queue: saved }); return saved })
-ipcMain.handle('chat:delete', async (event, id) => { const result = await chatStore.remove(id); announceChat(event, id, 'deleted'); return result })
+// La coda si riscrive per intero, e chi ha una copia vecchia non deve far riapparire una voce che un'altra finestra ha già consumato: si scartano quelle già prese.
+ipcMain.handle('chat:set-queue', async (event, { id, queue } = {}) => {
+  const conversationId = String(id || '')
+  const project = windowContext.project
+  const current = (Array.isArray(queue) ? queue : []).filter((item) => !chatRuns.wasConsumed({ project, conversationId, itemId: String(item?.id || '') }))
+  const saved = await chatStore.setQueue(conversationId, current)
+  announceChat(event, id, 'queue', { queue: saved })
+  return saved
+})
+// Consumare voci della coda (per inviarle): le dà a chi le chiede per primo, a nessun altro. → le voci davvero prese. Due finestre che spediscono la stessa voce nello
+// stesso istante (una perché il lavoro è finito e parte da sola, l'altra con «Invia ora») la manderebbero due volte.
+ipcMain.handle('chat:take-queue', async (event, { id, ids } = {}) => {
+  const conversationId = String(id || '')
+  const project = windowContext.project
+  let queue = []
+  try { queue = (await chatStore.get(conversationId)).queue || [] } catch { return [] }
+  const wanted = new Set((Array.isArray(ids) ? ids : []).map(String))
+  const taken = new Set(chatRuns.consume({ project, conversationId, ids: queue.filter((item) => wanted.has(item.id)).map((item) => item.id) }))
+  if (!taken.size) return []
+  const saved = await chatStore.setQueue(conversationId, queue.filter((item) => !taken.has(item.id)))
+  announceChat(event, conversationId, 'queue', { queue: saved })
+  return queue.filter((item) => taken.has(item.id))
+})
+ipcMain.handle('chat:delete', async (event, id) => { const result = await chatStore.remove(id); chatRuns.forget({ project: windowContext.project, conversationId: String(id || '') }); announceChat(event, id, 'deleted'); return result })
 // Il lavoro dell'assistente su una conversazione: la finestra che lo guida lo annuncia, manda il testo che arriva e lo chiude; le altre lo seguono (chat-runs.cjs).
-ipcMain.on('chat:run-start', (event, id) => { chatRuns.start({ sender: event.sender, project: windowContext.project, conversationId: String(id || '') }) })
+// Risponde se la conversazione è stata data a questa finestra: chi la prenota per primo la guida, l'altro riceve `false` e non deve avviare nulla.
+ipcMain.handle('chat:run-start', (event, id) => chatRuns.start({ sender: event.sender, project: windowContext.project, conversationId: String(id || '') }))
 ipcMain.on('chat:run-live', (event, id, live) => { chatRuns.live({ sender: event.sender, project: windowContext.project, conversationId: String(id || ''), live }) })
 ipcMain.on('chat:run-end', (event, id) => { chatRuns.end({ sender: event.sender, project: windowContext.project, conversationId: String(id || '') }) })
 ipcMain.handle('chat:runs', () => chatRuns.list(windowContext.project))

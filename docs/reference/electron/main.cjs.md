@@ -73,3 +73,8 @@ Rebuilding the index of a project (`project:knowledge-rebuild`) also reconfigure
 `projects:graph` also returns the `workspace` (id) of its data, so the interface keeps one arrangement of the bubbles for each workspace.
 
 `projects:search` takes `workspace`: not given = the active workspace, `all` = every project, an id = that workspace (what the select next to the Home search sends); it applies to the first search and to the searches of the synonyms.
+
+**The Home search arrives in stages.** `searchProjectsForHome(args, { onPartial, cancelled })` no longer waits for everything before answering. The local synonyms start together with the main search instead of before it; the first stage is the main search alone (the words typed), then one update for each synonym whose search finishes, merged with the ones already in (in the order of the terms, so the final answer is the same as before). With `args.stream` (an id chosen by the caller) `projects:search` sends each stage to the asking page as `projects:search-partial` `{ id, partial }`, with the shape of the final answer; `projects:search-cancel` marks the search as cancelled and no further work is started. Without `stream` it answers once, as it always did.
+
+**A queue item is sent once.** `chat:take-queue` hands the queue items of a conversation to whichever window asks first and to no other (it reads the saved queue, takes the requested ids that were not consumed, saves the rest and tells the other windows). `chat:set-queue` still rewrites the whole queue, but it drops the items already consumed, so a window with an old copy cannot bring one back and have it sent twice.
+
