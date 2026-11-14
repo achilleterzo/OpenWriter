@@ -164,10 +164,10 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
         if (animate) {
           wake(6000)
         } else {
-          const fixed = sim.nodes.filter((node) => !arrivals.includes(node) && !node.pinned)
-          for (const node of fixed) node.pinned = true
+          const fixed = sim.nodes.filter((node) => !arrivals.includes(node) && !node.pinned && !node.held)
+          for (const node of fixed) node.held = true
           sim.settle(420, size)
-          for (const node of fixed) node.pinned = false
+          for (const node of fixed) node.held = false
           sim.freeze(true)
           sim.freeze(false)
           remember()
@@ -193,19 +193,20 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
       const moves = []
       for (const node of sim.nodes) {
         const at = saved[node.id]
+        // `pinned` è dell'utente che sta trascinando la bolla; `held` è delle animazioni (una nuova lettura le riprende da dove sono).
         if (!at || node.parent || node.pinned) continue
         if (Math.hypot(node.x - at.x, node.y - at.y) < 1 && Math.abs((node.z || 0) - (at.z || 0)) < 1) continue
         moves.push({ node, fromX: node.x, fromY: node.y, fromZ: node.z || 0, toX: at.x, toY: at.y, toZ: at.z || 0 })
       }
       if (!moves.length) return
       // Una nuova lettura mentre la precedente scorre riparte da dove le bolle si trovano.
-      if (glide) { cancelAnimationFrame(glide.frame); for (const move of glide.moves) move.node.pinned = false }
+      if (glide) { cancelAnimationFrame(glide.frame); for (const move of glide.moves) move.node.held = false }
       if (reduced) { for (const move of moves) { move.node.x = move.toX; move.node.y = move.toY; move.node.z = move.toZ; move.node.vx = 0; move.node.vy = 0; move.node.vz = 0 } wake(300); return }
       // Le bolle scivolano verso il loro posto con un'andatura dolce (interpolazione con attacco e arrivo morbidi), non saltano: durante il tragitto sono fissate,
       // così la simulazione non le tira altrove.
       const DURATION = 700
       const started = performance.now()
-      for (const move of moves) move.node.pinned = true
+      for (const move of moves) move.node.held = true
       wake(DURATION + 400)
       const state = { moves, frame: 0 }
       glide = state
@@ -213,13 +214,15 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
         const progress = Math.min(1, (now - started) / DURATION)
         const eased = progress * progress * (3 - 2 * progress)
         for (const move of moves) {
+          // Se l'utente ha preso la bolla durante il tragitto, il gesto vince: l'animazione non la sposta più.
+          if (move.node.pinned) continue
           move.node.x = move.fromX + (move.toX - move.fromX) * eased
           move.node.y = move.fromY + (move.toY - move.fromY) * eased
           move.node.z = move.fromZ + (move.toZ - move.fromZ) * eased
           move.node.vx = 0; move.node.vy = 0; move.node.vz = 0
         }
         if (progress < 1) { state.frame = requestAnimationFrame(tick); return }
-        for (const move of moves) move.node.pinned = false
+        for (const move of moves) move.node.held = false
         if (glide === state) glide = null
       }
       state.frame = requestAnimationFrame(tick)

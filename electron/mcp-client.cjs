@@ -90,15 +90,25 @@ function createMcpClient({ log = () => {}, loadSdkImpl = loadSdk } = {}) {
     return connection
   }
 
-  /** Il collegamento al server (lo avvia se serve). Due richieste insieme aspettano lo stesso avvio. */
+  /**
+   * Il collegamento al server (lo avvia se serve). Due richieste con la stessa configurazione, insieme, aspettano lo stesso avvio.
+   * Un avvio in corso con una configurazione vecchia non si presta a chi ne ha una nuova: lo si lascia finire, lo si chiude e se ne apre un altro.
+   */
   async function connect(entry) {
-    const existing = connections.get(entry.key)
-    if (existing && existing.hash === entry.hash) return existing
-    if (existing) await closeConnection(entry.key)
-    if (!pending.has(entry.key)) {
-      pending.set(entry.key, open(entry).finally(() => pending.delete(entry.key)))
+    for (;;) {
+      const existing = connections.get(entry.key)
+      if (existing && existing.hash === entry.hash) return existing
+      const inFlight = pending.get(entry.key)
+      if (inFlight) {
+        if (inFlight.hash === entry.hash) return inFlight.promise
+        await inFlight.promise.catch(() => {})
+        continue
+      }
+      if (existing) { await closeConnection(entry.key); continue }
+      const promise = open(entry).finally(() => { if (pending.get(entry.key)?.promise === promise) pending.delete(entry.key) })
+      pending.set(entry.key, { hash: entry.hash, promise })
+      return promise
     }
-    return pending.get(entry.key)
   }
 
   return {

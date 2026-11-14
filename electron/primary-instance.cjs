@@ -1,5 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
+const { withFileLock, isAlive } = require('./file-lock.cjs')
 
 /**
  * Più finestre dell'app (più processi, vedi «Apri in una nuova finestra») condividono tutto, tranne ciò che non può esistere due volte: il ponte e il server HTTP
@@ -10,35 +11,45 @@ const path = require('node:path')
  *
  * `onAcquire()` parte a ogni passaggio di consegne (anche al primo avvio); `onRelease()` quando si perde o si lascia il ruolo.
  */
-function isAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false
-  try { process.kill(pid, 0); return true } catch (error) { return error.code === 'EPERM' }
-}
-
 function createPrimaryLock({ file, onAcquire = () => {}, onRelease = () => {}, intervalMs = 2500, pid = process.pid, alive = isAlive }) {
   let primary = false
   let timer = null
 
   const readOwner = () => { try { return JSON.parse(fs.readFileSync(file, 'utf8')).pid } catch { return null } }
 
-  // Il blocco si prende creando il file in modo esclusivo: due istanze che partono insieme non lo ottengono entrambe.
+  // Il file di blocco compare già completo: si scrive in un file a parte e lo si collega al nome del blocco, un passo solo che riesce a una sola istanza.
+  // Con una creazione seguita dalla scrittura, un'altra istanza potrebbe leggere il file ancora vuoto, crederlo abbandonato e prendersi il ruolo.
+  function publish() {
+    const staging = `${file}.${pid}.tmp`
+    try {
+      fs.writeFileSync(staging, JSON.stringify({ pid, startedAt: new Date().toISOString() }))
+      try { fs.linkSync(staging, file); return true } catch (error) {
+        if (error.code === 'EEXIST') return false
+        // Un file system senza collegamenti fisici: la creazione esclusiva resta la garanzia, con la scrittura subito dopo.
+        const descriptor = fs.openSync(file, 'wx')
+        try { fs.writeSync(descriptor, fs.readFileSync(staging)) } finally { fs.closeSync(descriptor) }
+        return true
+      }
+    } catch {
+      return false
+    } finally {
+      try { fs.rmSync(staging, { force: true }) } catch { /* già tolto */ }
+    }
+  }
+
   function tryAcquire() {
     fs.mkdirSync(path.dirname(file), { recursive: true })
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const descriptor = fs.openSync(file, 'wx')
-        try { fs.writeSync(descriptor, JSON.stringify({ pid, startedAt: new Date().toISOString() })) } finally { fs.closeSync(descriptor) }
-        return true
-      } catch (error) {
-        if (error.code !== 'EEXIST') return false
-        const owner = readOwner()
-        if (owner === pid) return true
-        // Un proprietario vivo lo tiene; un file illeggibile o con un pid che non esiste più è abbandonato: si toglie e si riprova.
-        if (owner !== null && alive(owner)) return false
-        try { fs.rmSync(file, { force: true }) } catch { return false }
-      }
-    }
-    return false
+    if (publish()) return true
+    const owner = readOwner()
+    if (owner === pid) return true
+    // Un proprietario vivo lo tiene.
+    if (owner !== null && alive(owner)) return false
+    // Abbandonato (pid inesistente o file rovinato): lo si toglie sotto un blocco di recupero e solo se è ancora quello letto, altrimenti due istanze che
+    // lo trovano abbandonato insieme se lo toglierebbero a vicenda, e la seconda butterebbe via il blocco appena preso dalla prima.
+    withFileLock(`${file}.recovery`, () => {
+      if (readOwner() === owner) { try { fs.rmSync(file, { force: true }) } catch { /* lo ha tolto un altro */ } }
+    }, { pid, alive })
+    return publish()
   }
 
   function check() {

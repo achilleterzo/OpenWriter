@@ -9,21 +9,60 @@ import { t } from '../i18n/index.js'
  * `sections`: [{ id, label, icon }]; `eyebrow`: la riga sopra il titolo (con l'icona); `subtitle`: sotto il titolo, per esempio il nome del progetto;
  * `layer`: la classe z della finestra (quella del progetto sta sopra le altre schermate); `children`: il contenuto della sezione scelta.
  */
+// Le impostazioni aperte, dalla più vecchia alla più recente: Esc e Tab riguardano solo l'ultima.
+const shellStack = []
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 export default function SettingsShell({ sections, section, onSection, onClose, eyebrow, eyebrowIcon: EyebrowIcon = Settings2, subtitle = '', layer = 'z-20', backLabel = t('Back to the document'), children }) {
   const current = sections.find((item) => item.id === section) || sections[0]
   const pressedOnBackdrop = useRef(false)
   // L'elemento a destra dell'intestazione dove le sezioni portano le loro azioni; in stato perché il contesto si aggiorni quando esiste.
   const [actionsSlot, setActionsSlot] = useState(null)
 
+  const dialog = useRef(null)
+
   useEffect(() => {
-    // Con una finestra annidata aperta (per esempio la scelta del modello) Esc chiude quella, non questa.
+    const shell = dialog.current
+    shellStack.push(shell)
+    const before = document.activeElement
+    if (shell && !shell.contains(document.activeElement)) shell.focus({ preventScroll: true })
+
+    // Esc chiude una sola finestra: la più in alto. Con un'altra finestra modale aperta sopra (per esempio la scelta del modello) tocca a lei, e con due
+    // impostazioni una sull'altra (quelle del progetto sopra le generali) solo all'ultima aperta.
     const closeOnEscape = (event) => {
-      if (event.key !== 'Escape' || document.querySelector('[data-nested-dialog]')) return
+      if (event.key !== 'Escape' || shellStack[shellStack.length - 1] !== shell) return
+      const above = [...document.querySelectorAll('[aria-modal="true"]')].some((other) => !other.hasAttribute('data-settings-shell'))
+      if (above) return
       event.stopPropagation()
       onClose()
     }
+
+    // Il fuoco resta nella finestra: Tab dall'ultimo elemento torna al primo, Maiusc+Tab dal primo all'ultimo; con il fuoco finito fuori, rientra.
+    // Una finestra modale annidata gestisce il proprio Tab.
+    const keepFocus = (event) => {
+      if (event.key !== 'Tab' || shellStack[shellStack.length - 1] !== shell) return
+      const active = document.activeElement
+      const inner = active?.closest?.('[aria-modal="true"]')
+      if (inner && inner !== shell) return
+      const targets = [...shell.querySelectorAll(FOCUSABLE)].filter((item) => item.offsetParent !== null || item === active)
+      if (!targets.length) { event.preventDefault(); shell.focus(); return }
+      const first = targets[0]
+      const last = targets[targets.length - 1]
+      if (!shell.contains(active) || active === shell) { event.preventDefault(); (event.shiftKey ? last : first).focus() }
+      else if (event.shiftKey && active === first) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && active === last) { event.preventDefault(); first.focus() }
+    }
+
     window.addEventListener('keydown', closeOnEscape, true)
-    return () => window.removeEventListener('keydown', closeOnEscape, true)
+    window.addEventListener('keydown', keepFocus, true)
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape, true)
+      window.removeEventListener('keydown', keepFocus, true)
+      const index = shellStack.lastIndexOf(shell)
+      if (index >= 0) shellStack.splice(index, 1)
+      // Alla chiusura il fuoco torna dove era: chi usa la tastiera riprende da dove aveva aperto le impostazioni.
+      if (before?.isConnected && typeof before.focus === 'function') before.focus({ preventScroll: true })
+    }
   }, [onClose])
 
   return (
@@ -34,7 +73,7 @@ export default function SettingsShell({ sections, section, onSection, onClose, e
         onMouseDown={(event) => { pressedOnBackdrop.current = event.target === event.currentTarget }}
         onClick={(event) => { if (pressedOnBackdrop.current && event.target === event.currentTarget) onClose() }}
       >
-        <section role="dialog" aria-modal="true" aria-labelledby="settings-title" className="flex h-[min(900px,calc(100vh-2rem))] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
+        <section ref={dialog} tabIndex={-1} data-settings-shell role="dialog" aria-modal="true" aria-labelledby="settings-title" className="flex outline-none h-[min(900px,calc(100vh-2rem))] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
           <header className="flex items-center gap-4 border-b border-slate-800 px-6 py-5">
             <button type="button" aria-label={backLabel} title={backLabel} className="rounded-md p-2 text-slate-400 transition hover:bg-slate-800 hover:text-slate-50" onClick={onClose}>
               <ArrowLeft size={19} />

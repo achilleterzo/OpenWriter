@@ -51,6 +51,7 @@ const { STOPWORDS } = require('./knowledge-index.cjs')
 const { affinityEdges, uniformEdges, collectVectors, parentProjects } = require('./project-graph.cjs')
 const { findOwners } = require('./project-owner.cjs')
 const { createPrimaryLock } = require('./primary-instance.cjs')
+const { withFileLock } = require('./file-lock.cjs')
 const { createInstanceRegistry } = require('./instance-registry.cjs')
 const { mergeSearches, cleanTerms, markTerms } = require('./search-merge.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
@@ -498,11 +499,12 @@ async function loadProject() {
     }
   } catch {}
   // Il progetto dell'ultima volta (o quello indicato) è già aperto in un'altra finestra: questa parte dalla Home, senza progetto.
-  if (projectPath && instances.holder(projectPath)) {
+  // Controllo e registrazione sono un passo solo: due finestre che partono insieme sullo stesso progetto non lo ottengono entrambe.
+  if (projectPath && instances.claim(projectPath)) {
     console.error(t('The project "{name}" is already open in another OpenWriter window', { name: path.basename(projectPath) }))
     projectPath = null
   }
-  instances.register(projectPath)
+  if (!projectPath) instances.register(null)
   initializeProject()
   // Il progetto di un avvio precedente entra nell'elenco anche se è stato aperto prima che l'elenco esistesse.
   if (projectPath && !projectsStore.list().some((item) => samePath(item.path, projectPath))) projectsStore.touch(projectPath)
@@ -522,14 +524,13 @@ function initializeProject() {
 // un agente che apre un progetto non lo fa entrare: diventa un membro temporaneo (vedi mcpRequests.js).
 async function setProject(directory, { join = true } = {}) {
   // Già aperto in un'altra finestra: si porta quella in primo piano, qui non si apre.
-  const holder = instances.holder(directory)
+  const holder = instances.claim(directory)
   if (holder) {
     instances.requestFocus(holder.pid)
     throw new Error(t('This project is already open in another OpenWriter window, which has been brought to the front'))
   }
   const known = projectsStore.list().some((item) => samePath(item.path, directory))
   projectPath = directory
-  instances.register(projectPath)
   initializeProject()
   // `workspace.json` porta anche lo spazio di lavoro attivo: si scrive unendo i campi, altrimenti ogni apertura di un progetto lo cancellerebbe.
   workspacesStore.setLastProject(projectPath)
@@ -2553,7 +2554,10 @@ async function openProjectInNewWindow(directory) {
 const layoutFile = () => path.join(app.getPath('userData'), 'graph-layout.json')
 const LAYOUT_KEY_PATTERN = /^openwriter\.graphLayout\.v1(:[\w.-]+)?$/
 const readLayoutStore = () => { try { const parsed = JSON.parse(fsSync.readFileSync(layoutFile(), 'utf8')); return parsed && typeof parsed === 'object' ? parsed : {} } catch { return {} } }
-const changeLayoutStore = (change) => { try { const store = readLayoutStore(); change(store); writeFileAtomic(layoutFile(), JSON.stringify(store)) } catch (error) { console.error('Disposizione del grafo non salvata:', error.message) } }
+// Leggere, cambiare e riscrivere è un passo solo tra tutti i processi: senza il blocco due finestre che salvano insieme si sovrascrivono a vicenda.
+const changeLayoutStore = (change) => {
+  try { withFileLock(`${layoutFile()}.lock`, () => { const store = readLayoutStore(); change(store); writeFileAtomic(layoutFile(), JSON.stringify(store)) }) } catch (error) { console.error('Disposizione del grafo non salvata:', error.message) }
+}
 ipcMain.on('layout:get', (event, key) => { event.returnValue = LAYOUT_KEY_PATTERN.test(String(key)) ? (readLayoutStore()[String(key)] ?? null) : null })
 ipcMain.on('layout:set', (event, key, value) => { if (LAYOUT_KEY_PATTERN.test(String(key))) changeLayoutStore((store) => { store[String(key)] = String(value).slice(0, 2_000_000) }); event.returnValue = true })
 ipcMain.on('layout:remove', (event, key) => { if (LAYOUT_KEY_PATTERN.test(String(key))) changeLayoutStore((store) => { delete store[String(key)] }); event.returnValue = true })

@@ -1,6 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
-const { isAlive } = require('./primary-instance.cjs')
+const { withFileLock, isAlive } = require('./file-lock.cjs')
 
 /**
  * Quale progetto ha aperto ogni finestra (ogni istanza dell'app): un file `<pid>.json` per istanza nella cartella `instances` dei dati dell'app.
@@ -42,7 +42,24 @@ function createInstanceRegistry({ directory, samePath, pid = process.pid, alive 
     } catch (error) { console.error('Istanza non registrata:', error.message) }
   }
 
-  const holder = (project) => (project ? others().find((entry) => entry.project && samePath(entry.project, project)) || null : null)
+  // Lo stesso progetto raggiunto da un collegamento o con un'altra grafia è lo stesso progetto: si confronta il percorso reale, se esiste.
+  const canonical = (project) => { try { return fs.realpathSync.native(project) } catch { return path.resolve(String(project)) } }
+  const holder = (project) => {
+    if (!project) return null
+    const wanted = canonical(project)
+    return others().find((entry) => entry.project && samePath(canonical(entry.project), wanted)) || null
+  }
+
+  // Controllo e registrazione in un solo passo, sotto un blocco: due finestre che aprono lo stesso progetto insieme non lo ottengono entrambe.
+  // Restituisce chi lo teneva già (e allora non si registra nulla), altrimenti null con il progetto registrato per questa istanza.
+  function claim(project) {
+    try { fs.mkdirSync(directory, { recursive: true }) } catch { /* register lo segnalerà */ }
+    return withFileLock(path.join(directory, 'registry.lock'), () => {
+      const taken = holder(project)
+      if (!taken) register(project)
+      return taken
+    }, { pid, alive })
+  }
 
   function requestFocus(target) {
     try { fs.mkdirSync(directory, { recursive: true }); fs.writeFileSync(focusFile(target), String(Date.now())) } catch { /* senza richiesta la finestra resta dov'è */ }
@@ -64,7 +81,7 @@ function createInstanceRegistry({ directory, samePath, pid = process.pid, alive 
     try { fs.rmSync(own(), { force: true }); fs.rmSync(focusFile(pid), { force: true }) } catch { /* già tolto */ }
   }
 
-  return { others, register, holder, requestFocus, watchFocus, unregister }
+  return { others, register, holder, claim, requestFocus, watchFocus, unregister }
 }
 
 module.exports = { createInstanceRegistry }
