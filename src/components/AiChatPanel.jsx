@@ -671,6 +671,22 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const queueRef = useRef([])
   const [queued, setQueued] = useState([])
   const [autoSend, setAutoSend] = useState(null)
+  // Il vassoio della coda (in basso, sopra il campo di scrittura) e la sua altezza: l'elenco la riserva come spazio sotto di sé.
+  const dockRef = useRef(null)
+  const [dockHeight, setDockHeight] = useState(0)
+  const hasQueue = queued.length > 0
+  useEffect(() => {
+    const dock = dockRef.current
+    if (!dock) { setDockHeight(0); return undefined }
+    const measure = () => setDockHeight(dock.offsetHeight)
+    measure()
+    if (typeof ResizeObserver !== 'function') return undefined
+    const observer = new ResizeObserver(measure)
+    observer.observe(dock)
+    return () => observer.disconnect()
+  }, [hasQueue])
+  // Cambia lo spazio riservato: chi segue il fondo resta in fondo.
+  useEffect(() => { if (stickRef.current) scrollToEnd() }, [dockHeight])
   const nativeUnsupported = useRef(false)
   // File allegati al prossimo messaggio e token consumati dalle richieste non ancora attribuite a una risposta.
   const [pendingFiles, setPendingFiles] = useState([])
@@ -1084,8 +1100,12 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     if (!item) return
     // Assistente libero (per esempio task ritrovati dopo un riavvio): si invia subito, come un messaggio normale.
     if (!busy) {
-      unqueue(id)
-      send(item.text)
+      // La voce la consuma una finestra sola: se nel frattempo l'ha presa un'altra (la finestra che guidava, che riparte da sola con la coda), qui non si invia.
+      takeQueued(current.id, [item]).then((taken) => {
+        queueRef.current = queueRef.current.filter((entry) => entry.id !== id)
+        setQueued(queueRef.current)
+        if (taken.length) send(item.text)
+      })
       return
     }
     queueRef.current = queueRef.current.map((entry) => (entry.id === id ? { ...entry, now: true } : entry))
@@ -1096,6 +1116,14 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       runRef.current.cancel?.()
       runRef.current.drainNow?.()
     }
+  }
+  // Le voci della coda si consumano dal nucleo, che le dà a una finestra sola (chat:take-queue). → quelle davvero prese; senza archivio (nessun progetto), tutte.
+  async function takeQueued(conversationId, items) {
+    if (!project || !conversationId || !api.takeQueueItems) return items
+    try {
+      const taken = new Set((await api.takeQueueItems(conversationId, items.map((item) => item.id))).map((item) => item.id))
+      return items.filter((item) => taken.has(item.id))
+    } catch { return items }
   }
   const unqueue = (id) => { queueRef.current = queueRef.current.filter((item) => item.id !== id); setQueued(queueRef.current); saveQueue() }
 
@@ -1127,14 +1155,19 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       if (runRef.current.conversationId) api.chatRuns?.end(runRef.current.conversationId)
       setBusy(false)
       if (queueRef.current.length) {
-        const leftover = queueRef.current.map((item) => item.text).join('\n\n')
+        const pending = queueRef.current
+        const finishedId = runRef.current.conversationId
+        const stopped = runRef.current.cancelled
         queueRef.current = []
         setQueued([])
-        saveQueue()
+        // Si prendono dal nucleo: se un'altra finestra ne ha già inviata una (con «Invia ora»), qui non si rimanda.
+        const leftover = (await takeQueued(finishedId, pending)).map((item) => item.text).join('\n\n')
         // I task in coda (e un'iniezione arrivata a compito già finito) partono da soli come un nuovo messaggio. Se il lavoro è stato interrotto o è finito male,
         // tornano nel campo, da rivedere e inviare.
-        if (!failed && !runRef.current.cancelled) setAutoSend(leftover)
-        else composer.current?.setValue(leftover)
+        if (leftover) {
+          if (!failed && !stopped) setAutoSend(leftover)
+          else composer.current?.setValue(leftover)
+        }
       }
     }
   }
@@ -1143,6 +1176,19 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     setError('')
     composer.current?.setValue('')
     runRef.current = { cancelled: false, cancel: null, restart: false, streaming: false }
+
+    // Una sola finestra guida una conversazione, e la si prenota prima di scrivere o chiamare qualsiasi cosa: due finestre che inviano nello stesso istante la vedono
+    // entrambe libera finché non arriva l'annuncio dell'altra, e raddoppierebbero le chiamate al modello e gli strumenti. Il nucleo decide; chi perde rimette il testo nel campo.
+    // Una conversazione nuova non ha ancora un id, quindi nessun'altra finestra può averla aperta.
+    if (current.id && api.chatRuns) {
+      const granted = await api.chatRuns.start(current.id).catch(() => true)
+      if (!granted) {
+        setError(t('Another window is already working on this conversation: the message was not sent.'))
+        if (!resume) composer.current?.setValue(content)
+        return
+      }
+      runRef.current.conversationId = current.id
+    }
 
     // Il messaggio dell'utente viene salvato subito: anche se la richiesta fallisce resta nel log.
     // Modificando un messaggio precedente le risposte successive vengono troncate; riprendendo si scartano solo gli errori in coda.
@@ -1200,8 +1246,10 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       if (!items.length) return false
       queueRef.current = queueRef.current.filter((item) => !item.now)
       setQueued(queueRef.current)
-      saveQueue()
-      await append({ role: 'user', content: items.map((item) => item.text).join('\n\n'), queued: true })
+      // Se un'altra finestra le ha già prese, non si inviano di nuovo.
+      const taken = await takeQueued(runRef.current.conversationId, items)
+      if (!taken.length) return false
+      await append({ role: 'user', content: taken.map((item) => item.text).join('\n\n'), queued: true })
       return true
     }
     runRef.current.drainNow = drainQueue
@@ -1673,7 +1721,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       ) : (
         <>
           <div className="relative flex min-h-0 flex-1 flex-col">
-          <div ref={listRef} data-select-scope onScroll={onListScroll} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+          <div ref={listRef} data-select-scope onScroll={onListScroll} style={dockHeight ? { paddingBottom: dockHeight + 12 } : undefined} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
             {!current.messages.length && !busy && (
               <p className="m-auto max-w-[16rem] text-center text-sm text-slate-500">{t('Ask to proofread, rewrite or discuss the document. If you select some text, the assistant works on that.')}
               </p>
@@ -1695,34 +1743,40 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
                 </p>
               </div>
             )}
-            {/* Iniezioni (Ctrl+Invio): appaiono subito in chat, sbiadite, e diventano normali quando entrano nel lavoro in corso. */}
-            {queued.filter((item) => item.now).map((item) => (
-              <div key={item.id} className="group flex flex-col items-end gap-1 opacity-60" title={t('Sent with Ctrl+Enter: it reaches the assistant as soon as the tool in progress has finished')}>
-                <div className="max-w-[92%] break-words rounded-xl bg-accent-600 px-3 py-2 text-sm leading-6 text-white"><MarkdownMessage onAccent softBreaks>{item.text}</MarkdownMessage></div>
-                <p className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                  <Loader2 size={11} className="animate-spin" /> {t('Now')}
-                  <button type="button" aria-label={t('Remove from the queue')} title={t('Remove from the queue')} className="rounded p-0.5 hover:bg-slate-800 hover:text-slate-50" onClick={() => unqueue(item.id)}><X size={11} /></button>
-                </p>
-              </div>
-            ))}
-            {/* Task in coda (Invio): una pillola in fondo alla chat per ognuno; partono insieme, come un solo messaggio, quando il lavoro è finito. */}
-            {queued.filter((item) => !item.now).map((item) => (
-              <div key={item.id} className="flex justify-end">
-                <p className="flex max-w-[92%] items-center gap-1.5 rounded-full border border-slate-600 bg-slate-800/60 py-1 pl-2.5 pr-1.5 text-xs text-slate-300" title={t('Queued task: it starts when the assistant has finished the current work')}>
-                  <Clock size={12} className="shrink-0 text-accent-400" />
-                  <span className="shrink-0 text-accent-400">{t('Queued')}</span>
-                  <button type="button" aria-label={t('Send now')} title={t('Send now: add it to the work in progress')} className="shrink-0 rounded-full p-0.5 text-slate-400 hover:bg-slate-700 hover:text-accent-400" onClick={() => promote(item.id)}><Send size={11} /></button>
-                  <span className="min-w-0 truncate">{item.text.replace(/\s+/g, ' ')}</span>
-                  <button type="button" aria-label={t('Remove from the queue')} title={t('Remove from the queue')} className="shrink-0 rounded-full p-0.5 text-slate-400 hover:bg-slate-700 hover:text-slate-50" onClick={() => unqueue(item.id)}><X size={11} /></button>
-                </p>
-              </div>
-            ))}
             {pendingAsk && <AskCard ask={pendingAsk} />}
             {error && <p className="text-sm text-rose-400">{error}</p>}
             <div ref={endRef} />
           </div>
+          {/* La coda sta ancorata in fondo alla chat, in un vassoio sopra il campo di scrittura, non in coda all'elenco: con la chat scorsa verso l'alto le pillole
+              restavano a metà pagina, lontane da dove si scrive. L'elenco riserva sotto di sé lo spazio del vassoio (`dockHeight`), così in fondo non nasconde nulla. */}
+          {queued.length > 0 && (
+            <div ref={dockRef} className="absolute inset-x-0 bottom-0 flex flex-col gap-1.5 border-t border-slate-800 bg-slate-900/95 px-3 py-2 backdrop-blur-sm">
+            {/* Iniezioni (Ctrl+Invio): appaiono subito in chat, sbiadite, e diventano normali quando entrano nel lavoro in corso. */}
+                {queued.filter((item) => item.now).map((item) => (
+                  <div key={item.id} className="group pointer-events-auto flex flex-col items-end gap-1 opacity-60" title={t('Sent with Ctrl+Enter: it reaches the assistant as soon as the tool in progress has finished')}>
+                    <div className="max-w-[92%] break-words rounded-xl bg-accent-600 px-3 py-2 text-sm leading-6 text-white"><MarkdownMessage onAccent softBreaks>{item.text}</MarkdownMessage></div>
+                    <p className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                      <Loader2 size={11} className="animate-spin" /> {t('Now')}
+                      <button type="button" aria-label={t('Remove from the queue')} title={t('Remove from the queue')} className="rounded p-0.5 hover:bg-slate-800 hover:text-slate-50" onClick={() => unqueue(item.id)}><X size={11} /></button>
+                    </p>
+                  </div>
+                ))}
+                {/* Task in coda (Invio): una pillola in fondo alla chat per ognuno; partono insieme, come un solo messaggio, quando il lavoro è finito. */}
+                {queued.filter((item) => !item.now).map((item) => (
+                  <div key={item.id} className="pointer-events-auto flex justify-end">
+                    <p className="flex max-w-[92%] items-center gap-1.5 rounded-full border border-slate-600 bg-slate-800 py-1 pl-2.5 pr-1.5 text-xs text-slate-300" title={t('Queued task: it starts when the assistant has finished the current work')}>
+                      <Clock size={12} className="shrink-0 text-accent-400" />
+                      <span className="shrink-0 text-accent-400">{t('Queued')}</span>
+                      <button type="button" aria-label={t('Send now')} title={t('Send now: add it to the work in progress')} className="shrink-0 rounded-full p-0.5 text-slate-400 hover:bg-slate-700 hover:text-accent-400" onClick={() => promote(item.id)}><Send size={11} /></button>
+                      <span className="min-w-0 truncate">{item.text.replace(/\s+/g, ' ')}</span>
+                      <button type="button" aria-label={t('Remove from the queue')} title={t('Remove from the queue')} className="shrink-0 rounded-full p-0.5 text-slate-400 hover:bg-slate-700 hover:text-slate-50" onClick={() => unqueue(item.id)}><X size={11} /></button>
+                    </p>
+                  </div>
+                ))}
+            </div>
+          )}
           {showJump && (
-            <button type="button" aria-label={t('Scroll to the bottom')} title={t('Scroll to the bottom')} className="absolute bottom-3 right-4 rounded-full border border-slate-700 bg-slate-900/95 p-1.5 text-slate-300 shadow-lg transition hover:bg-slate-800 hover:text-slate-50" onClick={jumpToEnd}>
+            <button type="button" aria-label={t('Scroll to the bottom')} title={t('Scroll to the bottom')} style={dockHeight ? { bottom: dockHeight + 12 } : undefined} className="absolute bottom-3 right-4 rounded-full border border-slate-700 bg-slate-900/95 p-1.5 text-slate-300 shadow-lg transition hover:bg-slate-800 hover:text-slate-50" onClick={jumpToEnd}>
               <ArrowDown size={16} />
             </button>
           )}
