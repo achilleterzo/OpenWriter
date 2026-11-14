@@ -62,7 +62,7 @@ const DocumentLink = Link.configure({ openOnClick: false }).extend({
   },
 })
 
-function LiveDocumentPane({ tab, project, active, onOpenFull, onExtractImages, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onPendingRestored, onPendingChange, onNoteSelect, onBookmarkSelect, onStatus, onOpenLink, onSave, onDiscuss }) {
+function LiveDocumentPane({ tab, project, active, onOpenFull, onFocusOwner, onExtractImages, findRequest, onReady, onDirty, onClean, onInteract, onCheckAi, onPendingRestored, onPendingChange, onNoteSelect, onBookmarkSelect, onStatus, onOpenLink, onSave, onDiscuss }) {
   // Vista sorgente: il Markdown grezzo del documento in un campo di testo. È solo un modo di lavorare o copiare il testo:
   // note, assistente e ricerca restano sull'editor visuale, che si aggiorna man mano che si scrive.
   const [sourceOpen, setSourceOpen] = useState(false)
@@ -198,6 +198,11 @@ function LiveDocumentPane({ tab, project, active, onOpenFull, onExtractImages, f
   editorRef.current = editor
   const interact = () => { if (tab.preview) onInteract?.(tab.id) }
 
+  // Un documento che un'altra finestra sta modificando è di sola lettura qui; quando si libera torna modificabile (e viceversa).
+  useEffect(() => {
+    if (editor && !editor.isDestroyed) editor.setEditable(!tab.readOnly)
+  }, [editor, tab.readOnly])
+
   // Quando la scheda non è modificata (appena aperta o salvata) quello che c'è nell'editor è il testo di riferimento.
   useEffect(() => {
     if (editor && !tab.dirty) savedMarkdown.current = editor.state.doc
@@ -310,6 +315,12 @@ function LiveDocumentPane({ tab, project, active, onOpenFull, onExtractImages, f
   return (
     <div className={active ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
       <DocumentToolbar editor={editor} onSave={onSave} dirty={tab.dirty} sourceOpen={sourceOpen} onToggleSource={toggleSource} aiScore={tab.aiScore} onCheckAi={onCheckAi} onCopySource={() => navigator.clipboard.writeText(sourceLatest.current)} onImage={pickImage} onLink={() => { editor.commands.focus(); setLinkRequest((value) => value + 1) }} onFind={() => { if (findOpen) closeFind(); else { setFindOpen(true); setFocusToken((value) => value + 1) } }} findOpen={findOpen} />
+      {tab.heldElsewhere && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 bg-amber-400/10 px-4 py-2 text-xs text-slate-200">
+          <span>{t('This document is being edited in another window: here it is read-only and follows what is saved.')}</span>
+          {onFocusOwner && <button type="button" className="rounded border border-amber-400/50 bg-amber-400/15 px-2 py-1 font-medium text-amber-300 transition hover:bg-amber-400/30" onClick={onFocusOwner}>{t('Bring that window to the front')}</button>}
+        </div>
+      )}
       {tab.largeFile && (
         <div className="flex flex-wrap items-center gap-3 border-b border-slate-800 bg-amber-400/10 px-4 py-2 text-xs text-slate-200">
           <span>{t('This file is very large ({size} MB): only the beginning is shown, read-only, so that the application stays responsive.', { size: (tab.largeFile.chars / 1048576).toFixed(1) })}</span>

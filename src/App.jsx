@@ -231,6 +231,8 @@ export default function App() {
   const [largeLoading, setLargeLoading] = useState(null)
   const [conversationId, setConversationId] = useState(null)
   const [settingsVersion, setSettingsVersion] = useState(0)
+  // Un'altra finestra ha cambiato le impostazioni generali: si rileggono come dopo una modifica fatta qui.
+  useEffect(() => electronAPI?.onSettingsChanged?.(() => setSettingsVersion((value) => value + 1)), [])
   // Cambia quando l'elenco dei progetti cambia (tolto, spostato, rinominato): la Home ricarica il grafo.
   const [projectsVersion, setProjectsVersion] = useState(0)
   // Cambia lo spazio di lavoro (o i suoi membri): la Home ricarica il grafo; l'elenco dei progetti si rilegge da sé.
@@ -323,7 +325,7 @@ export default function App() {
           ...(tab.aiScore ? { aiScore: tab.aiScore } : {}),
           ...(pending ? { pending } : {}),
           closed: Boolean(tab.closed),
-          ...(tab.readOnly ? { readOnly: true } : {}),
+          ...(tab.readOnly && !tab.heldElsewhere ? { readOnly: true } : {}),
           ...(keepText ? { markdown: unsavedText } : {}),
         }
       }),
@@ -602,7 +604,7 @@ export default function App() {
       }
       busy = true
       try {
-        const candidates = latest.current.tabs.filter((tab) => !tab.kind && tab.filePath && !tab.readOnly && !tab.largeFile && !tab.closed && tab.contentType === 'markdown'
+        const candidates = latest.current.tabs.filter((tab) => !tab.kind && tab.filePath && (!tab.readOnly || tab.heldElsewhere) && !tab.largeFile && !tab.closed && tab.contentType === 'markdown'
           && Date.now() - (ownSaveTimes.get(tab.id) || 0) > OWN_SAVE_QUIET_MS
           && (!paths || paths.some((changed) => samePath(changed, tab.filePath))))
         for (const candidate of candidates) {
@@ -631,11 +633,54 @@ export default function App() {
         if (queued) { const next = queued; queued = null; reloadChanged(next.all ? null : next.paths) }
       }
     }
-    return electronAPI.onWorkspaceChanged((paths) => {
+    // Un'altra finestra ha salvato un documento (anche fuori dal progetto, dove la cartella non si controlla): si rilegge come se fosse cambiato da fuori.
+    const stopSaved = electronAPI.documents?.onSaved?.((event) => reloadChanged([event.path]))
+    const stopChanged = electronAPI.onWorkspaceChanged((paths) => {
       setExplorerRefresh((value) => value + 1)
       reloadChanged(Array.isArray(paths) ? paths : null)
     })
+    return () => { stopChanged?.(); stopSaved?.() }
   }, [project])
+
+  // Un documento si modifica in una finestra alla volta (document-owners.cjs): a ogni cambio delle schede si dice al nucleo quali documenti questa finestra vuole tenere.
+  // Quelli che un'altra sta già modificando diventano di sola lettura (e si aggiornano ai salvataggi); appena si liberano si riprova. Una scheda che torna libera
+  // riprende a essere modificabile.
+  const wantedDocuments = tabs
+    .filter((tab) => !tab.kind && tab.filePath && !tab.closed && !tab.largeFile && tab.contentType === 'markdown' && (!tab.readOnly || tab.heldElsewhere))
+    .map((tab) => tab.filePath)
+    .sort()
+  const wantedKey = JSON.stringify(wantedDocuments)
+  const claimDocuments = useCallback(() => {
+    const documents = electronAPI?.documents
+    if (!documents) return
+    const wanted = JSON.parse(wantedKey)
+    documents.setHeld(wanted).then(({ refused }) => {
+      const refusedKeys = new Set((refused || []).map((item) => item.toLowerCase()))
+      setTabs((list) => {
+        let changed = false
+        const next = list.map((tab) => {
+          if (tab.kind || !tab.filePath || !wanted.includes(tab.filePath)) return tab
+          const taken = refusedKeys.has(tab.filePath.toLowerCase())
+          if (taken && !tab.heldElsewhere) { changed = true; return { ...tab, readOnly: true, heldElsewhere: true } }
+          if (!taken && tab.heldElsewhere) { changed = true; const { heldElsewhere: _held, readOnly: _readOnly, ...rest } = tab; return rest }
+          return tab
+        })
+        return changed ? next : list
+      })
+    }).catch(() => { /* senza il nucleo ogni finestra modifica come prima */ })
+  }, [wantedKey])
+  useEffect(() => { claimDocuments() }, [claimDocuments])
+  useEffect(() => {
+    const documents = electronAPI?.documents
+    if (!documents) return undefined
+    const stopReleased = documents.onReleased?.(() => claimDocuments())
+    // Un'altra finestra chiede di vedere un documento che modifichiamo noi: si mostra la sua scheda.
+    const stopReveal = documents.onReveal?.(({ path: revealed }) => {
+      const tab = latest.current.tabs.find((item) => !item.kind && item.filePath && samePath(item.filePath, revealed))
+      if (tab) setActiveId(tab.id)
+    })
+    return () => { stopReleased?.(); stopReveal?.() }
+  }, [claimDocuments])
 
   // Note e segnalibri scritti da fuori (l'agente, tramite il server MCP) compaiono subito, senza riaprire il documento.
   useEffect(() => {
@@ -1705,7 +1750,7 @@ export default function App() {
               : tab.kind === 'browser'
               ? <BrowserPane key={tab.id} tab={tab} active={tab.id === activeTab?.id} onRegister={registerBrowser} onTitle={workspace.setTitle} onStatus={setStatus} onScreenshot={() => setExplorerRefresh((value) => value + 1)} onRegion={sendRegionToChat} onOpenTab={(url, options) => workspace.openBrowser(url, { ...options, afterId: tab.id })} onAskAboutText={(passage, newChat) => discussPassage(passage, { newChat })} onSaved={(saved) => { setExplorerRefresh((value) => value + 1); openFromExplorer(saved) }} webRefsVersion={webRefsVersion} onWebRefsChanged={() => setWebRefsVersion((value) => value + 1)} />
               : (mountedTabs.current.has(tab.id) || tab.dirty || tab.pending)
-              ? <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onOpenFull={() => workspace.openFull(tab.id)} onExtractImages={() => workspace.extractImages(tab.sourcePath)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />
+              ? <DocumentPane key={tab.id} tab={tab} project={project} onReopen={() => workspace.reopenTab(tab.id)} onOpenFull={() => workspace.openFull(tab.id)} onFocusOwner={tab.heldElsewhere ? () => electronAPI.documents?.focusOwner(tab.filePath) : null} onExtractImages={() => workspace.extractImages(tab.sourcePath)} onSave={async () => { if (await workspace.saveWithReview(tab.id)) setStatus(t('Saved')) }} onOpenLink={openLink} onStatus={setStatus} active={tab.id === activeTab.id} findRequest={findRequest} onReady={registerEditor} onDirty={workspace.markDirty} onClean={workspace.markClean} onInteract={workspace.promoteTab} onPendingRestored={workspace.clearPendingData} onPendingChange={workspace.pendingChanged} onCheckAi={() => workspace.requestAiCheck(tab.id)} onNoteSelect={selectNote} onBookmarkSelect={selectBookmark} onDiscuss={discussPassage} />
               : null))}
           </section>
           </div>

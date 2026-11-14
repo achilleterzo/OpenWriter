@@ -1472,5 +1472,7 @@
   "As in the general settings (Approve for me)": "Wie in den allgemeinen Einstellungen (Für mich genehmigen)",
   "As in the general settings (I review them)": "Wie in den allgemeinen Einstellungen (Ich prüfe sie)",
   "Approve the assistant's edits for me": "Änderungen des Assistenten für mich genehmigen",
-  "Default for all projects; each project can choose differently in its settings or from the chat options.": "Standard für alle Projekte; jedes Projekt kann in seinen Einstellungen oder in den Chat-Optionen anders wählen."
+  "Default for all projects; each project can choose differently in its settings or from the chat options.": "Standard für alle Projekte; jedes Projekt kann in seinen Einstellungen oder in den Chat-Optionen anders wählen.",
+  "This document is being edited in another window: here it is read-only and follows what is saved.": "Dieses Dokument wird in einem anderen Fenster bearbeitet: Hier ist es schreibgeschützt und folgt dem, was gespeichert wird.",
+  "Bring that window to the front": "Dieses Fenster in den Vordergrund holen"
 }

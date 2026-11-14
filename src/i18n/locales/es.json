@@ -1472,5 +1472,7 @@
   "As in the general settings (Approve for me)": "Como en los ajustes generales (Aprobar por mí)",
   "As in the general settings (I review them)": "Como en los ajustes generales (Los reviso yo)",
   "Approve the assistant's edits for me": "Aprobar por mí los cambios del asistente",
-  "Default for all projects; each project can choose differently in its settings or from the chat options.": "Valor predeterminado para todos los proyectos; cada proyecto puede elegir otra cosa en sus ajustes o en las opciones del chat."
+  "Default for all projects; each project can choose differently in its settings or from the chat options.": "Valor predeterminado para todos los proyectos; cada proyecto puede elegir otra cosa en sus ajustes o en las opciones del chat.",
+  "This document is being edited in another window: here it is read-only and follows what is saved.": "Este documento se está editando en otra ventana: aquí es de solo lectura y sigue lo que se guarda.",
+  "Bring that window to the front": "Traer esa ventana al frente"
 }
