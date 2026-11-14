@@ -8,6 +8,11 @@ const mammoth = require('mammoth')
 const { createApplicationMenu } = require('./menu.cjs')
 const { createAiProviders } = require('./ai-providers.cjs')
 const { createProjectFile } = require('./project-file.cjs')
+const { createWindowContext } = require('./window-context.cjs')
+const { createEventBus } = require('./event-bus.cjs')
+const { createChatRuns } = require('./chat-runs.cjs')
+const { createDocumentOwners } = require('./document-owners.cjs')
+const { AsyncLocalStorage } = require('node:async_hooks')
 const { createMcpServersStore } = require('./mcp-servers-store.cjs')
 const { createMcpClient } = require('./mcp-client.cjs')
 const { createMcpService } = require('./mcp-service.cjs')
@@ -16,15 +21,12 @@ const { cleanTemperature } = require('./temperature.cjs')
 const { createProjectsStore } = require('./projects.cjs')
 const { execFile, spawn } = require('node:child_process')
 const { createSystemIntegration } = require('./system-integration.cjs')
-const { createChatStore } = require('./chat-store.cjs')
-const { createMemoryStore } = require('./memory-store.cjs')
 const { createMcpBridge } = require('./mcp-bridge.cjs')
 const { createMcpHttp } = require('./mcp-http.cjs')
 const { formatSearch } = require('./project-search.cjs')
 const { isSameOrInside, samePath } = require('./path-compare.cjs')
 const { fetchLatestRelease } = require('./updates.cjs')
 const { createProjectTools } = require('./project-tools.cjs')
-const { createNotesStore } = require('./notes-store.cjs')
 const projectIcon = require('./project-icon.cjs')
 const { planImageMove, applyImageMove } = require('./document-images.cjs')
 const { findImages, rewriteImageDestinations } = require('./markdown-images.cjs')
@@ -32,15 +34,13 @@ const { writeFileAtomic } = require('./atomic-write.cjs')
 const { createFontsStore } = require('./fonts.cjs')
 const { parsePdf, MARKER } = require('./pdf-import.cjs')
 const textFiles = require('./text-file.cjs')
-const { createBrowserHistory } = require('./browser-history.cjs')
 const { createReferencesStore } = require('./project-references.cjs')
-const { createWebReferencesStore, webFolderOf } = require('./web-references.cjs')
+const { webFolderOf } = require('./web-references.cjs')
 const projectPack = require('./project-pack.cjs')
-const { createBookmarksStore } = require('./bookmarks-store.cjs')
 const { embedImages } = require('./markdown-embed.cjs')
 const { extractImages } = require('./markdown-extract.cjs')
 const fileClipboard = require('./file-clipboard.cjs')
-const { createLinksStore, checkedPaths, writeLinksTo } = require('./project-links.cjs')
+const { checkedPaths, writeLinksTo } = require('./project-links.cjs')
 const { createSkillsStore, skillFromMarkdown, MAX_SKILL_CHARS } = require('./skills-store.cjs')
 const { createKnowledgeService, formatKnowledgeResults } = require('./knowledge-service.cjs')
 const { createSemanticPack } = require('./semantic-pack.cjs')
@@ -50,9 +50,7 @@ const { createWorkspacesStore } = require('./workspaces-store.cjs')
 const { STOPWORDS } = require('./knowledge-index.cjs')
 const { affinityEdges, uniformEdges, collectVectors, parentProjects } = require('./project-graph.cjs')
 const { findOwners } = require('./project-owner.cjs')
-const { createPrimaryLock } = require('./primary-instance.cjs')
-const { withFileLock } = require('./file-lock.cjs')
-const { createInstanceRegistry } = require('./instance-registry.cjs')
+const { mergeLayout } = require('./layout-merge.cjs')
 const { mergeSearches, cleanTerms, markTerms } = require('./search-merge.cjs')
 // Un carattere UTF-8 occupa al massimo 4 byte: oltre, il file supera di sicuro il limite delle skill.
 const MAX_SKILL_FILE_BYTES = MAX_SKILL_CHARS * 4
@@ -60,14 +58,19 @@ const images = require('./images.cjs')
 const { t, setLocale, getLocale } = require('./i18n.cjs')
 
 const isDevelopment = !app.isPackaged
-let mainWindow
+// Ogni evento verso le finestre passa da qui (event-bus.cjs): dice a chi è diretto.
+const events = createEventBus({ samePath })
+// Chi lavora a quale conversazione, e cosa si vede mentre lo fa (chat-runs.cjs): le finestre sullo stesso progetto vedono lo stesso lavoro.
+const chatRuns = createChatRuns({ events })
+// Quale finestra sta modificando quale documento (document-owners.cjs): una alla volta; le altre lo vedono in sola lettura.
+const documentOwners = createDocumentOwners({ events })
 
 // Errori e avvisi del processo principale (anche quelli che Electron stampa per un comando IPC fallito): oltre che nel terminale, arrivano alla finestra come
 // notifiche (canale `app:notice`, vedi src/lib/toasts.js). Un errore di un comando diventa "motivo" + comando nel dettaglio.
 const NOTICE_IGNORED = [/^\(node:\d+\)/, /ExperimentalWarning|DeprecationWarning/, /Electron Security Warning/i, /Autofill\./, /Request Autofill/]
 let forwarding = false
 function forwardNotice(level, args) {
-  if (forwarding || !mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+  if (forwarding || !events.count()) return
   forwarding = true
   try {
     const lines = require('node:util').format(...args).split('\n').map((line) => line.trim()).filter(Boolean)
@@ -75,7 +78,7 @@ function forwardNotice(level, args) {
     const handler = /^Error occurred in handler for '([^']+)':\s*(?:Error:\s*)?(.*)$/.exec(lines[0])
     const message = (handler ? handler[2] || lines[0] : lines[0]).slice(0, 300)
     const detail = [handler ? `(${handler[1]})` : '', ...lines.slice(1, 7)].filter(Boolean).join('\n')
-    mainWindow.webContents.send('app:notice', { level, message, detail })
+    events.broadcast('app:notice', { level, message, detail })
   } catch { /* le notifiche non devono mai far fallire il resto */ } finally { forwarding = false }
 }
 for (const [method, level] of [['error', 'error'], ['warn', 'warning']]) {
@@ -88,45 +91,53 @@ process.on('uncaughtExceptionMonitor', (error) => { forwardNotice('error', [erro
 protocol.registerSchemesAsPrivileged([{ scheme: 'ow-file', privileges: { standard: true, secure: true } }])
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
 
-let projectPath = null
-// «Apri in una nuova finestra»: un'altra istanza dell'app (un altro processo) con il progetto indicato. Condivide dati e impostazioni; ciò che non può esistere due volte
-// (ponte e server HTTP degli agenti MCP) lo serve una sola istanza, la principale (vedi primary-instance.cjs).
-// Quale progetto ha aperto ogni finestra (vedi instance-registry.cjs): lo stesso progetto non si apre in due finestre.
-const instances = createInstanceRegistry({ directory: path.join(app.getPath('userData'), 'instances'), samePath })
-// Seconda finestra: lo dice chi l'ha avviata, oppure c'è già un'altra istanza viva (per esempio un avvio dal file manager).
-const secondaryInstance = process.argv.includes('--ow-secondary') || instances.others().length > 0
-const startupProject = (() => { const given = process.argv.find((argument) => argument.startsWith('--ow-project=')); return given ? given.slice('--ow-project='.length) : '' })()
+// L'app è un solo processo: le finestre sono viste dello stesso nucleo (vedi docs/design/core-and-windows.md). Ponte e server HTTP degli agenti MCP li serve lui.
 const projectsStore = createProjectsStore({ filePath: () => path.join(app.getPath('userData'), 'projects.json') })
 // Gli spazi di lavoro (workspace): un filtro sull'elenco dei progetti e sulla conoscenza che l'assistente e gli agenti raggiungono (workspaces-store.cjs).
 const workspacesStore = createWorkspacesStore({ directory: () => app.getPath('userData') })
 // Progetto "main": una cartella con la sua `.ow` nei dati dell'app. Quando nessun progetto è aperto fa da progetto (chat, note, memoria,
 // contesto, skill) e tiene sempre cronologia e note dei documenti sparsi, cioè fuori dal progetto aperto.
 const mainDirectory = () => path.join(app.getPath('userData'), 'main')
-const storePath = () => projectPath || mainDirectory()
-const projectFile = createProjectFile({ getProjectPath: storePath, getMainPath: mainDirectory })
-const chatStore = createChatStore({ getProjectPath: storePath })
-const memoryStore = createMemoryStore({ getProjectPath: storePath })
-// Cronologia del browser integrato: una per progetto (senza progetto aperto, quella del progetto main).
-const browserHistory = createBrowserHistory({ getProjectPath: storePath })
-// Quella delle pagine visitate dall'assistente: a parte, non si mischia con la cronologia dell'utente.
-const agentBrowserHistory = createBrowserHistory({ getProjectPath: storePath, fileName: 'browser-history-agent.json' })
-const historyFor = (agent) => (agent ? agentBrowserHistory : browserHistory)
-const notesStore = createNotesStore({ getProjectPath: storePath, getMainPath: mainDirectory })
-// Segnalibri: ancore con nome nei documenti (link `file#nome`, punti da far notare all'assistente).
-const bookmarksStore = createBookmarksStore({ getProjectPath: storePath, getMainPath: mainDirectory })
-// Documenti esterni collegati al progetto aperto (senza copiarli).
-const linksStore = createLinksStore({ getProjectPath: () => projectPath })
-// Cartelle di riferimento (fuori dal progetto, solo lettura per l'assistente).
-const referencesStore = createReferencesStore({ getProjectPath: () => projectPath })
-const webStore = createWebReferencesStore({ getProjectPath: () => projectPath })
+// Il progetto aperto e gli archivi che ne dipendono stanno nel contesto della finestra (window-context.cjs): ogni finestra ha il suo.
+// Il codice dei gestori continua a scrivere `windowContext.project`, `chatStore`…: quei nomi risolvono sul contesto della finestra che ha fatto la richiesta
+// (i gestori IPC girano dentro `ambient`, vedi più sotto), altrimenti su quello della finestra in primo piano. Prima che esista una finestra c'è quello di avvio.
+const makeContext = () => createWindowContext({ mainDirectory, readDocument: (filePath) => readDocument(filePath) })
+const ambient = new AsyncLocalStorage()
+let lastEntry = { window: null, context: makeContext() }
+const currentEntry = () => ambient.getStore() || events.focused() || lastEntry
+const currentWindow = () => currentEntry().window || undefined
+const windowContext = new Proxy({}, {
+  get: (_target, key) => currentEntry().context[key],
+  set: (_target, key, value) => { currentEntry().context[key] = value; return true },
+})
+const viaContext = (name) => new Proxy({}, {
+  get: (_target, key) => {
+    const store = currentEntry().context[name]
+    const value = store[key]
+    return typeof value === 'function' ? value.bind(store) : value
+  },
+})
+const storePath = () => windowContext.storePath()
+const historyFor = (agent) => windowContext.historyFor(agent)
+const [projectFile, chatStore, memoryStore, browserHistory, agentBrowserHistory, notesStore, bookmarksStore, linksStore, referencesStore, webStore, projectTools] = ['projectFile', 'chatStore', 'memoryStore', 'browserHistory', 'agentBrowserHistory', 'notesStore', 'bookmarksStore', 'linksStore', 'referencesStore', 'webStore', 'projectTools'].map(viaContext)
+// Ogni gestore IPC gira nel contesto della finestra che lo ha chiamato (anche dopo un await): è così che `windowContext` e gli archivi sono quelli giusti.
+// Le pagine incorporate (le schede del browser) contano come la finestra che le ospita; chi non è di nessuna finestra usa quella in primo piano.
+const entryOfSender = (sender) => events.windowFor(sender) || events.windowFor(sender?.hostWebContents)
+for (const method of ['handle', 'on']) {
+  const original = ipcMain[method].bind(ipcMain)
+  ipcMain[method] = (channel, listener) => original(channel, (event, ...args) => {
+    const entry = entryOfSender(event.sender)
+    return entry ? ambient.run(entry, () => listener(event, ...args)) : listener(event, ...args)
+  })
+}
+
 const skillsStore = createSkillsStore({ getGlobalDirectory: () => path.join(app.getPath('userData'), 'skills') })
-const projectTools = createProjectTools({ getProjectPath: () => projectPath, readDocument: (filePath) => readDocument(filePath) })
 const aiRequests = new Map()
 const BROWSER_PARTITION = 'persist:openwriter-browser'
 const aiProviders = createAiProviders({
   app,
   safeStorage,
-  getWorkingDirectory: () => projectPath || undefined,
+  getWorkingDirectory: () => windowContext.project || undefined,
   getProjectTemperature: () => projectFile.getTemperature(),
   getProjectModel: () => projectFile.getModelChoice(),
   })
@@ -212,7 +223,6 @@ const knowledge = createKnowledgeService({
 })
 // L'indice è attivo per il progetto aperto salvo che le sue impostazioni lo spengano (options.searchIndex); la ricerca per significato solo se il
 // modello è installato e abilitato in Impostazioni → Modelli locali. Il progetto non sceglie: se non vuole entrarci spegne l'indice.
-let knowledgeOn = true
 // Modelli locali (Impostazioni): l'utente può spegnere il modello per tutti i progetti, anche se installato, e scegliere il dispositivo.
 const EMBEDDINGS_PREFERENCE = 'openwriter.localModels.embeddings'
 const DEVICE_PREFERENCE = 'openwriter.localModels.device'
@@ -234,8 +244,13 @@ const semanticAvailable = () => Boolean(semanticAllowed() && activeDevice())
 // Anche tutti gli altri progetti dell'elenco con l'indice acceso, aperti o no, condividano o no: la ricerca della Home è dell'utente e li cerca tutti.
 const semanticTargets = () => {
   if (!semanticAvailable()) return []
-  const open = projectPath && knowledgeOn ? [projectPath, ...outsideFolders().map((item) => item.path)] : []
-  return [...open, ...indexedProjects()]
+  // I progetti di tutte le finestre aperte (ognuna con le sue cartelle di riferimento), poi quelli dell'elenco con l'indice acceso.
+  const open = []
+  for (const entry of events.list()) {
+    ambient.run(entry, () => { if (windowContext.project && windowContext.knowledgeOn) open.push(windowContext.project, ...outsideFolders().map((item) => item.path)) })
+  }
+  const seen = new Set()
+  return [...open, ...indexedProjects()].filter((item) => { const key = knowledge.key(item); if (seen.has(key)) return false; seen.add(key); return true })
 }
 // `purge`: identificativi dei modelli di cui buttare i vettori (si è tolto il loro pacchetto).
 // L'ultimo elenco di progetti configurato per i vettori: se ne cambia uno (un progetto aggiunto, che condivide da poco…) si riconfigura.
@@ -271,10 +286,10 @@ function syncProjects(directories, { force = false, every = 600000 } = {}) {
   return started
 }
 function startKnowledge() {
-  if (!projectPath) return
-  try { knowledgeOn = projectFile.searchIndexEnabled() } catch { knowledgeOn = true }
-  if (!knowledgeOn) { configureSemantic(); return }
-  knowledge.sync(projectPath).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
+  if (!windowContext.project) return
+  try { windowContext.knowledgeOn = projectFile.searchIndexEnabled() } catch { windowContext.knowledgeOn = true }
+  if (!windowContext.knowledgeOn) { configureSemantic(); return }
+  knowledge.sync(windowContext.project).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
   // Le cartelle di riferimento del progetto (collegate dall'utente, quindi con il suo consenso) si indicizzano a parte: una sola volta anche se più progetti le usano.
   for (const reference of referenceFolders()) knowledge.sync(reference.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
   // Gli altri progetti che condividono la loro conoscenza: si riallineano all'apertura (non più spesso di ogni due minuti), senza sorvegliarli.
@@ -285,7 +300,7 @@ function startKnowledge() {
     knowledge.sync(other.path).catch((error) => console.error('Indice di ricerca non aggiornato:', error.message))
   }
   // Tutti gli altri progetti dell'elenco, anche mai aperti in questa sessione: si aggiornano in secondo piano (non più spesso di ogni dieci minuti).
-  syncProjects(indexedProjects().filter((directory) => !samePath(directory, projectPath)))
+  syncProjects(indexedProjects().filter((directory) => !samePath(directory, windowContext.project)))
   watchReferences()
   configureSemantic()
 }
@@ -295,27 +310,27 @@ const sharedSynced = new Map()
 // `granted`: progetti concessi a chi chiede (quelli che un agente ha aperto da sé), visibili anche fuori dallo spazio di lavoro attivo.
 const outsideFolders = ({ granted = [], workspace } = {}) => {
   try {
-    return projectPath ? outsideFoldersOf({ current: projectPath, references: referencesStore.list(), projects: workspacesStore.visibleProjects(projectsStore.list(), { granted, workspace }), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(), webFolderOf }) : []
+    return windowContext.project ? outsideFoldersOf({ current: windowContext.project, references: referencesStore.list(), projects: workspacesStore.visibleProjects(projectsStore.list(), { granted, workspace }), isShared: (directory) => createProjectFile({ getProjectPath: () => directory }).sharedKnowledgeEnabled(), webFolderOf }) : []
   } catch { return [] }
 }
 // Le cartelle di riferimento collegate e le pagine web salvate del progetto (`.ow/web`, automatica: `@web`).
 const referenceFolders = () => {
   try {
-    if (!projectPath) return []
+    if (!windowContext.project) return []
     const list = referencesStore.list().filter((item) => !item.missing)
-    const web = webFolderOf(projectPath)
+    const web = webFolderOf(windowContext.project)
     return web && !list.some((item) => item.name.toLowerCase() === 'web') ? [...list, { name: 'web', path: web, web: true }] : list
   } catch { return [] }
 }
 // Chi cambia una cartella di riferimento (di solito un altro programma) la tiene aggiornata nell'indice, come per il progetto.
-let referenceWatchers = []
 function stopReferenceWatch() {
-  for (const watcher of referenceWatchers) { try { watcher.close() } catch { /* già chiuso */ } }
-  referenceWatchers = []
+  for (const watcher of windowContext.referenceWatchers) { try { watcher.close() } catch { /* già chiuso */ } }
+  windowContext.referenceWatchers = []
 }
 function watchReferences() {
   stopReferenceWatch()
-  if (!knowledgeOn) return
+  if (!windowContext.knowledgeOn) return
+  const references = windowContext.referenceWatchers
   for (const reference of referenceFolders()) {
     try {
       const watcher = fsSync.watch(reference.path, { recursive: true }, (_event, name) => {
@@ -324,7 +339,7 @@ function watchReferences() {
         knowledge.changed(reference.path, name ? [parts.join('/')] : null)
       })
       watcher.on('error', () => { try { watcher.close() } catch { /* già chiuso */ } })
-      referenceWatchers.push(watcher)
+      references.push(watcher)
     } catch { /* senza sorveglianza resta la scansione all'apertura del progetto */ }
   }
 }
@@ -377,8 +392,8 @@ async function readTextForTab(target) {
 }
 
 async function openDocument() {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    defaultPath: projectPath || undefined,
+  const result = await dialog.showOpenDialog(currentWindow(), {
+    defaultPath: windowContext.project || undefined,
     properties: ['openFile'],
     filters: [supportedDocumentsFilter(), markdownFilter, { name: 'Word', extensions: ['docx'] }, { name: 'PDF', extensions: ['pdf'] }, { name: t('All files'), extensions: ['*'] }],
   })
@@ -403,7 +418,8 @@ function readSessions() {
 }
 
 // Una sessione (schede aperte, bozze, vista laterale) per ogni progetto; senza progetto usa la chiave '__none__'.
-const sessionKey = () => projectPath || '__none__'
+// La sessione è per finestra: la prima su un progetto usa il percorso, le altre sullo stesso progetto aggiungono il numero della loro posizione.
+const sessionKey = () => (windowContext.project || '__none__') + (windowContext.slot ? `#${windowContext.slot}` : '')
 
 // Un progetto è stato spostato: la sua sessione (e i percorsi delle schede aperte in qualunque sessione) seguono la nuova posizione.
 function moveSessions(from, to) {
@@ -457,8 +473,8 @@ function loadSession({ startup = false } = {}) {
   const session = readSessions()[sessionKey()] || null
   if (!startup) return session
   let interrupted = false
-  // Il segno d'avvio è dell'istanza principale: una seconda, che parte mentre l'altra lavora, lo scambierebbe per un avvio interrotto.
-  if (secondaryInstance) return session
+  // Il segno d'avvio è della prima finestra: un'altra, aperta mentre quella lavora, lo scambierebbe per un avvio interrotto.
+  if (!windowContext.first) return session
   try {
     interrupted = fsSync.existsSync(startupMarkerPath())
     fsSync.writeFileSync(startupMarkerPath(), String(Date.now()))
@@ -487,34 +503,36 @@ function workspaceFilePath() {
   return path.join(app.getPath('userData'), 'workspace.json')
 }
 
-async function loadProject() {
-  // I membri temporanei (progetti aperti da un agente) non sopravvivono a un riavvio.
-  // Una seconda istanza non azzera i membri temporanei dell'altra, e parte dal progetto che le è stato indicato (non dall'ultimo aperto).
-  if (!secondaryInstance) { try { workspacesStore.clearTemporary() } catch (error) { console.error('Membri temporanei non azzerati:', error.message) } }
+// Il progetto che una finestra mostra all'apertura: quello indicato, oppure (la prima finestra) l'ultimo aperto. Gira nel contesto di quella finestra.
+async function loadProject(requested = '') {
+  // I membri temporanei (progetti aperti da un agente) non sopravvivono a un riavvio: li azzera solo la prima finestra.
+  if (windowContext.first) { try { workspacesStore.clearTemporary() } catch (error) { console.error('Membri temporanei non azzerati:', error.message) } }
   try {
-    if (startupProject && (await fs.stat(startupProject)).isDirectory()) projectPath = path.resolve(startupProject)
-    else {
+    if (requested && (await fs.stat(requested)).isDirectory()) windowContext.project = path.resolve(requested)
+    else if (!requested && windowContext.first) {
       const { project } = JSON.parse(await fs.readFile(workspaceFilePath(), 'utf8'))
-      if (project && (await fs.stat(project)).isDirectory()) projectPath = project
+      if (project && (await fs.stat(project)).isDirectory()) windowContext.project = project
     }
   } catch {}
-  // Il progetto dell'ultima volta (o quello indicato) è già aperto in un'altra finestra: questa parte dalla Home, senza progetto.
-  // Controllo e registrazione sono un passo solo: due finestre che partono insieme sullo stesso progetto non lo ottengono entrambe.
-  if (projectPath && instances.claim(projectPath)) {
-    console.error(t('The project "{name}" is already open in another OpenWriter window', { name: path.basename(projectPath) }))
-    projectPath = null
-  }
-  if (!projectPath) instances.register(null)
+  windowContext.slot = freeSlot(windowContext.project)
   initializeProject()
   // Il progetto di un avvio precedente entra nell'elenco anche se è stato aperto prima che l'elenco esistesse.
-  if (projectPath && !projectsStore.list().some((item) => samePath(item.path, projectPath))) projectsStore.touch(projectPath)
+  if (windowContext.project && !projectsStore.list().some((item) => samePath(item.path, windowContext.project))) projectsStore.touch(windowContext.project)
+}
+
+// La posizione di questa finestra tra quelle che mostrano lo stesso progetto: 0 la prima, poi 1, 2… (la sessione, cioè le schede aperte, è per finestra).
+function freeSlot(project) {
+  const taken = new Set(events.list().filter((entry) => entry.context !== windowContext && !!project && entry.context.project && samePath(entry.context.project, project)).map((entry) => entry.context.slot))
+  let slot = 0
+  while (taken.has(slot)) slot += 1
+  return slot
 }
 
 // Prepara la cartella .ow all'apertura del progetto; un errore (es. cartella in sola lettura) non deve impedire di lavorare.
 function initializeProject() {
   try { projectFile.initialize() } catch (error) { console.error('Inizializzazione .ow non riuscita:', error.message) }
   // Il progetto main esiste sempre, anche con un progetto aperto: ci vivono i documenti sparsi.
-  if (projectPath) {
+  if (windowContext.project) {
     try { createProjectFile({ getProjectPath: mainDirectory }).initialize() } catch (error) { console.error('Inizializzazione .ow del progetto main non riuscita:', error.message) }
   }
   startKnowledge()
@@ -523,30 +541,26 @@ function initializeProject() {
 // `join`: un progetto nuovo per l'elenco entra nello spazio di lavoro attivo (se non è «Tutti»). Chi apre da fuori lo chiede all'utente prima e passa `join: false`;
 // un agente che apre un progetto non lo fa entrare: diventa un membro temporaneo (vedi mcpRequests.js).
 async function setProject(directory, { join = true } = {}) {
-  // Già aperto in un'altra finestra: si porta quella in primo piano, qui non si apre.
-  const holder = instances.claim(directory)
-  if (holder) {
-    instances.requestFocus(holder.pid)
-    throw new Error(t('This project is already open in another OpenWriter window, which has been brought to the front'))
-  }
   const known = projectsStore.list().some((item) => samePath(item.path, directory))
-  projectPath = directory
+  windowContext.project = directory
+  windowContext.slot = freeSlot(directory)
   initializeProject()
   // `workspace.json` porta anche lo spazio di lavoro attivo: si scrive unendo i campi, altrimenti ogni apertura di un progetto lo cancellerebbe.
-  workspacesStore.setLastProject(projectPath)
-  projectsStore.touch(projectPath)
-  if (join && !known) { try { if (workspacesStore.joinActive(projectPath)) notifyWorkspaces() } catch (error) { console.error('Spazio di lavoro non aggiornato:', error.message) } }
+  workspacesStore.setLastProject(windowContext.project)
+  projectsStore.touch(windowContext.project)
+  notifyWorkspaces()
+  if (join && !known) { try { if (workspacesStore.joinActive(windowContext.project)) notifyWorkspaces() } catch (error) { console.error('Spazio di lavoro non aggiornato:', error.message) } }
   applySpellcheck()
   // Le voci del menu «Progetto» si accendono quando c'è un progetto.
   buildMenu()
-  return projectPath
+  return windowContext.project
 }
 
 // Le operazioni del file explorer sono limitate alla cartella del progetto corrente.
 function resolveInProject(target) {
-  if (!projectPath) throw new Error(t('No project open'))
+  if (!windowContext.project) throw new Error(t('No project open'))
   const resolved = path.resolve(target)
-  const relative = path.relative(projectPath, resolved)
+  const relative = path.relative(windowContext.project, resolved)
   if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error(t('Path is outside the project'))
   return resolved
 }
@@ -592,12 +606,12 @@ async function importFiles({ paths, targetDirectory }) {
 function imageScanOptions() {
   let extraDocuments = []
   try { extraDocuments = linksStore.list().map((link) => link.path) } catch { /* senza progetto: solo la cartella del documento */ }
-  return { scanRoot: projectPath, extraDocuments }
+  return { scanRoot: windowContext.project, extraDocuments }
 }
 
 async function renamePath({ path: target, newName }) {
   const source = resolveInProject(target)
-  if (source === projectPath) throw new Error(t('The project folder cannot be renamed from here'))
+  if (source === windowContext.project) throw new Error(t('The project folder cannot be renamed from here'))
   const name = String(newName || '').trim()
   if (!name || name === '.' || name === '..' || /[\\/:*?"<>|]/.test(name)) throw new Error(t('Invalid name'))
   const isDirectory = (await fs.stat(source)).isDirectory()
@@ -653,7 +667,7 @@ async function moveFile(from, to) {
 async function moveIntoDirectory({ from, toDirectory }) {
   const source = resolveInProject(from)
   const directory = resolveInProject(toDirectory)
-  if (source === projectPath) throw new Error(t('The project folder cannot be renamed from here'))
+  if (source === windowContext.project) throw new Error(t('The project folder cannot be renamed from here'))
   if (!(await fs.stat(directory).then((stat) => stat.isDirectory(), () => false))) throw new Error(t('The destination is not a folder'))
   if (path.dirname(source) === directory) return source
   if (directory === source || directory.startsWith(source + path.sep)) throw new Error(t('A folder cannot be moved into itself'))
@@ -676,11 +690,13 @@ async function moveIntoDirectory({ from, toDirectory }) {
 const pendingQuestions = new Map()
 let questionCounter = 0
 function confirmInApp({ message, detail = '', confirmLabel, danger = false }) {
-  if (!mainWindow || mainWindow.isDestroyed()) return Promise.resolve(false)
+  if (!events.count()) return Promise.resolve(false)
   return new Promise((resolve) => {
     questionCounter += 1
     pendingQuestions.set(questionCounter, resolve)
-    mainWindow.webContents.send('dialog:ask', { id: questionCounter, message, detail, confirmLabel, danger })
+    const asker = currentEntry().window
+    const sent = asker ? events.toContents(asker.webContents, 'dialog:ask', { id: questionCounter, message, detail, confirmLabel, danger }) : events.toFocused('dialog:ask', { id: questionCounter, message, detail, confirmLabel, danger })
+    if (!sent) { pendingQuestions.delete(questionCounter); resolve(false) }
   })
 }
 ipcMain.on('dialog:answer', (_event, id, answer) => {
@@ -695,7 +711,7 @@ ipcMain.on('dialog:answer', (_event, id, answer) => {
 async function deletePaths(targets) {
   const given = [...new Set((Array.isArray(targets) ? targets : [targets]).map((item) => resolveInProject(item)))]
   if (!given.length) return false
-  if (given.some((item) => samePath(item, projectPath))) throw new Error(t('The project folder cannot be deleted from here'))
+  if (given.some((item) => samePath(item, windowContext.project))) throw new Error(t('The project folder cannot be deleted from here'))
   const sources = given.filter((item) => !given.some((other) => other !== item && isSameOrInside(other, item)))
   const info = []
   for (const source of sources) {
@@ -746,7 +762,8 @@ function spellcheckFilePath() {
 }
 
 function availableSpellLanguages() {
-  return mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.session.availableSpellCheckerLanguages : []
+  const window = currentWindow()
+  return window && !window.isDestroyed() ? window.webContents.session.availableSpellCheckerLanguages : []
 }
 
 function readGlobalSpellcheck() {
@@ -759,7 +776,7 @@ function readGlobalSpellcheck() {
 
 function effectiveSpellcheck() {
   let projectLanguages = []
-  try { if (projectPath) projectLanguages = projectFile.getSettings().spellcheck.languages } catch {}
+  try { if (windowContext.project) projectLanguages = projectFile.getSettings().spellcheck.languages } catch {}
   const available = availableSpellLanguages()
   return (projectLanguages.length ? projectLanguages : readGlobalSpellcheck()).filter((language) => available.includes(language))
 }
@@ -771,7 +788,7 @@ function spellcheckState() {
 function applySpellcheck() {
   // Dove il sistema gestisce il correttore (nessun dizionario elencato) non si interviene.
   if (!availableSpellLanguages().length) return
-  const { session } = mainWindow.webContents
+  const { session } = currentWindow().webContents
   const languages = effectiveSpellcheck()
   session.setSpellCheckerEnabled(languages.length > 0)
   if (languages.length) session.setSpellCheckerLanguages(languages)
@@ -780,7 +797,7 @@ function applySpellcheck() {
 // Il menu contestuale di editor e campi di testo lo disegna il renderer (HTML, stile piatto): qui si inviano i dati del correttore.
 function sendEditContextMenu(webContents, params) {
   if (!params.isEditable && !params.selectionText) return
-  webContents.send('edit:context-menu', {
+  events.toContents(webContents, 'edit:context-menu', {
     x: params.x,
     y: params.y,
     isEditable: params.isEditable,
@@ -835,14 +852,14 @@ async function listDirectory(directory) {
 // Percorso iniziale di una finestra di scelta: un nome nella cartella del documento (se si conosce) o, altrimenti, in quella del progetto aperto. Senza un percorso
 // il sistema riparte dall'ultima cartella usata, che può essere quella di un altro progetto.
 function startingPath(name, documentPath) {
-  const directory = documentPath && path.isAbsolute(String(documentPath)) ? path.dirname(String(documentPath)) : projectPath || app.getPath('documents')
+  const directory = documentPath && path.isAbsolute(String(documentPath)) ? path.dirname(String(documentPath)) : windowContext.project || app.getPath('documents')
   return path.join(directory, name)
 }
 
 async function chooseSavePath({ filePath, saveAs, filters, defaultPath }) {
   if (filePath && !saveAs) return filePath
 
-  const result = await dialog.showSaveDialog(mainWindow, {
+  const result = await dialog.showSaveDialog(currentWindow(), {
     defaultPath: filePath || defaultPath,
     filters,
   })
@@ -940,11 +957,23 @@ function trackWindowState(window, initial) {
   window.on('close', () => { clearTimeout(timer); capture(); persist() })
 }
 
-function createWindow() {
+// Apre una finestra con un contesto suo: carica il progetto (`project`, oppure l'ultimo aperto se è la prima) e poi la crea. Restituisce la finestra.
+async function openWindow({ project = '' } = {}) {
+  const context = events.count() || lastEntry.window ? makeContext() : lastEntry.context
+  context.first = !lastEntry.window && !events.count()
+  const entry = { window: null, context }
+  await ambient.run(entry, () => loadProject(project))
+  return createWindow(context)
+}
+
+function createWindow(context) {
   const windowState = loadWindowState()
+  // Le finestre successive alla prima si sfalsano un poco, per non sovrapporsi esattamente.
+  const others = events.count()
+  if (others && Number.isFinite(windowState.x) && Number.isFinite(windowState.y)) { windowState.x += 32 * others; windowState.y += 32 * others }
   // Tasti Indietro / Avanti del mouse e della tastiera multimediale (Windows): navigazione nella cronologia dei salti del documento.
   const navigationCommand = { 'browser-backward': 'nav-back', 'browser-forward': 'nav-forward' }
-  mainWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: windowState.width,
     height: windowState.height,
     x: windowState.x,
@@ -962,33 +991,37 @@ function createWindow() {
     },
   })
 
-  applySpellcheck()
+  const entry = { window: win, context }
+  lastEntry = entry
+  ambient.run(entry, applySpellcheck)
   // Con più finestre lo spazio di lavoro attivo (nel file dei dati dell'app) può essere cambiato dall'altra: al ritorno in primo piano il selettore e l'elenco si rileggono.
-  mainWindow.on('focus', () => notifyWorkspaces())
-  mainWindow.on('app-command', (_event, command) => { if (navigationCommand[command]) mainWindow.webContents.send('app:command', navigationCommand[command]) })
+  events.register(win, context)
+  win.on('focus', () => { notifyWorkspaces(); ambient.run(entry, buildMenu) })
+  win.on('closed', () => ambient.run(entry, () => { stopWorkspaceWatch(); configureSemantic() }))
+  win.on('app-command', (_event, command) => { if (navigationCommand[command]) events.toContents(win.webContents, 'app:command', navigationCommand[command]) })
   // Se il processo dell'interfaccia muore la finestra resta vuota e la console non dice nulla: si registra il motivo e si riprova a ricaricare (al massimo due volte).
   let reloads = 0
-  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+  win.webContents.on('render-process-gone', (_event, details) => {
     logCrash(`render-process-gone: ${details.reason} (codice ${details.exitCode})`)
     // Domande in attesa di risposta: la pagina che le avrebbe mostrate non c'è più.
     for (const resolve of pendingQuestions.values()) resolve(false)
     pendingQuestions.clear()
     mcpBridge.rejectAll('The OpenWriter window stopped responding')
-    if (details.reason !== 'clean-exit' && reloads < 2 && !mainWindow.isDestroyed()) {
+    if (details.reason !== 'clean-exit' && reloads < 2 && !win.isDestroyed()) {
       reloads += 1
-      setTimeout(() => { if (!mainWindow.isDestroyed()) mainWindow.webContents.reload() }, 500)
+      setTimeout(() => { if (!win.isDestroyed()) win.webContents.reload() }, 500)
     }
   })
-  mainWindow.webContents.on('unresponsive', () => logCrash('la finestra non risponde'))
-  mainWindow.webContents.on('responsive', () => logCrash('la finestra risponde di nuovo'))
-  mainWindow.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => { if (isMainFrame) logCrash(`caricamento non riuscito: ${description} (${code}) ${url}`) })
-  mainWindow.webContents.on('context-menu', (_event, params) => sendEditContextMenu(mainWindow.webContents, params))
+  win.webContents.on('unresponsive', () => logCrash('la finestra non risponde'))
+  win.webContents.on('responsive', () => logCrash('la finestra risponde di nuovo'))
+  win.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => { if (isMainFrame) logCrash(`caricamento non riuscito: ${description} (${code}) ${url}`) })
+  win.webContents.on('context-menu', (_event, params) => sendEditContextMenu(win.webContents, params))
 
-  if (windowState.maximized) mainWindow.maximize()
-  trackWindowState(mainWindow, windowState)
+  if (windowState.maximized) win.maximize()
+  trackWindowState(win, windowState)
 
   // La scheda del browser è un <webview> isolato: niente preload, niente Node, partizione dedicata, solo http(s).
-  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+  win.webContents.on('will-attach-webview', (event, webPreferences, params) => {
     delete webPreferences.preload
     webPreferences.nodeIntegration = false
     webPreferences.contextIsolation = true
@@ -997,17 +1030,18 @@ function createWindow() {
     if (params.src && !/^(https?:|about:blank)/i.test(params.src)) event.preventDefault()
   })
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//.test(url)) shell.openExternal(url)
     return { action: 'deny' }
   })
 
   if (isDevelopment) {
     // OPENWRITER_DEV_URL permette di puntare a un altro dev server (es. per le prove automatiche).
-    mainWindow.loadURL(process.env.OPENWRITER_DEV_URL || 'http://127.0.0.1:5173')
+    win.loadURL(process.env.OPENWRITER_DEV_URL || 'http://127.0.0.1:5173')
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+    win.loadFile(path.join(__dirname, '../dist/index.html'))
   }
+  return win
 }
 
 ipcMain.handle('document:open', openDocument)
@@ -1016,7 +1050,7 @@ ipcMain.handle('text:open', async (_event, filePath) => readTextForTab(resolveTe
 ipcMain.handle('text:save', async (_event, { filePath, text, eol, bom, saveAs }) => {
   let target = filePath && !saveAs ? resolveTextPath(filePath) : null
   if (!target) {
-    const result = await dialog.showSaveDialog(mainWindow, { defaultPath: filePath || startingPath(t('New text file.txt')), filters: [{ name: t('All files'), extensions: ['*'] }] })
+    const result = await dialog.showSaveDialog(currentWindow(), { defaultPath: filePath || startingPath(t('New text file.txt')), filters: [{ name: t('All files'), extensions: ['*'] }] })
     if (result.canceled) return null
     target = result.filePath
     userTextPaths.add(path.resolve(target))
@@ -1040,6 +1074,9 @@ ipcMain.handle('document:open-path', async (_event, filePath, { original = false
   return { ...document, convertTo: markdownPath }
 })
 ipcMain.handle('document:reopen', (_event, filePath) => readSessionDocument(filePath))
+// L'insieme dei documenti che questa finestra vuole modificare: → { refused } (quelli che un'altra finestra sta già modificando). Chiamata a ogni cambio delle schede.
+ipcMain.handle('documents:set-held', (event, paths) => documentOwners.setHeld({ sender: event.sender, paths }))
+ipcMain.handle('documents:focus-owner', (_event, filePath) => documentOwners.focusOwner(String(filePath || '')))
 // Server MCP per gli agenti esterni (vedi mcp-server.cjs): installato si avvia con il programma stesso (ELECTRON_RUN_AS_NODE), in sviluppo con Node.js.
 ipcMain.handle('mcp:get-config', () => {
   const server = path.join(__dirname, 'mcp-server.cjs')
@@ -1068,9 +1105,9 @@ ipcMain.handle('projects:save-settings', (_event, { directory, settings } = {}) 
   const { target, file } = projectFileFor(directory)
   file.initialize()
   const saved = file.saveSettings(settings)
-  if (projectPath && samePath(projectPath, target)) { applySpellcheck(); applyKnowledgeChoice(target, saved.options.searchIndex) } else if (!saved.options.searchIndex) knowledge.clear(target).catch(() => {})
+  if (windowContext.project && samePath(windowContext.project, target)) { applySpellcheck(); applyKnowledgeChoice(target, saved.options.searchIndex) } else if (!saved.options.searchIndex) knowledge.clear(target).catch(() => {})
   // Chi condivide o smette di condividere cambia ciò che gli altri progetti vedono (e quali vettori calcolare).
-  if (projectPath && !samePath(projectPath, target)) configureSemantic()
+  if (windowContext.project && !samePath(windowContext.project, target)) configureSemantic()
   return saved
 })
 // Icona di un progetto (anche non aperto): un'immagine in `.ow`, ridimensionata; qui si legge, si sceglie e si toglie.
@@ -1078,7 +1115,7 @@ ipcMain.handle('projects:get-icon', (_event, directory) => projectIcon.getIcon(d
 // Scelta in due tempi: qui si sceglie il file e se ne legge il contenuto (l'interfaccia lo decodifica e lo ridimensiona);
 // poi `projects:save-icon` salva il risultato.
 ipcMain.handle('projects:pick-icon', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, { title: t('Choose the project icon'), properties: ['openFile'], filters: [{ name: t('Image'), extensions: projectIcon.ICON_EXTENSIONS }] })
+  const result = await dialog.showOpenDialog(currentWindow(), { title: t('Choose the project icon'), properties: ['openFile'], filters: [{ name: t('Image'), extensions: projectIcon.ICON_EXTENSIONS }] })
   if (result.canceled || !result.filePaths[0]) return null
   return projectIcon.readSource(result.filePaths[0])
 })
@@ -1097,9 +1134,9 @@ ipcMain.handle('projects:export-setup', async (_event, { directory } = {}) => {
   const { target, file } = projectFileFor(directory)
   const settings = file.getSettings()
   const base = (settings.name || path.basename(target)).replace(/[\\/:*?"<>|\r\n]+/g, ' ').trim().slice(0, 60) || 'project'
-  const result = await dialog.showSaveDialog(mainWindow, {
+  const result = await dialog.showSaveDialog(currentWindow(), {
     title: t('Export the project setup'),
-    defaultPath: path.join(projectPath || target, `${base} - setup.json`),
+    defaultPath: path.join(windowContext.project || target, `${base} - setup.json`),
     filters: [{ name: t('OpenWriter project setup'), extensions: ['json'] }],
   })
   if (result.canceled || !result.filePath) return null
@@ -1110,9 +1147,9 @@ ipcMain.handle('projects:export-setup', async (_event, { directory } = {}) => {
 // Importazione in due tempi: si sceglie e si legge il file (con un riepilogo da mostrare), poi si applica con le opzioni scelte.
 const pendingSetups = new Map()
 ipcMain.handle('projects:import-setup-choose', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(currentWindow(), {
     title: t('Import a project setup'),
-    defaultPath: projectPath || undefined,
+    defaultPath: windowContext.project || undefined,
     properties: ['openFile'],
     filters: [{ name: t('OpenWriter project setup'), extensions: ['json'] }],
   })
@@ -1131,7 +1168,7 @@ ipcMain.handle('projects:import-setup-apply', (_event, { id, directory, mode, ov
   const { target, file } = projectFileFor(directory)
   const outcome = projectPack.applyPack({ pack, file, directory: target, mode: mode === 'append' ? 'append' : 'replace', overwrite: overwrite === true, applySettings: applySettings !== false })
   pendingSetups.delete(String(id))
-  if (projectPath && samePath(projectPath, target)) applySpellcheck()
+  if (windowContext.project && samePath(windowContext.project, target)) applySpellcheck()
   return outcome
 })
 ipcMain.handle('projects:copy-context', (_event, { from, to, mode } = {}) => {
@@ -1182,7 +1219,7 @@ ipcMain.handle('skills:delete', (_event, request) => skillsStore.remove(request 
 ipcMain.handle('skills:parse', (_event, markdown) => skillsStore.parse(markdown))
 // Skill da un file Markdown con le direttive: si legge e si interpreta, il salvataggio avviene dopo la revisione nell'editor.
 ipcMain.handle('skills:import-file', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openFile'], filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }] })
+  const result = await dialog.showOpenDialog(currentWindow(), { defaultPath: windowContext.project || undefined, properties: ['openFile'], filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }] })
   if (result.canceled || !result.filePaths[0]) return null
   const file = result.filePaths[0]
   const stat = await fs.stat(file)
@@ -1219,7 +1256,7 @@ ipcMain.handle('project:context-chain', (_event, filePath) => projectFile.getCon
 ipcMain.handle('project:save-settings', (_event, settings) => {
   const saved = projectFile.saveSettings(settings)
   applySpellcheck()
-  applyKnowledgeChoice(projectPath, saved.options.searchIndex)
+  applyKnowledgeChoice(windowContext.project, saved.options.searchIndex)
   return saved
 })
 // Chat in streaming: gli eventi (testo, ragionamento, stato) arrivano al renderer man mano, e la richiesta si può interrompere.
@@ -1234,7 +1271,7 @@ ipcMain.handle('ai:chat-stream', async (event, { requestId, messages, tools, rea
       temperature: cleanTemperature(temperature),
       selection: selection && typeof selection === 'object' ? selection : null,
       use: use && typeof use === 'object' ? { provider: String(use.provider || ''), model: String(use.model || '') } : null,
-      onEvent: (payload) => { if (!event.sender.isDestroyed()) event.sender.send('ai:stream', { requestId, event: payload }) },
+      onEvent: (payload) => { events.toContents(event.sender, 'ai:stream', { requestId, event: payload }) },
     })
   } catch (error) {
     // Un'interruzione voluta non è un errore: si risponde null e il preload la riconverte in un rifiuto lato renderer.
@@ -1255,17 +1292,17 @@ ipcMain.handle('tools:search-files', async (_event, args = {}) => {
 // Acceso o spento dalle impostazioni del progetto: spento, l'indice del progetto si svuota (si ricostruisce riaccendendolo).
 function applyKnowledgeChoice(directory, enabled) {
   if (!directory) return
-  const isOpen = projectPath && samePath(projectPath, directory)
-  if (isOpen) knowledgeOn = enabled !== false
+  const isOpen = windowContext.project && samePath(windowContext.project, directory)
+  if (isOpen) windowContext.knowledgeOn = enabled !== false
   if (enabled === false) { knowledge.clear(directory).catch(() => {}); if (isOpen) { stopReferenceWatch(); configureSemantic() } }
   else if (isOpen) startKnowledge()
 }
 // Ricerca per significato: stato dei pacchetti (scaricati o no), dispositivo scelto e in uso, scheda video e avanzamento dei vettori per il progetto aperto.
 // `pack` è il pacchetto del dispositivo in uso (o di quello scelto, se nessuno è installato): è ciò che mostrano le impostazioni del progetto.
 async function semanticStatus(directory) {
-  const target = directory ? path.resolve(String(directory)) : projectPath
-  const isOpen = Boolean(projectPath && target && samePath(projectPath, target))
-  const enabled = isOpen ? knowledgeOn : Boolean(target && createProjectFile({ getProjectPath: () => target }).searchIndexEnabled())
+  const target = directory ? path.resolve(String(directory)) : windowContext.project
+  const isOpen = Boolean(windowContext.project && target && samePath(windowContext.project, target))
+  const enabled = isOpen ? windowContext.knowledgeOn : Boolean(target && createProjectFile({ getProjectPath: () => target }).searchIndexEnabled())
   const wanted = wantedDevice()
   const using = activeDevice()
   const result = {
@@ -1343,15 +1380,15 @@ ipcMain.handle('semantic:remove', async (_event, directory, device) => {
 })
 // Stato dell'indice di un progetto (aperto o no) e ricostruzione dai file.
 async function knowledgeStatus(directory) {
-  const target = directory ? path.resolve(String(directory)) : projectPath
+  const target = directory ? path.resolve(String(directory)) : windowContext.project
   if (!target) return { enabled: false, available: false, files: 0, chunks: 0, updatedAt: null }
-  const enabled = projectPath && samePath(projectPath, target) ? knowledgeOn : createProjectFile({ getProjectPath: () => target }).searchIndexEnabled()
+  const enabled = windowContext.project && samePath(windowContext.project, target) ? windowContext.knowledgeOn : createProjectFile({ getProjectPath: () => target }).searchIndexEnabled()
   if (!knowledge.available) return { enabled, available: false, error: knowledge.error, files: 0, chunks: 0, updatedAt: null }
   try { return { enabled, available: true, ...(await knowledge.stats(target)) } } catch (error) { return { enabled, available: false, error: error.message, files: 0, chunks: 0, updatedAt: null } }
 }
 ipcMain.handle('project:knowledge-status', (_event, directory) => knowledgeStatus(directory))
 ipcMain.handle('project:knowledge-rebuild', async (_event, directory) => {
-  const target = directory ? path.resolve(String(directory)) : projectPath
+  const target = directory ? path.resolve(String(directory)) : windowContext.project
   if (!target) throw new Error(t('No project open'))
   if (!knowledge.available) throw new Error(knowledge.error || 'The search index is not available')
   await knowledge.rebuild(target)
@@ -1365,7 +1402,7 @@ ipcMain.handle('project:knowledge-rebuild', async (_event, directory) => {
 // `everything` (la ricerca della Home, che è dell'utente e non di un assistente): tutti i progetti con l'indice acceso, anche quelli che non condividono la loro conoscenza. Condividere
 // decide solo cosa vedono gli ALTRI progetti e i loro assistenti; le informazioni, nel proprio indice, ci sono comunque.
 function outsideFor(base, { everything = false, granted = [], workspace } = {}) {
-  if (base && projectPath && samePath(base, projectPath)) return outsideFolders({ granted, workspace })
+  if (base && windowContext.project && samePath(base, windowContext.project)) return outsideFolders({ granted, workspace })
   let references = []
   try { references = base ? createReferencesStore({ getProjectPath: () => base }).list() : [] } catch { references = [] }
   try {
@@ -1375,16 +1412,16 @@ function outsideFor(base, { everything = false, granted = [], workspace } = {}) 
 // Ricerca per rilevanza (e per significato, se c'è il modello) nel progetto, nei suoi riferimenti e negli altri progetti. Non dipende dal progetto aperto: `project` (un agente
 // esterno) indica da quale progetto si cerca; senza, si usa quello aperto, e senza nessuno si cerca in tutti i progetti che condividono la loro conoscenza.
 async function runKnowledgeSearch(args = {}, { project: asked = null, home = false, granted = [] } = {}) {
-  const known = (directory) => Boolean((projectPath && samePath(directory, projectPath)) || projectsStore.list().some((item) => samePath(item.path, directory)))
+  const known = (directory) => Boolean((windowContext.project && samePath(directory, windowContext.project)) || projectsStore.list().some((item) => samePath(item.path, directory)))
   // `home`: la ricerca della Home non parte da nessun progetto, anche se uno è aperto: cerca in tutti quelli che condividono la conoscenza.
-  const base = home ? null : asked && known(path.resolve(String(asked))) ? path.resolve(String(asked)) : (asked ? null : projectPath)
+  const base = home ? null : asked && known(path.resolve(String(asked))) ? path.resolve(String(asked)) : (asked ? null : windowContext.project)
   const query = String(args.query || '').trim()
   if (!query) throw new Error('Missing parameter "query"')
   if (!knowledge.available) throw new Error('The search index is not available: use search_files')
   if (base) {
-    const on = projectPath && samePath(base, projectPath) ? knowledgeOn : createProjectFile({ getProjectPath: () => base }).searchIndexEnabled()
+    const on = windowContext.project && samePath(base, windowContext.project) ? windowContext.knowledgeOn : createProjectFile({ getProjectPath: () => base }).searchIndexEnabled()
     if (!on) throw new Error('The search index is turned off for this project: use search_files')
-  } else if (!asked && !projectPath && !home) throw new Error(t('No project open'))
+  } else if (!asked && !windowContext.project && !home) throw new Error(t('No project open'))
   const given = String(args.path || '').trim().replace(/\\/g, '/')
   // `others` (o il vecchio `references`): tutto ciò che sta fuori dal progetto, cioè gli altri progetti e le cartelle di riferimento.
   const wanted = String(args.scope || '').toLowerCase()
@@ -1403,7 +1440,7 @@ async function runKnowledgeSearch(args = {}, { project: asked = null, home = fal
   } else {
     if (given && given !== '.' && given !== '/') {
       if (!base) throw new Error('A path of the project needs a project: use "@name/…" or leave the path out')
-      if (projectPath && samePath(base, projectPath)) folder = path.relative(projectPath, resolveInProject(path.join(projectPath, given))).split(path.sep).join('/')
+      if (windowContext.project && samePath(base, windowContext.project)) folder = path.relative(windowContext.project, resolveInProject(path.join(windowContext.project, given))).split(path.sep).join('/')
       else {
         const clean = path.posix.normalize(given).replace(/^\/+/, '')
         if (clean.startsWith('..')) throw new Error('The path is outside the project')
@@ -1496,7 +1533,7 @@ ipcMain.handle('projects:search', (_event, args) => searchProjectsForHome(args))
 
 // Spazi di lavoro (workspace): le definizioni, quello attivo e i membri temporanei. Ogni modifica avvisa l'interfaccia (`workspaces:changed`).
 function notifyWorkspaces() {
-  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('workspaces:changed')
+  events.broadcast('workspaces:changed')
 }
 const workspacesState = () => ({ active: workspacesStore.active(), workspaces: workspacesStore.list(), temporary: workspacesStore.temporary() })
 const changesWorkspaces = (action) => (_event, ...args) => { const result = action(...args); notifyWorkspaces(); return result }
@@ -1595,7 +1632,7 @@ function outsideRoot(given) {
   }
 }
 function toolsFor(given) {
-  const reference = projectPath ? outsideRoot(given) : null
+  const reference = windowContext.project ? outsideRoot(given) : null
   if (!reference) return { tools: projectTools, relative: given, prefix: '' }
   return { tools: createProjectTools({ getProjectPath: () => reference.root, readDocument: (filePath) => readDocument(filePath) }), relative: reference.relative, prefix: `@${reference.name}` }
 }
@@ -1627,10 +1664,10 @@ ipcMain.handle('images:read-file', async (_event, relativePath) => { const { too
 // Descrizione di un'immagine del progetto, salvata dall'assistente in .ow/image-descriptions/ (un file .md per immagine) e riletta al posto
 // dell'immagine: evita di riguardarla ogni volta. L'utente può modificarla o cancellarla a mano.
 function imageDescriptionFile(relativePath) {
-  if (!projectPath) throw new Error(t('No project open'))
+  if (!windowContext.project) throw new Error(t('No project open'))
   const relative = String(relativePath || '').replace(/[\\]/g, '/').replace(/^\/+/, '')
   if (!relative || relative.split('/').some((part) => part === '..' || part === '.ow')) throw new Error(t('Invalid name'))
-  return path.join(projectPath, '.ow', 'image-descriptions', `${relative.replace(/\//g, '__')}.md`)
+  return path.join(windowContext.project, '.ow', 'image-descriptions', `${relative.replace(/\//g, '__')}.md`)
 }
 ipcMain.handle('images:read-description', async (_event, relativePath) => fs.readFile(imageDescriptionFile(relativePath), 'utf8').catch(() => null))
 ipcMain.handle('images:write-description', async (_event, relativePath, description) => {
@@ -1641,13 +1678,13 @@ ipcMain.handle('images:write-description', async (_event, relativePath, descript
 // Schermate: solo la finestra dell'app o le sue schede browser (webview), mai altro.
 ipcMain.handle('images:capture-page', async (_event, rect) => {
   const area = { x: Math.max(0, Math.round(rect.x)), y: Math.max(0, Math.round(rect.y)), width: Math.max(1, Math.round(rect.width)), height: Math.max(1, Math.round(rect.height)) }
-  return images.prepareImage(await mainWindow.webContents.capturePage(area))
+  return images.prepareImage(await currentWindow().webContents.capturePage(area))
 })
 // `region` (facoltativo, il "Riquadro" tracciato dall'utente): { rect, viewport } con il rettangolo e la dimensione dell'area della pagina, in pixel dell'interfaccia.
 // Si fotografa la pagina intera e si ritaglia qui: l'immagine ha i pixel fisici (con la scala dello schermo al 125% o 150% è più grande dell'area), quindi il rettangolo si scala.
 ipcMain.handle('images:capture-webview', async (_event, contentsId, region) => {
   const contents = webContents.fromId(Number(contentsId))
-  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) throw new Error(t('Invalid browser tab'))
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== currentWindow()?.webContents) throw new Error(t('Invalid browser tab'))
   const image = await contents.capturePage()
   if (!region?.rect || !region?.viewport?.width) return images.prepareImage(image)
   const size = image.getSize()
@@ -1662,7 +1699,7 @@ ipcMain.handle('images:capture-webview', async (_event, contentsId, region) => {
 // testo chiaro su fondo bianco. Qui si fa sì che dichiarino lo stesso tema dell'app (prefers-color-scheme).
 ipcMain.handle('browser:set-color-scheme', async (_event, { contentsId, dark } = {}) => {
   const contents = webContents.fromId(Number(contentsId))
-  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) return false
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== currentWindow()?.webContents) return false
   try {
     if (!contents.debugger.isAttached()) contents.debugger.attach('1.3')
     await contents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: dark ? 'dark' : 'light' }] })
@@ -1699,18 +1736,18 @@ function guardSession(contents) {
 }
 ipcMain.handle('browser:guard-agent', (_event, { contentsId, on } = {}) => {
   const contents = webContents.fromId(Number(contentsId))
-  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) return false
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== currentWindow()?.webContents) return false
   if (on) { guardSession(contents); guardedBrowsers.add(contents.id) } else guardedBrowsers.delete(contents.id)
   return true
 })
 // Schermata della scheda del browser, a piena risoluzione, salvata come PNG in <progetto>/screenshots/. Restituisce il percorso del file.
 ipcMain.handle('browser:save-screenshot', async (_event, { contentsId, title } = {}) => {
-  if (!projectPath) throw new Error(t('Open a project folder to save screenshots'))
+  if (!windowContext.project) throw new Error(t('Open a project folder to save screenshots'))
   const contents = webContents.fromId(Number(contentsId))
-  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) throw new Error(t('Invalid browser tab'))
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== currentWindow()?.webContents) throw new Error(t('Invalid browser tab'))
   const image = await contents.capturePage()
   if (image.isEmpty()) throw new Error(t('Empty image or unsupported format'))
-  const directory = path.join(projectPath, 'screenshots')
+  const directory = path.join(windowContext.project, 'screenshots')
   await fs.mkdir(directory, { recursive: true })
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
   const label = String(title || '').replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'screenshot'
@@ -1737,9 +1774,9 @@ ipcMain.handle('images:save', async (_event, { data, mime, label } = {}) => {
   const extension = mime === 'image/jpeg' ? 'jpg' : 'png'
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
   const name = String(label || '').replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'image'
-  const screenshots = projectPath ? path.join(projectPath, 'screenshots') : null
-  const directory = screenshots && fsSync.existsSync(screenshots) ? screenshots : projectPath || app.getPath('pictures')
-  const result = await dialog.showSaveDialog(mainWindow, {
+  const screenshots = windowContext.project ? path.join(windowContext.project, 'screenshots') : null
+  const directory = screenshots && fsSync.existsSync(screenshots) ? screenshots : windowContext.project || app.getPath('pictures')
+  const result = await dialog.showSaveDialog(currentWindow(), {
     defaultPath: path.join(directory, `${name}-${stamp}.${extension}`),
     filters: [{ name: extension === 'jpg' ? 'JPEG' : 'PNG', extensions: [extension] }],
   })
@@ -1750,7 +1787,7 @@ ipcMain.handle('images:save', async (_event, { data, mime, label } = {}) => {
 // Menu contestuale del browser: azioni sulla pagina (modifica del testo, copia di un'immagine) e immagini della pagina, salvate nel progetto o allegate alla chat.
 const webviewOf = (contentsId) => {
   const contents = webContents.fromId(Number(contentsId))
-  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== mainWindow.webContents) throw new Error(t('Invalid browser tab'))
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== currentWindow()?.webContents) throw new Error(t('Invalid browser tab'))
   return contents
 }
 ipcMain.handle('browser:context-action', (_event, { contentsId, action, x, y } = {}) => {
@@ -1792,7 +1829,7 @@ async function pageImageBytes(contents, address) {
 }
 // «Salva» dal tasto destro su un'immagine: scaricata nella cartella images/ del progetto, col nome che aveva (senza sovrascrivere). Restituisce il percorso.
 ipcMain.handle('browser:save-image', async (_event, { contentsId, url } = {}) => {
-  if (!projectPath) throw new Error(t('Open a project folder to save images'))
+  if (!windowContext.project) throw new Error(t('Open a project folder to save images'))
   const contents = webviewOf(contentsId)
   const { buffer, mime } = await pageImageBytes(contents, url)
   let stem = ''
@@ -1804,7 +1841,7 @@ ipcMain.handle('browser:save-image', async (_event, { contentsId, url } = {}) =>
     if (!extension) extension = parsed.ext.replace('.', '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5)
   } catch { /* data: o blob: senza nome */ }
   stem = stem.replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^[-.]+|-+$/g, '').slice(0, 60) || `image-${new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)}`
-  const directory = path.join(projectPath, 'images')
+  const directory = path.join(windowContext.project, 'images')
   await fs.mkdir(directory, { recursive: true })
   let target = path.join(directory, `${stem}.${extension || 'png'}`)
   for (let counter = 2; fsSync.existsSync(target); counter += 1) target = path.join(directory, `${stem}-${counter}.${extension || 'png'}`)
@@ -1854,7 +1891,7 @@ async function readChatAttachment(filePath) {
 ipcMain.handle('chat:pick-attachments', async (_event, { images: allowImages = false, pdf = false } = {}) => {
   const extensions = [...(allowImages ? CHAT_IMAGE_EXTENSIONS : []), ...(pdf ? ['pdf'] : [])]
   if (!extensions.length) return []
-  const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openFile', 'multiSelections'], filters: [{ name: t('Attachments'), extensions }] })
+  const result = await dialog.showOpenDialog(currentWindow(), { defaultPath: windowContext.project || undefined, properties: ['openFile', 'multiSelections'], filters: [{ name: t('Attachments'), extensions }] })
   return result.canceled ? [] : result.filePaths
 })
 ipcMain.handle('chat:read-attachment', (_event, filePath) => readChatAttachment(filePath))
@@ -1877,10 +1914,18 @@ ipcMain.handle('bookmarks:update', (_event, { filePath, id, changes }) => bookma
 ipcMain.handle('bookmarks:delete', (_event, { filePath, id }) => bookmarksStore.remove(filePath, id))
 ipcMain.handle('chat:list', () => chatStore.list())
 ipcMain.handle('chat:get', (_event, id) => chatStore.get(id))
-ipcMain.handle('chat:create', (_event, conversation) => chatStore.create(conversation || {}))
-ipcMain.handle('chat:save', (_event, conversation) => chatStore.save(conversation))
-ipcMain.handle('chat:set-queue', (_event, { id, queue } = {}) => chatStore.setQueue(String(id || ''), queue))
-ipcMain.handle('chat:delete', (_event, id) => chatStore.remove(id))
+// Ogni modifica a una conversazione (messaggi, coda, titolo) si dice alle altre finestre dello stesso progetto, che la rileggono; chi l'ha fatta no.
+const announceChat = (event, id, kind, extra = {}) => chatRuns.changed({ sender: event.sender, project: windowContext.project, conversationId: String(id || ''), kind, ...extra })
+ipcMain.handle('chat:create', async (event, conversation) => { const saved = await chatStore.create(conversation || {}); announceChat(event, saved?.id, 'content'); return saved })
+ipcMain.handle('chat:save', async (event, conversation) => { const saved = await chatStore.save(conversation); announceChat(event, saved?.id || conversation?.id, 'content'); return saved })
+ipcMain.handle('chat:set-queue', async (event, { id, queue } = {}) => { const saved = await chatStore.setQueue(String(id || ''), queue); announceChat(event, id, 'queue', { queue: saved }); return saved })
+ipcMain.handle('chat:delete', async (event, id) => { const result = await chatStore.remove(id); announceChat(event, id, 'deleted'); return result })
+// Il lavoro dell'assistente su una conversazione: la finestra che lo guida lo annuncia, manda il testo che arriva e lo chiude; le altre lo seguono (chat-runs.cjs).
+ipcMain.on('chat:run-start', (event, id) => { chatRuns.start({ sender: event.sender, project: windowContext.project, conversationId: String(id || '') }) })
+ipcMain.on('chat:run-live', (event, id, live) => { chatRuns.live({ sender: event.sender, project: windowContext.project, conversationId: String(id || ''), live }) })
+ipcMain.on('chat:run-end', (event, id) => { chatRuns.end({ sender: event.sender, project: windowContext.project, conversationId: String(id || '') }) })
+ipcMain.handle('chat:runs', () => chatRuns.list(windowContext.project))
+ipcMain.handle('chat:cancel-run', (_event, id) => chatRuns.cancel({ project: windowContext.project, conversationId: String(id || '') }))
 ipcMain.handle('chat:open-folder', () => shell.openPath(chatStore.ensureDirectory()))
 ipcMain.handle('spellcheck:get', () => spellcheckState())
 ipcMain.handle('spellcheck:set-global', (_event, languages) => {
@@ -1894,11 +1939,11 @@ ipcMain.handle('history:list', (_event, filePath) => projectFile.listVersions(fi
 ipcMain.handle('history:get', (_event, { filePath, id }) => projectFile.getVersion(filePath, id))
 ipcMain.handle('history:add', (_event, { filePath, markdown, label }) => projectFile.addVersion(filePath, String(markdown ?? ''), { label: label || '' }))
 ipcMain.handle('history:delete', (_event, { filePath, id }) => projectFile.deleteVersion(filePath, id))
-ipcMain.handle('workspace:get-project', () => projectPath)
+ipcMain.handle('workspace:get-project', () => windowContext.project)
 ipcMain.handle('workspace:get-main', () => mainDirectory())
 ipcMain.handle('workspace:choose-project', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openDirectory', 'createDirectory'] })
-  return result.canceled ? projectPath : setProject(result.filePaths[0])
+  const result = await dialog.showOpenDialog(currentWindow(), { defaultPath: windowContext.project || undefined, properties: ['openDirectory', 'createDirectory'] })
+  return result.canceled ? windowContext.project : setProject(result.filePaths[0])
 })
 // L'elenco dei progetti dello spazio attivo; i membri temporanei (aperti da un agente) sono segnati.
 const listedProjects = () => {
@@ -1917,7 +1962,7 @@ ipcMain.handle('workspace:open-project', async (_event, directory, options = {})
 ipcMain.handle('workspace:create-project', async (_event, name) => {
   const folderName = String(name || '').trim()
   if (!folderName || /[\\/:*?"<>|]/.test(folderName) || folderName === '.' || folderName === '..') throw new Error(t('Invalid name'))
-  const result = await dialog.showOpenDialog(mainWindow, { title: t('Choose where to create the project'), defaultPath: path.dirname(projectPath || app.getPath('documents')), properties: ['openDirectory', 'createDirectory'] })
+  const result = await dialog.showOpenDialog(currentWindow(), { title: t('Choose where to create the project'), defaultPath: path.dirname(windowContext.project || app.getPath('documents')), properties: ['openDirectory', 'createDirectory'] })
   if (result.canceled) return null
   const target = path.join(result.filePaths[0], folderName)
   if (fsSync.existsSync(target)) throw new Error(t('An item with this name already exists'))
@@ -1940,25 +1985,25 @@ ipcMain.handle('tools:create-project', async (_event, { name, documents } = {}) 
     confirmLabel: t('Choose the folder…'),
   })
   if (!confirmed) return null
-  const picked = await dialog.showOpenDialog(mainWindow, { title: t('Choose where to create the project'), defaultPath: app.getPath('documents'), properties: ['openDirectory', 'createDirectory'] })
+  const picked = await dialog.showOpenDialog(currentWindow(), { title: t('Choose where to create the project'), defaultPath: app.getPath('documents'), properties: ['openDirectory', 'createDirectory'] })
   if (picked.canceled || !picked.filePaths[0]) return null
   const target = path.join(picked.filePaths[0], folderName)
   if (fsSync.existsSync(target)) throw new Error(t('An item with this name already exists'))
   await fs.mkdir(target)
   return { path: target, links: writeLinksTo(target, linked) }
 })
-ipcMain.handle('references:list', () => (projectPath ? referencesStore.list() : []))
+ipcMain.handle('references:list', () => (windowContext.project ? referencesStore.list() : []))
 // Riferimenti web (la stellina del browser): pagine salvate con una copia in Markdown in `.ow/web` (vedi web-references.cjs). Salvare o togliere una pagina riallinea
 // subito la ricerca: la cartella `.ow/web` è la cartella di riferimento automatica `@web`.
 async function webReferencesChanged() {
   watchReferences()
-  if (!knowledgeOn || !projectPath) return
+  if (!windowContext.knowledgeOn || !windowContext.project) return
   const folder = webStore.folder()
-  if (webFolderOf(projectPath)) knowledge.sync(folder).catch(() => {}); else knowledge.clear(folder).catch(() => {})
+  if (webFolderOf(windowContext.project)) knowledge.sync(folder).catch(() => {}); else knowledge.clear(folder).catch(() => {})
   configureSemantic()
 }
-ipcMain.handle('webrefs:list', () => (projectPath ? webStore.list() : []))
-ipcMain.handle('webrefs:find', (_event, url) => (projectPath ? webStore.find(String(url || '')) : null))
+ipcMain.handle('webrefs:list', () => (windowContext.project ? webStore.list() : []))
+ipcMain.handle('webrefs:find', (_event, url) => (windowContext.project ? webStore.find(String(url || '')) : null))
 ipcMain.handle('webrefs:save', async (_event, page = {}) => {
   const entry = webStore.save({ url: String(page.url || ''), title: String(page.title || ''), markdown: String(page.markdown || ''), siteName: String(page.siteName || ''), source: String(page.source || 'user'), checkOnly: page.checkOnly === true })
   await webReferencesChanged()
@@ -1971,10 +2016,10 @@ ipcMain.handle('webrefs:remove', async (_event, id) => {
 })
 // Aggiunge una cartella di riferimento: si sceglie col dialogo (o, per il trascinamento, si passa il percorso).
 ipcMain.handle('references:add', async (_event, directory) => {
-  if (!projectPath) throw new Error(t('No project open'))
+  if (!windowContext.project) throw new Error(t('No project open'))
   let chosen = directory
   if (!chosen) {
-    const result = await dialog.showOpenDialog(mainWindow, { title: t('Choose a reference folder'), properties: ['openDirectory'] })
+    const result = await dialog.showOpenDialog(currentWindow(), { title: t('Choose a reference folder'), properties: ['openDirectory'] })
     if (result.canceled || !result.filePaths[0]) return null
     chosen = result.filePaths[0]
   }
@@ -1986,7 +2031,7 @@ ipcMain.handle('references:add', async (_event, directory) => {
 ipcMain.handle('references:update', async (_event, name) => {
   const reference = referencesStore.get(String(name))
   if (!reference) throw new Error(t('Reference not found'))
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(currentWindow(), {
     title: t('Choose the folder this reference should point to'),
     defaultPath: fsSync.existsSync(path.dirname(reference.path)) ? path.dirname(reference.path) : undefined,
     properties: ['openDirectory'],
@@ -2011,12 +2056,12 @@ ipcMain.handle('references:reveal', async (_event, name) => {
   const failure = await shell.openPath(reference.path)
   if (failure) throw new Error(failure)
 })
-ipcMain.handle('links:list', () => (projectPath ? linksStore.list() : []))
+ipcMain.handle('links:list', () => (windowContext.project ? linksStore.list() : []))
 ipcMain.handle('links:remove', (_event, target) => linksStore.remove(target))
 // Aggiorna un collegamento: si sceglie il file a cui deve puntare (di solito lo stesso documento, spostato o rinominato).
 ipcMain.handle('links:update', async (_event, target) => {
   if (!linksStore.has(String(target))) throw new Error(t('Link not found'))
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(currentWindow(), {
     title: t('Choose the file this link should point to'),
     defaultPath: fsSync.existsSync(path.dirname(String(target))) ? path.dirname(String(target)) : undefined,
     properties: ['openFile'],
@@ -2068,16 +2113,16 @@ ipcMain.handle('workspace:create-entry', async (_event, { parent, name, type } =
   const base = resolveInProject(parent)
   const clean = String(name || '').trim()
   if (!clean || clean === '.' || clean === '..' || /[\\/:*?"<>|]/.test(clean)) throw new Error(t('Invalid name'))
-  const relative = path.relative(projectPath, path.join(base, clean)).split(path.sep).join('/')
+  const relative = path.relative(windowContext.project, path.join(base, clean)).split(path.sep).join('/')
   const directory = type === 'directory'
   const final = directory || path.extname(clean) ? relative : `${relative}.md`
-  if (fsSync.existsSync(path.join(projectPath, final))) throw new Error(t('An item with this name already exists'))
+  if (fsSync.existsSync(path.join(windowContext.project, final))) throw new Error(t('An item with this name already exists'))
   // Dall'albero il nome lo sceglie l'utente: lo stesso nome in un'altra cartella è lecito (README.md, index.md…); il controllo sui doppioni vale per l'assistente.
   return (directory ? await projectTools.createDirectory(final) : await projectTools.createFile(final, '')).absolute
 })
 ipcMain.handle('app:open-link', (_event, url) => (/^https?:\/\//i.test(String(url)) ? shell.openExternal(String(url)) : false))
 ipcMain.handle('images:pick', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, { defaultPath: projectPath || undefined, properties: ['openFile'], filters: [{ name: t('Image'), extensions: IMAGE_EXTENSIONS.map((extension) => extension.slice(1)) }] })
+  const result = await dialog.showOpenDialog(currentWindow(), { defaultPath: windowContext.project || undefined, properties: ['openFile'], filters: [{ name: t('Image'), extensions: IMAGE_EXTENSIONS.map((extension) => extension.slice(1)) }] })
   return result.canceled ? null : result.filePaths[0]
 })
 // Porta un'immagine (file esistente o dati incollati) accanto al documento, nella sua sottocartella images/, e restituisce il percorso assoluto.
@@ -2109,11 +2154,11 @@ ipcMain.handle('edit:add-dictionary', (event, word) => event.sender.session.addW
 ipcMain.handle('workspace:rename-path', (_event, request) => renamePath(request || {}))
 ipcMain.handle('workspace:delete-path', (_event, target) => deletePath(target))
 ipcMain.handle('workspace:delete-paths', (_event, targets) => deletePaths(targets))
-ipcMain.handle('workspace:open-project-folder', async () => { if (!projectPath) throw new Error(t('No project open')); const failure = await shell.openPath(projectPath); if (failure) throw new Error(failure) })
+ipcMain.handle('workspace:open-project-folder', async () => { if (!windowContext.project) throw new Error(t('No project open')); const failure = await shell.openPath(windowContext.project); if (failure) throw new Error(failure) })
 // Trasforma una cartella del progetto in sotto-progetto: crea la sua `.ow` (impostazioni e contesto vuoti). Solo su richiesta esplicita dell'utente.
 ipcMain.handle('workspace:create-subproject', async (_event, directory) => {
   const target = resolveInProject(directory)
-  if (target === projectPath) throw new Error(t('The project folder is already a project'))
+  if (target === windowContext.project) throw new Error(t('The project folder is already a project'))
   if (!(await fs.stat(target).then((stat) => stat.isDirectory(), () => false))) throw new Error(t('Not a folder'))
   if (fsSync.existsSync(path.join(target, projectFile.directoryName))) throw new Error(t('This folder is already a project'))
   // Nasce che eredita il contesto del progetto padre; si può togliere dalle impostazioni del sotto-progetto.
@@ -2144,7 +2189,7 @@ function setInheritance(directory, inherit) {
 // e va nella cartella scelta. Diventa un progetto a sé, che non eredita più il contesto di nessun altro.
 ipcMain.handle('workspace:move-subproject-out', async (_event, subproject) => {
   const source = resolveInProject(subproject)
-  if (source === projectPath) throw new Error(t('The project folder cannot be renamed from here'))
+  if (source === windowContext.project) throw new Error(t('The project folder cannot be renamed from here'))
   if (!fsSync.existsSync(path.join(source, projectFile.directoryName))) throw new Error(t('This folder is not a sub-project'))
   const confirmed = await confirmInApp({
     message: t('Make the sub-project "{name}" a standalone project?', { name: path.basename(source) }),
@@ -2152,15 +2197,16 @@ ipcMain.handle('workspace:move-subproject-out', async (_event, subproject) => {
     confirmLabel: t('Choose the destination…'),
   })
   if (!confirmed) return null
-  const picked = await dialog.showOpenDialog(mainWindow, { title: t('Choose where to move the project'), defaultPath: path.dirname(projectPath), properties: ['openDirectory', 'createDirectory'] })
+  const picked = await dialog.showOpenDialog(currentWindow(), { title: t('Choose where to move the project'), defaultPath: path.dirname(windowContext.project), properties: ['openDirectory', 'createDirectory'] })
   if (picked.canceled || !picked.filePaths[0]) return null
   const parent = path.resolve(picked.filePaths[0])
-  if (isInsideOf(projectPath, parent)) throw new Error(t('Choose a folder outside this project'))
+  if (isInsideOf(windowContext.project, parent)) throw new Error(t('Choose a folder outside this project'))
   const target = path.join(parent, path.basename(source))
   if (fsSync.existsSync(target)) throw new Error(t('An item with this name already exists'))
   await moveDirectory(source, target)
   try { setInheritance(target, false) } catch (error) { console.error('Eredità non aggiornata:', error) }
   projectsStore.touch(target)
+  notifyWorkspaces()
   return target
 })
 
@@ -2169,12 +2215,12 @@ ipcMain.handle('workspace:move-subproject-out', async (_event, subproject) => {
 ipcMain.handle('workspace:move-project-in', async (_event, directory) => {
   const destination = resolveInProject(directory)
   if (!(await fs.stat(destination).then((stat) => stat.isDirectory(), () => false))) throw new Error(t('Not a folder'))
-  const picked = await dialog.showOpenDialog(mainWindow, { title: t('Choose the project to move here'), defaultPath: path.dirname(projectPath), properties: ['openDirectory'] })
+  const picked = await dialog.showOpenDialog(currentWindow(), { title: t('Choose the project to move here'), defaultPath: path.dirname(windowContext.project), properties: ['openDirectory'] })
   if (picked.canceled || !picked.filePaths[0]) return null
   const source = path.resolve(picked.filePaths[0])
   if (!fsSync.existsSync(path.join(source, projectFile.directoryName))) throw new Error(t('This folder is not a project: it has no .ow folder'))
-  if (isInsideOf(source, projectPath)) throw new Error(t('The open project cannot be moved into itself'))
-  if (isInsideOf(projectPath, source)) throw new Error(t('This folder is already inside the open project'))
+  if (isInsideOf(source, windowContext.project)) throw new Error(t('The open project cannot be moved into itself'))
+  if (isInsideOf(windowContext.project, source)) throw new Error(t('This folder is already inside the open project'))
   const target = path.join(destination, path.basename(source))
   if (fsSync.existsSync(target)) throw new Error(t('An item with this name already exists'))
   const confirmed = await confirmInApp({
@@ -2200,14 +2246,14 @@ ipcMain.handle('workspace:move-project', async (_event, directory) => {
     confirmLabel: t('Choose the destination…'),
   })
   if (!confirmed) return null
-  const picked = await dialog.showOpenDialog(mainWindow, { title: t('Choose where to move the project'), defaultPath: path.dirname(source), properties: ['openDirectory', 'createDirectory'] })
+  const picked = await dialog.showOpenDialog(currentWindow(), { title: t('Choose where to move the project'), defaultPath: path.dirname(source), properties: ['openDirectory', 'createDirectory'] })
   if (picked.canceled || !picked.filePaths[0]) return null
   const parent = path.resolve(picked.filePaths[0])
   if (isInsideOf(source, parent)) throw new Error(t('Choose a folder outside the project'))
   const target = path.join(parent, path.basename(source))
   if (samePath(target, source)) return null
   if (fsSync.existsSync(target)) throw new Error(t('An item with this name already exists'))
-  const wasOpen = Boolean(projectPath) && path.resolve(projectPath).toLowerCase() === source.toLowerCase()
+  const wasOpen = Boolean(windowContext.project) && path.resolve(windowContext.project).toLowerCase() === source.toLowerCase()
   await moveDirectory(source, target)
   projectsStore.replace(source, target)
   // Un progetto spostato conserva il suo posto negli spazi di lavoro.
@@ -2247,7 +2293,7 @@ ipcMain.handle('workspace:list-directory', (_event, directory) => listDirectory(
 // Tutti i documenti Markdown del progetto (percorsi assoluti), per proporli mentre si scrive un collegamento.
 const MAX_LINKABLE_DOCUMENTS = 5000
 ipcMain.handle('workspace:list-documents', async () => {
-  if (!projectPath) return []
+  if (!windowContext.project) return []
   const found = []
   const walk = async (directory) => {
     let entries
@@ -2263,7 +2309,7 @@ ipcMain.handle('workspace:list-documents', async () => {
       }
     }
   }
-  await walk(projectPath)
+  await walk(windowContext.project)
   return found
 })
 // Le immagini incorporate nel testo (data:, per esempio quelle di un PDF o di un DOCX aperto) diventano file nella cartella images/ accanto al documento:
@@ -2294,7 +2340,7 @@ async function externalizeImages(markdown, markdownPath) {
   })
 }
 
-ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, saveAs, defaultName }) => {
+ipcMain.handle('document:save-markdown', async (event, { filePath, markdown, saveAs, defaultName }) => {
   const targetPath = await chooseSavePath({
     filePath,
     saveAs,
@@ -2312,6 +2358,8 @@ ipcMain.handle('document:save-markdown', async (_event, { filePath, markdown, sa
   } catch (error) {
     console.error('Versione non salvata:', error)
   }
+  // Le altre finestre che hanno aperto questo documento lo rileggono (anche se sta fuori dal progetto, dove nessuno controlla la cartella).
+  events.toOthers(event.sender, 'document:saved', { path: markdownPath })
   return markdownPath
 })
 // Nome proposto per un'esportazione: il titolo del documento (senza estensione né caratteri non ammessi), o "Nuovo documento".
@@ -2344,10 +2392,10 @@ ipcMain.handle('document:export-markdown-embedded', async (_event, { markdown, d
 })
 // L'inverso: da un Markdown con le immagini incorporate si ricava un .md leggero e le immagini in images/ accanto. Si lavora sul file su disco (anche decine
 // di MB), senza passare dall'editor; il file originale non cambia. `source`: il file da convertire (altrimenti si sceglie).
-ipcMain.handle('document:extract-markdown-images', async (_event, { source, directory } = {}) => {
+ipcMain.handle('document:extract-markdown-images', async (event, { source, directory } = {}) => {
   let file = source ? String(source) : null
   if (!file) {
-    const picked = await dialog.showOpenDialog(mainWindow, { title: t('Markdown file with embedded images'), defaultPath: directory || projectPath || undefined, properties: ['openFile'], filters: [markdownFilter] })
+    const picked = await dialog.showOpenDialog(currentWindow(), { title: t('Markdown file with embedded images'), defaultPath: directory || windowContext.project || undefined, properties: ['openFile'], filters: [markdownFilter] })
     if (picked.canceled || !picked.filePaths[0]) return null
     file = picked.filePaths[0]
   }
@@ -2359,7 +2407,7 @@ ipcMain.handle('document:extract-markdown-images', async (_event, { source, dire
   const markdownPath = /\.(md|markdown|mdown)$/i.test(targetPath) ? targetPath : `${targetPath}.md`
   if (path.resolve(markdownPath).toLowerCase() === path.resolve(file).toLowerCase()) throw new Error(t('Choose a different file: the original is not modified'))
   // Il lavoro blocca questo processo per un po': prima si avvisa la finestra (che ha un processo suo) perché mostri l'attesa.
-  mainWindow.webContents.send('document:extract-markdown-images-start', { name: path.basename(file), size: (text.length / 1048576).toFixed(1) })
+  events.toContents(event.sender, 'document:extract-markdown-images-start', { name: path.basename(file), size: (text.length / 1048576).toFixed(1) })
   await new Promise((resolve) => setTimeout(resolve, 60))
   const result = extractImages(text, { directory: path.join(path.dirname(markdownPath), 'images'), stem: base })
   await fs.writeFile(markdownPath, result.markdown, 'utf8')
@@ -2387,9 +2435,9 @@ function mcp() {
   }
   // Per il progetto aperto vale la catena dei progetti che lo contengono (un sotto-progetto eredita); per un altro, solo la sua cartella.
   const getChain = (directory) => {
-    if (!projectPath || !samePath(directory, projectPath)) return [directory]
-    const chain = projectFile.getContextChain(null).filter((entry) => entry.path !== null).map((entry) => path.resolve(projectPath, entry.path))
-    if (!chain.some((entry) => samePath(entry, projectPath))) chain.push(path.resolve(projectPath))
+    if (!windowContext.project || !samePath(directory, windowContext.project)) return [directory]
+    const chain = projectFile.getContextChain(null).filter((entry) => entry.path !== null).map((entry) => path.resolve(windowContext.project, entry.path))
+    if (!chain.some((entry) => samePath(entry, windowContext.project))) chain.push(path.resolve(windowContext.project))
     return [...new Map(chain.map((entry) => [entry.toLowerCase(), entry])).values()]
   }
   const store = createMcpServersStore({ directory: app.getPath('userData'), secrets, getChain })
@@ -2402,7 +2450,7 @@ function mcp() {
     if (detail.length > 1500) detail = `${detail.slice(0, 1500)}
 …`
     const reason = alwaysAsk ? t('You set this service to ask every time.') : readOnly ? '' : t('The service does not declare this tool as read-only.')
-    const { response } = await dialog.showMessageBox(mainWindow, {
+    const { response } = await dialog.showMessageBox(currentWindow(), {
       type: 'question',
       buttons: [t('Allow'), t("Don't allow")],
       defaultId: 1,
@@ -2420,7 +2468,7 @@ ${detail}`,
   mcpParts = { store, client, service: createMcpService({ store, client, confirm, oauth: mcpOauth, openExternal: (url) => (/^https:\/\//.test(url) ? shell.openExternal(url) : false), log: (message) => aiProviders.log?.(message) }) }
   return mcpParts
 }
-const mcpProject = (directory) => (directory ? path.resolve(String(directory)) : projectPath)
+const mcpProject = (directory) => (directory ? path.resolve(String(directory)) : windowContext.project)
 const mcpKeys = (id) => [`g:${id}`, `p:${id}`]
 ipcMain.handle('mcp:list', (_event, { directory } = {}) => mcp().store.list(mcpProject(directory)))
 ipcMain.handle('mcp:save-server', async (_event, { directory = null, server, credentials } = {}) => {
@@ -2439,21 +2487,21 @@ ipcMain.handle('mcp:remove-server', async (_event, { directory = null, id } = {}
 ipcMain.handle('mcp:set-use', (_event, { directory, ids } = {}) => mcp().store.setUse(mcpProject(directory), ids))
 // La conferma arriva dall'utente che ha visto comando o indirizzo per intero (la schermata lo mostra), mai da un'azione dell'assistente.
 ipcMain.handle('mcp:trust-server', (_event, { directory, id } = {}) => mcp().store.trust(mcpProject(directory), id))
-ipcMain.handle('mcp:test-server', (_event, { directory = null, id } = {}) => mcp().service.test(directory ? mcpProject(directory) : projectPath, id))
+ipcMain.handle('mcp:test-server', (_event, { directory = null, id } = {}) => mcp().service.test(directory ? mcpProject(directory) : windowContext.project, id))
 // Gli strumenti dei servizi che il progetto aperto usa, per il modello; un servizio che non parte finisce tra i problemi senza bloccare gli altri.
 // Accesso OAuth a un servizio: si apre il browser e la risposta torna su un indirizzo locale; dura finché l'utente non esce o l'accesso non è revocato.
-ipcMain.handle('mcp:sign-in', (_event, { directory = null, id } = {}) => mcp().service.signIn(directory ? mcpProject(directory) : projectPath, id))
-ipcMain.handle('mcp:sign-out', (_event, { directory = null, id } = {}) => mcp().service.signOut(directory ? mcpProject(directory) : projectPath, id))
-ipcMain.handle('mcp:tools', async () => (projectPath ? mcp().service.tools(projectPath) : { tools: [], problems: [] }))
+ipcMain.handle('mcp:sign-in', (_event, { directory = null, id } = {}) => mcp().service.signIn(directory ? mcpProject(directory) : windowContext.project, id))
+ipcMain.handle('mcp:sign-out', (_event, { directory = null, id } = {}) => mcp().service.signOut(directory ? mcpProject(directory) : windowContext.project, id))
+ipcMain.handle('mcp:tools', async () => (windowContext.project ? mcp().service.tools(windowContext.project) : { tools: [], problems: [] }))
 ipcMain.handle('mcp:call-tool', (_event, { name, args } = {}) => {
-  if (!projectPath) throw new Error('No project open')
-  return mcp().service.call(projectPath, String(name), args)
+  if (!windowContext.project) throw new Error('No project open')
+  return mcp().service.call(windowContext.project, String(name), args)
 })
 app.on('before-quit', () => { if (mcpParts) mcpParts.service.closeAll().catch(() => {}) })
 ipcMain.handle('ai:get-settings', () => aiProviders.getSettings())
 // Le impostazioni in vigore nel progetto aperto: le generali con sopra il modello scelto dal progetto.
 ipcMain.handle('ai:get-effective-settings', () => aiProviders.getEffectiveSettings())
-ipcMain.handle('ai:save-settings', (_event, settings) => aiProviders.saveSettings(settings))
+ipcMain.handle('ai:save-settings', (event, settings) => { const saved = aiProviders.saveSettings(settings); events.toOthers(event.sender, 'app:settings-changed', { scope: 'ai' }); return saved })
 ipcMain.handle('ai:status', (_event, provider) => aiProviders.getStatus(provider))
 ipcMain.handle('ai:login', (_event, provider) => aiProviders.login(provider, {
   openExternal: (url) => (/^https:\/\//.test(url) ? shell.openExternal(url) : false),
@@ -2470,29 +2518,30 @@ app.on('web-contents-created', (_event, contents) => {
   // Come in un browser: il clic centrale (o Ctrl+clic) su un link lo apre in una scheda nuova in secondo piano, un link con target="_blank" in una scheda nuova davanti.
   // La finestra vera non si apre mai; la scheda la crea l'interfaccia (BrowserPane → App), accanto a quella di partenza.
   contents.setWindowOpenHandler(({ url, disposition }) => {
-    if (/^https?:/i.test(url) && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('browser:open-tab', { contentsId: contents.id, url, background: disposition === 'background-tab' })
+    if (/^https?:/i.test(url)) events.toHostOf(contents, 'browser:open-tab', { contentsId: contents.id, url, background: disposition === 'background-tab' })
     return { action: 'deny' }
   })
   contents.on('will-navigate', (event, url) => { if (!/^(https?:|about:blank)/i.test(url)) event.preventDefault() })
   // Un clic (o la rotella) dentro la pagina non arriva alla finestra dell'app: la si avvisa, così i menu aperti si chiudono come con un clic altrove.
   contents.on('input-event', (_event, input) => {
-    if ((input.type === 'mouseDown' || input.type === 'mouseWheel') && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('browser:pointer-down', contents.id)
+    if (input.type === 'mouseDown' || input.type === 'mouseWheel') events.toHostOf(contents, 'browser:pointer-down', contents.id)
   })
   // Tasto destro nella pagina: il menu lo disegna l'interfaccia (stesso stile degli altri), qui si dice cosa c'è sotto il cursore.
   contents.on('context-menu', (_event, params) => {
-    if (!mainWindow || mainWindow.isDestroyed()) return
+    const host = events.windowFor(contents.hostWebContents)?.window
+    if (!host) return
     // Dove aprire il menu: la posizione del cursore nella finestra (in pixel dell'interfaccia). Le coordinate di `params` sono quelle della pagina ospitata,
     // che non coincidono con quelle della finestra (barra, scala dello schermo, zoom): il cursore, invece, è il punto esatto del clic.
     let windowX = null
     let windowY = null
     try {
       const cursor = screen.getCursorScreenPoint()
-      const bounds = mainWindow.getContentBounds()
-      const zoom = mainWindow.webContents.getZoomFactor() || 1
+      const bounds = host.getContentBounds()
+      const zoom = host.webContents.getZoomFactor() || 1
       windowX = (cursor.x - bounds.x) / zoom
       windowY = (cursor.y - bounds.y) / zoom
     } catch { /* si ripiega sulle coordinate della pagina */ }
-    mainWindow.webContents.send('browser:context-menu', {
+    events.toHostOf(contents, 'browser:context-menu', {
       contentsId: contents.id,
       x: params.x,
       y: params.y,
@@ -2518,50 +2567,47 @@ function loadLanguage() {
 }
 
 // Modalità di visualizzazione dei documenti (la sceglie l'interfaccia): serve al menu Visualizza per mostrare la voce attiva.
-let viewMode = 'endless'
 // La Home dei progetti è aperta: il menu disattiva le voci che agiscono sul documento (che non si vede).
-let homeOpen = false
 ipcMain.on('home:changed', (_event, open) => {
-  if (Boolean(open) === homeOpen) return
-  homeOpen = Boolean(open)
+  if (Boolean(open) === windowContext.homeOpen) return
+  windowContext.homeOpen = Boolean(open)
   buildMenu()
 })
 
-// Apre un progetto in una nuova finestra: un'altra istanza dell'app (vedi primary-instance.cjs per ciò che non condividono). `directory` assente = si sceglie la cartella.
+// Apre un progetto in una nuova finestra, nello stesso processo (il nucleo è uno solo). `directory` assente = si sceglie la cartella. Lo stesso progetto può stare
+// in più finestre: le schede e la sessione sono per finestra.
 async function openProjectInNewWindow(directory) {
   let target = directory ? path.resolve(String(directory)) : ''
   if (!target) {
-    const picked = await dialog.showOpenDialog(mainWindow, { title: t('Open a project in a new window'), defaultPath: projectPath ? path.dirname(projectPath) : undefined, properties: ['openDirectory'] })
+    const picked = await dialog.showOpenDialog(currentWindow(), { title: t('Open a project in a new window'), defaultPath: windowContext.project ? path.dirname(windowContext.project) : undefined, properties: ['openDirectory'] })
     if (picked.canceled || !picked.filePaths[0]) return false
     target = path.resolve(picked.filePaths[0])
   }
   if (!(await fs.stat(target).catch(() => null))?.isDirectory()) throw new Error(t('The folder does not exist'))
-  if (projectPath && samePath(target, projectPath)) throw new Error(t('This project is already open in this window'))
-  const holder = instances.holder(target)
-  if (holder) {
-    instances.requestFocus(holder.pid)
-    throw new Error(t('This project is already open in another OpenWriter window, which has been brought to the front'))
-  }
-  const args = [...(app.isPackaged ? [] : [app.getAppPath()]), '--ow-secondary', `--ow-project=${target}`]
-  const environment = { ...process.env }
-  delete environment.ELECTRON_RUN_AS_NODE
-  const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', env: environment })
-  child.on('error', (error) => console.error(t('Could not open a new window: {message}', { message: error.message })))
-  child.unref()
+  await openWindow({ project: target })
   return true
 }
+
 // Disposizione delle bolle del grafo, condivisa da tutte le finestre: un file nei dati dell'app, con le sole chiavi della disposizione (chiamate sincrone, come il localStorage).
 const layoutFile = () => path.join(app.getPath('userData'), 'graph-layout.json')
 const LAYOUT_KEY_PATTERN = /^openwriter\.graphLayout\.v1(:[\w.-]+)?$/
 const readLayoutStore = () => { try { const parsed = JSON.parse(fsSync.readFileSync(layoutFile(), 'utf8')); return parsed && typeof parsed === 'object' ? parsed : {} } catch { return {} } }
-// Leggere, cambiare e riscrivere è un passo solo tra tutti i processi: senza il blocco due finestre che salvano insieme si sovrascrivono a vicenda.
+// Il nucleo è l'unico che scrive il file, e lo fa in un passo solo (le chiamate sono sincrone): leggere, cambiare e riscrivere non si intrecciano con un'altra finestra.
 const changeLayoutStore = (change) => {
-  try { withFileLock(`${layoutFile()}.lock`, () => { const store = readLayoutStore(); change(store); writeFileAtomic(layoutFile(), JSON.stringify(store)) }) } catch (error) { console.error('Disposizione del grafo non salvata:', error.message) }
+  try { const store = readLayoutStore(); change(store); writeFileAtomic(layoutFile(), JSON.stringify(store)) } catch (error) { console.error('Disposizione del grafo non salvata:', error.message) }
 }
 ipcMain.on('layout:get', (event, key) => { event.returnValue = LAYOUT_KEY_PATTERN.test(String(key)) ? (readLayoutStore()[String(key)] ?? null) : null })
 ipcMain.on('layout:set', (event, key, value) => { if (LAYOUT_KEY_PATTERN.test(String(key))) changeLayoutStore((store) => { store[String(key)] = String(value).slice(0, 2_000_000) }); event.returnValue = true })
 ipcMain.on('layout:remove', (event, key) => { if (LAYOUT_KEY_PATTERN.test(String(key))) changeLayoutStore((store) => { delete store[String(key)] }); event.returnValue = true })
 ipcMain.on('layout:keys', (event) => { event.returnValue = Object.keys(readLayoutStore()) })
+// Le posizioni delle bolle di uno spazio di lavoro: la fusione la fa il nucleo (layout-merge.cjs) e le altre finestre sono avvisate, così la rete si aggiorna anche sotto i loro occhi.
+ipcMain.on('layout:merge', (event, key, nodes) => {
+  if (LAYOUT_KEY_PATTERN.test(String(key))) {
+    changeLayoutStore((store) => { store[String(key)] = mergeLayout(store[String(key)], nodes) })
+    events.toOthers(event.sender, 'layout:changed')
+  }
+  event.returnValue = true
+})
 ipcMain.handle('project:open-new-window', (_event, directory) => openProjectInNewWindow(directory))
 
 function buildMenu() {
@@ -2571,18 +2617,18 @@ function buildMenu() {
     // (campo di testo, documento, scheda del browser, testo della chat). Il ruolo di sistema selezionava l'intera finestra: albero dei file, chat, editor.
     if (command === 'select-all') {
       const focused = webContents.getFocusedWebContents?.()
-      if (focused && !focused.isDestroyed() && focused.getType() === 'webview' && focused.hostWebContents === mainWindow?.webContents) focused.selectAll()
-      else mainWindow?.webContents.send('document:command', 'select-all')
+      if (focused && !focused.isDestroyed() && focused.getType() === 'webview' && focused.hostWebContents === currentWindow()?.webContents) focused.selectAll()
+      else events.toFocused('document:command', 'select-all')
       return
     }
-    if (['settings', 'open-project', 'about', 'check-updates', 'view-endless', 'view-pages'].includes(command) || command.startsWith('project-')) mainWindow?.webContents.send('app:command', command)
-    else mainWindow?.webContents.send('document:command', command)
-  }, { view: viewMode, home: homeOpen, project: Boolean(projectPath) })
+    if (['settings', 'open-project', 'about', 'check-updates', 'view-endless', 'view-pages'].includes(command) || command.startsWith('project-')) events.toFocused('app:command', command)
+    else events.toFocused('document:command', command)
+  }, { view: windowContext.viewMode, home: windowContext.homeOpen, project: Boolean(windowContext.project) })
 }
 
 ipcMain.on('view:changed', (_event, mode) => {
-  if ((mode !== 'endless' && mode !== 'pages') || mode === viewMode) return
-  viewMode = mode
+  if ((mode !== 'endless' && mode !== 'pages') || mode === windowContext.viewMode) return
+  windowContext.viewMode = mode
   buildMenu()
 })
 
@@ -2623,20 +2669,22 @@ function flushPreferences() {
 }
 
 ipcMain.on('preferences:load', (event) => { event.returnValue = loadPreferences() })
-function setPreferenceValue(key, value) {
+// `from`: la pagina che ha scelto il valore (le altre finestre lo ricevono, lei no); senza, a tutte.
+function setPreferenceValue(key, value, from = null) {
   if (typeof key !== 'string' || !/^openwriter\.[A-Za-z0-9.]{1,60}$/.test(key) || typeof value !== 'string' || value.length > 20000) return
   loadPreferences()[key] = value
   clearTimeout(preferencesTimer)
   preferencesTimer = setTimeout(flushPreferences, 200)
+  events.toOthers(from, 'preferences:changed', { key, value })
 }
-ipcMain.on('preferences:set', (_event, key, value) => setPreferenceValue(key, value))
+ipcMain.on('preferences:set', (event, key, value) => setPreferenceValue(key, value, event.sender))
 app.on('before-quit', flushPreferences)
 
 // Appunti di file con il sistema: copia/taglia dall'albero e incolla nel file manager o in altri programmi, e viceversa (vedi file-clipboard.cjs).
 const CLIPBOARD_IGNORED = new Set(['.ow', '.git', 'node_modules'])
 ipcMain.handle('clipboard:copy-files', async (_event, { paths, cut } = {}) => {
   const resolved = (Array.isArray(paths) ? paths : [paths]).map((item) => resolveInProject(String(item)))
-  if (!resolved.length || resolved.includes(path.resolve(projectPath))) throw new Error(t('The project folder cannot be renamed from here'))
+  if (!resolved.length || resolved.includes(path.resolve(windowContext.project))) throw new Error(t('The project folder cannot be renamed from here'))
   // Un documento Markdown porta con sé il suo originale (DOCX/PDF): negli appunti vanno insieme.
   const withOriginals = [...new Set(resolved.flatMap((item) => [item, ...originalsOf(item)]))]
   await fileClipboard.write(withOriginals, cut ? 'cut' : 'copy')
@@ -2658,7 +2706,7 @@ ipcMain.handle('clipboard:paste-files', async (_event, { targetDirectory } = {})
       const source = path.resolve(given)
       if (followsMarkdown(source)) continue
       const stats = await fs.stat(source)
-      const inside = !path.relative(projectPath, source).startsWith('..') && !path.isAbsolute(path.relative(projectPath, source)) && source !== path.resolve(projectPath)
+      const inside = !path.relative(windowContext.project, source).startsWith('..') && !path.isAbsolute(path.relative(windowContext.project, source)) && source !== path.resolve(windowContext.project)
       if (inside && clip.cut) {
         const companions = originalsOf(source)
         const to = await moveIntoDirectory({ from: source, toDirectory: directory })
@@ -2695,45 +2743,44 @@ ipcMain.handle('clipboard:paste-files', async (_event, { targetDirectory } = {})
 })
 
 // Cambiamenti nella cartella del progetto fatti da fuori (file incollati, creati, spostati o eliminati con altri programmi): l'albero si aggiorna da solo.
-let workspaceWatcher = null
-let workspaceWatchTimer = null
-let annotationsWatchTimer = null
-let changedPaths = new Set()
 function stopWorkspaceWatch() {
-  changedPaths = new Set()
-  clearTimeout(workspaceWatchTimer)
-  clearTimeout(annotationsWatchTimer)
-  try { workspaceWatcher?.close() } catch { /* già chiuso */ }
-  workspaceWatcher = null
+  windowContext.changedPaths = new Set()
+  clearTimeout(windowContext.workspaceWatchTimer)
+  clearTimeout(windowContext.annotationsWatchTimer)
+  try { windowContext.workspaceWatcher?.close() } catch { /* già chiuso */ }
+  windowContext.workspaceWatcher = null
   stopReferenceWatch()
 }
 ipcMain.handle('workspace:watch', () => {
   stopWorkspaceWatch()
-  if (!projectPath) return false
+  const watched = windowContext.project
+  if (!watched) return false
+  // Il contesto della finestra in mano: la sorveglianza è sua, anche quando l'evento arriva fuori da qualunque richiesta.
+  const context = currentEntry().context
   try {
-    workspaceWatcher = fsSync.watch(projectPath, { recursive: true }, (_event, name) => {
+    context.workspaceWatcher = fsSync.watch(watched, { recursive: true }, (_event, name) => {
       const parts = name ? String(name).split(/[\\/]/) : []
       // Note e segnalibri scritti da altri programmi (per esempio l'agente tramite il server MCP): l'interfaccia li rilegge.
       const owner = parts.indexOf('.ow')
       if (owner !== -1 && (parts[owner + 1] === 'notes' || parts[owner + 1] === 'bookmarks')) {
-        clearTimeout(annotationsWatchTimer)
-        annotationsWatchTimer = setTimeout(() => mainWindow?.webContents.send('workspace:annotations-changed'), 300)
+        clearTimeout(context.annotationsWatchTimer)
+        context.annotationsWatchTimer = setTimeout(() => events.toProject(watched, 'workspace:annotations-changed'), 300)
         return
       }
       if (parts.some((part) => CLIPBOARD_IGNORED.has(part))) return
       // Senza nome del file il sistema non dice cosa è cambiato: riscansione completa. Altrimenti si aggiorna solo quel percorso.
-      if (knowledgeOn) knowledge.changed(projectPath, name ? [parts.join('/')] : null)
+      if (context.knowledgeOn) knowledge.changed(watched, name ? [parts.join('/')] : null)
       // I percorsi cambiati (assoluti) viaggiano con la notifica, così l'interfaccia può rileggere i documenti aperti; `null` = non si sa quali.
-      if (name && changedPaths) changedPaths.add(path.join(projectPath, String(name)))
-      else changedPaths = null
-      clearTimeout(workspaceWatchTimer)
-      workspaceWatchTimer = setTimeout(() => {
-        const paths = changedPaths ? [...changedPaths] : null
-        changedPaths = new Set()
-        mainWindow?.webContents.send('workspace:changed', paths)
+      if (name && context.changedPaths) context.changedPaths.add(path.join(watched, String(name)))
+      else context.changedPaths = null
+      clearTimeout(context.workspaceWatchTimer)
+      context.workspaceWatchTimer = setTimeout(() => {
+        const paths = context.changedPaths ? [...context.changedPaths] : null
+        context.changedPaths = new Set()
+        events.toProject(watched, 'workspace:changed', paths)
       }, 400)
     })
-    workspaceWatcher.on('error', () => stopWorkspaceWatch())
+    context.workspaceWatcher.on('error', () => ambient.run(currentEntry(), stopWorkspaceWatch))
     watchReferences()
     return true
   } catch {
@@ -2741,15 +2788,16 @@ ipcMain.handle('workspace:watch', () => {
     return false
   }
 })
-app.on('will-quit', stopWorkspaceWatch)
+app.on('will-quit', () => { for (const entry of events.list()) ambient.run(entry, stopWorkspaceWatch) })
 app.on('will-quit', () => { knowledge.close().catch(() => {}); gpuContext.close().catch(() => {}) })
 
 // Ponte per il server MCP (vedi mcp-bridge.cjs): gli agenti esterni modificano i documenti aperti nell'editor, con le modifiche "da rivedere".
 // L'utente lo spegne dalle impostazioni (Agenti (MCP)): preferenza openwriter.mcpEdit = "off".
 const mcpBridge = createMcpBridge({
   directory: app.getPath('userData'),
-  getWindow: () => mainWindow,
-  getProjectPath: () => projectPath,
+  getWindow: () => (events.forProject(windowContext.project) || events.focused())?.window || null,
+  // Il progetto che un agente chiede è «aperto» se una finestra lo mostra; altrimenti vale quello della finestra in primo piano.
+  getProjectPath: (wanted) => (wanted && events.forProject(wanted) ? wanted : events.focused()?.context.project || null),
   isEnabled: () => loadPreferences()['openwriter.mcpEdit'] !== 'off',
   // Con l'app aperta la ricerca per conoscenza di un agente esterno passa da qui: stessa ricerca dell'assistente, quindi anche per significato (se acceso).
   localTools: {
@@ -2773,24 +2821,13 @@ const mcpHttp = createMcpHttp({ directory: app.getPath('userData'), serverPath: 
 const startMcpHttp = (options = {}) => mcpHttp.start({ readOnly: loadPreferences()['openwriter.mcpHttpReadOnly'] === 'on', ...options })
 ipcMain.handle('mcp:http-status', () => mcpHttp.status())
 ipcMain.handle('mcp:http-set', async (_event, { enabled, renewToken } = {}) => {
-  if (!primaryLock.isPrimary()) throw new Error(t('The agents (MCP) are served by another OpenWriter window: change this setting there'))
   const preferencesNow = loadPreferences()
   if (enabled === false) { mcpHttp.stop(); preferencesNow['openwriter.mcpHttp'] = 'off'; flushPreferences(); return mcpHttp.status() }
   preferencesNow['openwriter.mcpHttp'] = 'on'
   flushPreferences()
   return startMcpHttp({ renewToken: renewToken === true })
 })
-app.on('will-quit', () => { mcpHttp.stop(); primaryLock.release(); instances.unregister() })
-// Il ponte e il server HTTP li serve solo l'istanza principale. Se si chiude, un'altra finestra aperta subentra (pochi secondi) e li riavvia: stessa porta e stesso
-// token per l'HTTP, porta nuova per il ponte (il server MCP rilegge il file a ogni chiamata).
-const primaryLock = createPrimaryLock({
-  file: path.join(app.getPath('userData'), 'primary-instance.lock'),
-  onAcquire: () => {
-    mcpBridge.start()
-    if (loadPreferences()['openwriter.mcpHttp'] === 'on') startMcpHttp().catch((error) => console.error('Server MCP HTTP non avviato:', error.message))
-  },
-  onRelease: () => { mcpBridge.stop(); mcpHttp.stop() },
-})
+app.on('will-quit', () => { mcpHttp.stop() })
 app.on('will-quit', () => mcpBridge.stop())
 
 // Il browser integrato mantiene i login dopo un riavvio. I cookie con scadenza li tiene già la partizione persistente; quelli "di sessione"
@@ -2853,8 +2890,7 @@ const folderArguments = (argv) => argv.slice(app.isPackaged ? 1 : 2).filter((arg
 const pendingExternalProjects = []
 function openExternalProject(directory) {
   const resolved = path.resolve(directory)
-  if (externalDocumentsReady && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('project:external', resolved)
-  else pendingExternalProjects.push(resolved)
+  if (!(externalDocumentsReady && events.toFocused('project:external', resolved))) pendingExternalProjects.push(resolved)
 }
 ipcMain.handle('project:take-external', () => pendingExternalProjects.splice(0))
 
@@ -2863,8 +2899,7 @@ const markdownArguments = (argv) => argv.slice(app.isPackaged ? 1 : 2).filter((a
 async function openExternalDocument(filePath) {
   try {
     const document = await readDocument(path.resolve(filePath))
-    if (externalDocumentsReady && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('document:external', document)
-    else pendingExternalDocuments.push(document)
+    if (!(externalDocumentsReady && events.toFocused('document:external', document))) pendingExternalDocuments.push(document)
   } catch (error) {
     console.error('Documento non aperto:', error.message)
   }
@@ -2896,9 +2931,10 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', (_event, argv) => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.focus()
+    const window = events.focused()?.window
+    if (window) {
+      if (window.isMinimized()) window.restore()
+      window.focus()
     }
     for (const filePath of markdownArguments(argv)) openExternalDocument(filePath)
     for (const directory of folderArguments(argv)) openExternalProject(directory)
@@ -2923,22 +2959,16 @@ app.whenReady().then(async () => {
   browserSession.on('will-download', (event) => event.preventDefault())
   keepBrowserLogins(browserSession)
   loadLanguage()
-  await loadProject()
-  createWindow()
-  buildMenu()
-  primaryLock.start()
-  // Un'altra finestra ha chiesto questo progetto: questa si porta in primo piano.
-  instances.watchFocus(() => {
-    if (!mainWindow || mainWindow.isDestroyed()) return
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
-  })
+  const first = await openWindow()
+  ambient.run({ window: first, context: lastEntry.context }, buildMenu)
+  // Il ponte e il server HTTP degli agenti li serve questo processo, sempre.
+  mcpBridge.start()
+  if (loadPreferences()['openwriter.mcpHttp'] === 'on') startMcpHttp().catch((error) => console.error('Server MCP HTTP non avviato:', error.message))
   for (const filePath of markdownArguments(process.argv)) openExternalDocument(filePath)
   for (const directory of folderArguments(process.argv)) openExternalProject(directory)
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) openWindow().catch((error) => console.error(error.message))
   })
 })
 
