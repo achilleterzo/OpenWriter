@@ -4,6 +4,8 @@
 // Il localStorage resta come ripiego (e per chi apre la pagina in un browser) e come fonte da cui migrare i valori delle versioni precedenti.
 const bridge = typeof window !== 'undefined' ? window.electronAPI?.preferences : null
 const cache = { ...(bridge?.values || {}) }
+// Un'altra finestra ha scelto un valore: da ora lo si legge anche qui.
+bridge?.onChange?.((key, value) => { cache[key] = value })
 
 // Valore salvato (stringa) o null.
 export function getPreference(key) {
