@@ -171,6 +171,8 @@ export default function ProjectsHome({ project, visible = true, projectsVersion 
   // Con più finestre dell'app, quando questa torna in primo piano si rilegge ciò che l'altra può aver cambiato: i dati del grafo (spazio di lavoro, membri temporanei,
   // progetti) e la disposizione delle bolle.
   const [layoutVersion, setLayoutVersion] = useState(0)
+  // Un'altra finestra ha spostato delle bolle: le si rilegge subito, senza aspettare che questa torni in primo piano.
+  useEffect(() => window.electronAPI?.layoutStorage?.onChanged?.(() => setLayoutVersion((value) => value + 1)), [])
   useEffect(() => {
     if (!visible) return undefined
     const refocus = () => { if (document.visibilityState === 'hidden') return; load({ silent: true }); setLayoutVersion((value) => value + 1) }

@@ -22,6 +22,8 @@ const defaultStorage = () => {
     const shared = globalThis.electronAPI?.layoutStorage
     if (!shared) return local
     return {
+      // L'unione delle posizioni la fa il nucleo (electron/layout-merge.cjs), in un passo solo: nessuna finestra rilegge, unisce e riscrive per conto suo.
+      merge: (key, nodes) => shared.merge(key, nodes),
       getItem: (key) => shared.getItem(key) ?? local?.getItem(key) ?? null,
       setItem: (key, value) => shared.setItem(key, value),
       removeItem: (key) => { shared.removeItem(key); try { local?.removeItem(key) } catch { /* come sopra */ } },
@@ -47,6 +49,7 @@ export function loadLayout(storage = defaultStorage(), workspace = 'all') {
 
 export function saveLayout(nodes, storage = defaultStorage(), workspace = 'all') {
   try {
+    if (typeof storage?.merge === 'function') { storage.merge(layoutKeyFor(workspace), nodes.map((node) => ({ id: node.id, x: node.x, y: node.y, z: node.z }))); return }
     const merged = loadLayout(storage, workspace)
     for (const node of nodes) {
       if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) continue
