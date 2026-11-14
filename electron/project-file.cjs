@@ -6,6 +6,18 @@ const { t } = require('./i18n.cjs')
 const { writeFileAtomic } = require('./atomic-write.cjs')
 const { ownerRoot, parentOwner, looseKey } = require('./project-owner.cjs')
 const { cleanTemperature } = require('./temperature.cjs')
+const { cleanModelChoice } = require('./model-choice.cjs')
+
+// Gruppi di strumenti dell'assistente che un progetto può accendere o spegnere (gli stessi delle impostazioni generali).
+const TOOL_GROUPS = ['files', 'create', 'memory', 'notes', 'edit', 'ask', 'vision', 'web']
+// Approvazione delle modifiche: '' = come nelle impostazioni generali, 'on' = approvate in automatico, 'off' = da rivedere.
+const cleanAutoApprove = (value) => (value === 'on' || value === 'off' ? value : '')
+// Solo le scelte esplicite del progetto: ciò che manca eredita le impostazioni generali.
+const cleanTools = (value) => {
+  const out = {}
+  if (value && typeof value === 'object' && !Array.isArray(value)) for (const group of TOOL_GROUPS) if (typeof value[group] === 'boolean') out[group] = value[group]
+  return out
+}
 
 const DIRECTORY_NAME = '.ow'
 const FORMAT_VERSION = 1
@@ -86,6 +98,8 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     return {
       font: ['sans', 'serif', 'mono'].includes(editor.font) ? editor.font : '',
       fontFamily: name.length <= 80 && !/["';:{}<>\\\n]/.test(name) ? name : '',
+      // Colore d'accento del progetto ('' = quello generale). Gli stessi valori di `accents` in src/appearance.js.
+      accent: ['ash', 'violet', 'cyan', 'emerald', 'rose', 'amber'].includes(editor.accent) ? editor.accent : '',
     }
   }
 
@@ -222,7 +236,7 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
       // Sopra questo progetto c'è un altro progetto (`.ow`)? Se sì, si può scegliere di ereditarne il contesto.
       parent: parentProject(),
       inherit: settings.inherit === true,
-      ai: { context, extraContext: readExtraContext(), language: String(settings.ai.language || ''), documentLanguage: String(settings.ai.documentLanguage || ''), temperature: cleanTemperature(settings.ai.temperature) },
+      ai: { context, extraContext: readExtraContext(), language: String(settings.ai.language || ''), documentLanguage: String(settings.ai.documentLanguage || ''), temperature: cleanTemperature(settings.ai.temperature), autoApprove: cleanAutoApprove(settings.ai.autoApprove), tools: cleanTools(settings.ai.tools), model: cleanModelChoice(settings.ai.model) },
       options: { autoVersions: settings.options.autoVersions !== false, searchIndex: settings.options.searchIndex !== false, sharedKnowledge: settings.options.sharedKnowledge !== false },
       spellcheck: { languages: cleanLanguages(settings.spellcheck.languages) },
       editor: cleanEditor(settings.editor),
@@ -239,6 +253,11 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     settings.ai = { ...settings.ai, language: String(ai?.language || '').slice(0, 50), documentLanguage: String(ai?.documentLanguage || '').slice(0, 50) }
     // Come `skills` e `editor`: chi non lo passa (es. la copia del contesto) lascia intatta la temperatura.
     if (ai && 'temperature' in ai) settings.ai.temperature = cleanTemperature(ai.temperature)
+    // Idem per l'approvazione delle modifiche e per gli strumenti dell'assistente.
+    if (ai && 'autoApprove' in ai) settings.ai.autoApprove = cleanAutoApprove(ai.autoApprove)
+    if (ai && 'tools' in ai) settings.ai.tools = cleanTools(ai.tools)
+    // Anche la scelta del modello si salva da sola (setModelChoice): il modulo delle impostazioni non la porta con sé.
+    if (ai && 'model' in ai) settings.ai.model = cleanModelChoice(ai.model)
     // Come `skills` e `editor`: chi non passa `searchIndex` (es. la copia del contesto) lascia intatta la scelta sull'indice di ricerca.
     settings.options = { ...settings.options, autoVersions: options?.autoVersions !== false }
     if (options && 'searchIndex' in options) settings.options.searchIndex = options.searchIndex !== false
@@ -252,6 +271,30 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     writeAtomic(settingsFile(), JSON.stringify(settings, null, 2))
     writeAtomic(contextFile(), String(ai?.context || '').slice(0, MAX_CONTEXT_CHARS))
     return getSettings()
+  }
+
+  // Il modello AI scelto per il progetto (null = valgono le impostazioni generali).
+  function getModelChoice() {
+    if (!getProjectPath()) return null
+    try { return cleanModelChoice(readSettings().ai.model) } catch { return null }
+  }
+
+  function setModelChoice(choice) {
+    const settings = readSettings()
+    const clean = cleanModelChoice(choice)
+    if (clean) settings.ai.model = clean
+    else delete settings.ai.model
+    writeAtomic(settingsFile(), JSON.stringify(settings, null, 2))
+    return clean
+  }
+
+  // Approvazione delle modifiche e strumenti dell'assistente: si salvano da soli (dalla chat), senza toccare il resto delle impostazioni.
+  function setAiOptions({ autoApprove, tools } = {}) {
+    const settings = readSettings()
+    if (autoApprove !== undefined) settings.ai.autoApprove = cleanAutoApprove(autoApprove)
+    if (tools !== undefined) settings.ai.tools = cleanTools(tools)
+    writeAtomic(settingsFile(), JSON.stringify(settings, null, 2))
+    return { autoApprove: cleanAutoApprove(settings.ai.autoApprove), tools: cleanTools(settings.ai.tools) }
   }
 
   // Azioni rapide del progetto: si salvano da sole, senza toccare il resto delle impostazioni.
@@ -360,7 +403,7 @@ function createProjectFile({ getProjectPath, getMainPath = () => null }) {
     try { return getProjectPath() ? cleanTemperature(readSettings().ai.temperature) : '' } catch { return '' }
   }
 
-  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, getTemperature, getContextChain, saveSettings, setQuickActions, setActiveSkills, autoVersionsEnabled, searchIndexEnabled, sharedKnowledgeEnabled, addVersion, listVersions, getVersion, deleteVersion }
+  return { directoryName: DIRECTORY_NAME, initialize, moveHistory, getSettings, getTemperature, getModelChoice, setModelChoice, getContextChain, saveSettings, setQuickActions, setAiOptions, setActiveSkills, autoVersionsEnabled, searchIndexEnabled, sharedKnowledgeEnabled, addVersion, listVersions, getVersion, deleteVersion }
 }
 
 module.exports = { createProjectFile }

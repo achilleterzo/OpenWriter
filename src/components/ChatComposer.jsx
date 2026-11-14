@@ -37,7 +37,11 @@ const ChatComposer = forwardRef(function ChatComposer({ placeholder, onEmptyChan
       attributes: { class: 'chat-composer-content', 'aria-label': placeholder || '', role: 'textbox', 'aria-multiline': 'true' },
       handlePaste(view, event) {
         // Un'immagine incollata diventa un allegato.
-        const images = Array.from(event.clipboardData?.files || []).filter((file) => file.type.startsWith('image/'))
+        // Una cattura dello schermo può arrivare solo tra gli elementi degli appunti (non tra i file): si guardano entrambi.
+        const data = event.clipboardData
+        const fromItems = Array.from(data?.items || []).filter((item) => item.kind === 'file' && item.type.startsWith('image/')).map((item) => item.getAsFile()).filter(Boolean)
+        const fromFiles = Array.from(data?.files || []).filter((file) => file.type.startsWith('image/'))
+        const images = fromFiles.length ? fromFiles : fromItems
         if (images.length) {
           event.preventDefault()
           handlers.current.onPasteImages?.(images)
@@ -66,7 +70,8 @@ const ChatComposer = forwardRef(function ChatComposer({ placeholder, onEmptyChan
         // In una lista Invio crea la voce successiva (e su una voce vuota esce dalla lista): si invia con Ctrl+Invio o con il pulsante.
         if (!withModifier && current?.isActive('listItem')) return false
         event.preventDefault()
-        send?.()
+        // Con il modificatore (Ctrl/Cmd+Invio) il chiamante sa che il messaggio è «subito»: mentre l'assistente lavora aggiorna la risposta in corso.
+        send?.(withModifier ? 'now' : undefined)
         return true
       },
     },

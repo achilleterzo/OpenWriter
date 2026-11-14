@@ -14,7 +14,22 @@
 export const LAYOUT_KEY = 'openwriter.graphLayout.v1'
 export const LAYOUT_LIMIT = 400
 
-const defaultStorage = () => { try { return globalThis.localStorage || null } catch { return null } }
+// Con più finestre dell'app la disposizione deve essere una sola: sta in un file dei dati dell'app (letto e scritto dal processo principale, `layoutStorage`), non nel
+// localStorage di ogni finestra. Chi aveva già una disposizione nel localStorage la ritrova: si legge da lì finché il file non ha quella chiave.
+const defaultStorage = () => {
+  try {
+    const local = globalThis.localStorage || null
+    const shared = globalThis.electronAPI?.layoutStorage
+    if (!shared) return local
+    return {
+      getItem: (key) => shared.getItem(key) ?? local?.getItem(key) ?? null,
+      setItem: (key, value) => shared.setItem(key, value),
+      removeItem: (key) => { shared.removeItem(key); try { local?.removeItem(key) } catch { /* come sopra */ } },
+      get length() { return shared.keys().length },
+      key: (index) => shared.keys()[index] ?? null,
+    }
+  } catch { return null }
+}
 const round = (value) => Math.round(value * 10) / 10
 // «Tutti» (o nessuno spazio) ha la chiave di sempre: chi non usa gli spazi di lavoro non perde nulla.
 export const layoutKeyFor = (workspace) => (!workspace || workspace === 'all' ? LAYOUT_KEY : `${LAYOUT_KEY}:${workspace}`)

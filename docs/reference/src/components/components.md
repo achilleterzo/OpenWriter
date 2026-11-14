@@ -5,6 +5,7 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [AboutDialog.jsx](pages/AboutDialog.jsx.md) — "About OpenWriter" dialog with the manual update check
 - [AboutSettings.jsx](pages/AboutSettings.jsx.md) — About section of the settings screen: version, updates, developer, licence
 - [ActivityBar.jsx](pages/ActivityBar.jsx.md) — Side rail with the panel buttons and the assistant toggle
+- [AnchorsPanel.jsx](pages/AnchorsPanel.jsx.md) — Panel listing the HTML anchors of the document, with a jump to each
 - [AiChatPanel.jsx](pages/AiChatPanel.jsx.md) — Assistant panel: conversation, composer, tools, attachments
 - [AiProviderSettings.jsx](pages/AiProviderSettings.jsx.md) — AI provider settings: keys, models, parameters, tools
 - [AppearanceSettings.jsx](pages/AppearanceSettings.jsx.md) — Theme, accent color, typography, and live preview
@@ -16,6 +17,7 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [DocumentPane.jsx](pages/DocumentPane.jsx.md) — Document editor pane with the toolbar, find bar, and marks
 - [DocumentToolbar.jsx](pages/DocumentToolbar.jsx.md) — Formatting toolbar of the editor
 - [FileExplorer.jsx](pages/FileExplorer.jsx.md) — Project file explorer: tree, context menu, drag and drop
+- [FileIcon.jsx](pages/FileIcon.jsx.md) — Icon of a file or folder by type
 - [FindBar.jsx](pages/FindBar.jsx.md) — Find and replace bar
 - [FloatingToolbar.jsx](pages/FloatingToolbar.jsx.md) — Floating bar attached to the selection
 - [FontPicker.jsx](pages/FontPicker.jsx.md) — Editor font choice and Google Fonts catalog
@@ -27,8 +29,11 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [TextFindBar.jsx](pages/TextFindBar.jsx.md) — Find and replace of the text reader
 - [FindPanel.jsx](pages/FindPanel.jsx.md) — Shared look of the find and replace bar
 - [ImagePane.jsx](pages/ImagePane.jsx.md) — Zoomable read-only tab for a project image
+- [IndexProgress.jsx](pages/IndexProgress.jsx.md) — Progress of the search index in the status bar
+- [ImageViewer.jsx](pages/ImageViewer.jsx.md) — Full-screen image viewer: zoom around the pointer, drag, fit and real size
 - [InfoPanel.jsx](pages/InfoPanel.jsx.md) — Document info: last save, word and character counts, reading time, structure
 - [InlineMarkdown.jsx](pages/InlineMarkdown.jsx.md) — Inline Markdown drawn with its styles, for note quotations and proposals
+- [LocalModelsSettings.jsx](pages/LocalModelsSettings.jsx.md) — Settings section for the models that run on this computer
 - [MarkdownMessage.jsx](pages/MarkdownMessage.jsx.md) — Markdown rendering of chat messages
 - [McpSettings.jsx](pages/McpSettings.jsx.md) — MCP server: what it offers and the client configuration
 - [MemoryPanel.jsx](pages/MemoryPanel.jsx.md) — Project memory entries
@@ -40,23 +45,27 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [ProjectIcon.jsx](pages/ProjectIcon.jsx.md) — Project icon image and round avatar
 - [AssociationSettings.jsx](pages/AssociationSettings.jsx.md) — Settings section to associate Markdown files and add the folder entry of the file manager
 - [FirstRunModelsDialog.jsx](pages/FirstRunModelsDialog.jsx.md) — First-run window to choose and download the local model
-- [ProjectSettings.jsx](pages/ProjectSettings.jsx.md) — Project settings: name, icon, context, languages, skills
-- [ProjectSettingsDialog.jsx](pages/ProjectSettingsDialog.jsx.md) — Window holding the settings of a project
+- [ProjectSettings.jsx](pages/ProjectSettings.jsx.md) — Project settings: name, icon, context, languages, skills, services
+- [SettingsShell.jsx](pages/SettingsShell.jsx.md) — The frame shared by the general and the project settings windows
 - [ProjectsPanel.jsx](pages/ProjectsPanel.jsx.md) — Projects view with avatars and context menu
 - [ProjectsHome.jsx](pages/ProjectsHome.jsx.md) — Home: network of projects and search by meaning
 - [ProjectGraph.jsx](pages/ProjectGraph.jsx.md) — Bubbles and synapses of the Home network
 - [ChatComposer.jsx](pages/ChatComposer.jsx.md) — Restricted Markdown message field of the chat
+- [ChatOptionsMenu.jsx](pages/ChatOptionsMenu.jsx.md) — Three-dot menu holding the chat options (reasoning, temperature, approval)
 - [QuickActionsSettings.jsx](pages/QuickActionsSettings.jsx.md) — Settings section for the chat quick actions
 - [Segmented.jsx](pages/Segmented.jsx.md) — Group of buttons for a single choice
 - [SelectionToolbar.jsx](pages/SelectionToolbar.jsx.md) — Floating bar of the selection: marks, links, images
 - [SettingsActions.jsx](pages/SettingsActions.jsx.md) — Actions of a settings section shown at the right of the settings header
 - [SettingsScreen.jsx](pages/SettingsScreen.jsx.md) — Settings window with its sections
+- [ServicesSettings.jsx](pages/ServicesSettings.jsx.md) — Services (MCP servers): general settings and the project tab
 - [SkillsManager.jsx](pages/SkillsManager.jsx.md) — Writing skills manager: library, editor, generation
 - [SourceEditor.jsx](pages/SourceEditor.jsx.md) — Markdown source view with line numbers
 - [SpellcheckLanguages.jsx](pages/SpellcheckLanguages.jsx.md) — Spell-check language selection
 - [Switch.jsx](pages/Switch.jsx.md) — On/off switch used instead of check boxes
 - [TabBar.jsx](pages/TabBar.jsx.md) — Document, browser and image tabs
+- [ToastHost.jsx](pages/ToastHost.jsx.md) — The stack of notifications, bottom right, with expand, copy and close
 - [ToolbarButton.jsx](pages/ToolbarButton.jsx.md) — Toolbar button, divider and group
 - [ToolbarMenu.jsx](pages/ToolbarMenu.jsx.md) — Toolbar button opening a menu of choices
 - [VersionDiffDialog.jsx](pages/VersionDiffDialog.jsx.md) — Window comparing a version with the current text
+- [WebReferencesPanel.jsx](pages/WebReferencesPanel.jsx.md) — Web pages saved as references of the project
 

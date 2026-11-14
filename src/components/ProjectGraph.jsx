@@ -33,10 +33,13 @@ const flagsOf = (node) => `${node.temporary ? `${t('Temporary')} · ` : ''}${!no
 
 /**
  * La rete dei progetti: una bolla con l'icona per progetto, sinapsi tra quelli affini per significato, bolle libere che galleggiano per gli altri.
- * `graph`: { nodes, edges } da `projects:graph`; `matches`: Map(percorso progetto → numero di passaggi trovati) o null; `activePath`: il progetto aperto;
+ * `graph`: { nodes, edges } da `projects:graph`; `matches`: Map(percorso progetto → pertinenza 0-1 del suo passaggio migliore) o null; `activePath`: il progetto aperto;
  * `onOpen(percorso)`. Se WebGL2 non c'è si mostra una griglia semplice con le stesse icone.
  */
-export default function ProjectGraph({ graph, matches = null, activePath = null, onOpen, onContext }) {
+// Il semaforo della pertinenza (come la barra dei risultati nella Home): sotto il 33% rosso (1), fino al 66% giallo (2), sopra verde (3).
+const toneOf = (relevance) => { const percent = Math.round(Math.max(0, Math.min(1, Number(relevance) || 0)) * 100); return percent < 33 ? 1 : percent <= 66 ? 2 : 3 }
+
+export default function ProjectGraph({ graph, matches = null, activePath = null, layoutVersion = 0, onOpen, onContext }) {
   const wrapRef = useRef(null)
   const labelRefs = useRef(new Map())
   const live = useRef({})
@@ -46,6 +49,8 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
 
   // Gli input dell'animazione stanno in un riferimento: il ciclo di disegno non deve ripartire a ogni cambio di ricerca o di passaggio del mouse.
   live.current.matches = matches
+  // La finestra è tornata in primo piano (un'altra può aver spostato delle bolle): la disposizione condivisa si rilegge.
+  useEffect(() => { if (layoutVersion) live.current.reloadLayout?.() }, [layoutVersion])
   live.current.activePath = activePath
   live.current.hoverId = hoverId
   live.current.onOpen = onOpen
@@ -159,10 +164,10 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
         if (animate) {
           wake(6000)
         } else {
-          const fixed = sim.nodes.filter((node) => !arrivals.includes(node) && !node.pinned)
-          for (const node of fixed) node.pinned = true
+          const fixed = sim.nodes.filter((node) => !arrivals.includes(node) && !node.pinned && !node.held)
+          for (const node of fixed) node.held = true
           sim.settle(420, size)
-          for (const node of fixed) node.pinned = false
+          for (const node of fixed) node.held = false
           sim.freeze(true)
           sim.freeze(false)
           remember()
@@ -180,6 +185,48 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
       loadIcons(false)
     }
     live.current.apply = applyGraph
+    // Un'altra finestra dell'app ha forse spostato delle bolle: si rilegge la disposizione condivisa e chi è rimasto indietro si mette dove è stato lasciato.
+    // I satelliti seguono il loro padre; le bolle che l'utente sta trascinando non si toccano.
+    let glide = null
+    live.current.reloadLayout = () => {
+      const saved = layoutKey === 'all' ? loadLayout(undefined, 'all') : { ...loadLayout(undefined, 'all'), ...loadLayout(undefined, layoutKey) }
+      const moves = []
+      for (const node of sim.nodes) {
+        const at = saved[node.id]
+        // `pinned` è dell'utente che sta trascinando la bolla; `held` è delle animazioni (una nuova lettura le riprende da dove sono).
+        if (!at || node.parent || node.pinned) continue
+        if (Math.hypot(node.x - at.x, node.y - at.y) < 1 && Math.abs((node.z || 0) - (at.z || 0)) < 1) continue
+        moves.push({ node, fromX: node.x, fromY: node.y, fromZ: node.z || 0, toX: at.x, toY: at.y, toZ: at.z || 0 })
+      }
+      if (!moves.length) return
+      // Una nuova lettura mentre la precedente scorre riparte da dove le bolle si trovano.
+      if (glide) { cancelAnimationFrame(glide.frame); for (const move of glide.moves) move.node.held = false }
+      if (reduced) { for (const move of moves) { move.node.x = move.toX; move.node.y = move.toY; move.node.z = move.toZ; move.node.vx = 0; move.node.vy = 0; move.node.vz = 0 } wake(300); return }
+      // Le bolle scivolano verso il loro posto con un'andatura dolce (interpolazione con attacco e arrivo morbidi), non saltano: durante il tragitto sono fissate,
+      // così la simulazione non le tira altrove.
+      const DURATION = 700
+      const started = performance.now()
+      for (const move of moves) move.node.held = true
+      wake(DURATION + 400)
+      const state = { moves, frame: 0 }
+      glide = state
+      const tick = (now) => {
+        const progress = Math.min(1, (now - started) / DURATION)
+        const eased = progress * progress * (3 - 2 * progress)
+        for (const move of moves) {
+          // Se l'utente ha preso la bolla durante il tragitto, il gesto vince: l'animazione non la sposta più.
+          if (move.node.pinned) continue
+          move.node.x = move.fromX + (move.toX - move.fromX) * eased
+          move.node.y = move.fromY + (move.toY - move.fromY) * eased
+          move.node.z = move.fromZ + (move.toZ - move.fromZ) * eased
+          move.node.vx = 0; move.node.vy = 0; move.node.vz = 0
+        }
+        if (progress < 1) { state.frame = requestAnimationFrame(tick); return }
+        for (const move of moves) move.node.held = false
+        if (glide === state) glide = null
+      }
+      state.frame = requestAnimationFrame(tick)
+    }
     // Il pulsante «Ricalcola»: si dimentica la disposizione e la rete si ricompone da zero, con un movimento che poi si ferma.
     live.current.recalc = () => {
       clearLayout(undefined, layoutKey)
@@ -339,7 +386,7 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
         const target = { lit: 0, dim: 0 }
         if (node.id === opened) target.lit = 0.4
         if (searching) {
-          if (found.has(node.id)) target.lit = 1
+          if (found.has(node.id)) target.lit = 0.08 + 0.92 * Math.max(0, Math.min(1, Number(found.get(node.id)) || 0)) ** 3 // curva ripida: 60% → 0,27 · 90% → 0,74 · 100% → 1
           else target.dim = 1
         }
         if (hovered) {
@@ -355,7 +402,7 @@ export default function ProjectGraph({ graph, matches = null, activePath = null,
         mood.set(node.id, state)
         const p = at(node.x, node.y, node.z)
         // In prospettiva: le bolle lontane sono più piccole e, di poco, più spente.
-        return { x: p.x, y: p.y, z: p.z, r: node.r * p.scale, cell: index.get(node.id) ?? 0, lit: state.lit, dim: Math.min(1, state.dim + Math.min(0.3, Math.max(0, p.z / 1500))), free: node.degree === 0 && !node.parent, weight: weights.get(node.id) ?? 0 }
+        return { x: p.x, y: p.y, z: p.z, r: node.r * p.scale, cell: index.get(node.id) ?? 0, lit: state.lit, dim: Math.min(1, state.dim + Math.min(0.3, Math.max(0, p.z / 1500))), free: node.degree === 0 && !node.parent, weight: weights.get(node.id) ?? 0, tone: searching && found.has(node.id) ? toneOf(found.get(node.id)) : 0 }
       })
       // Prima le più lontane: le vicine le coprono.
       nodes.sort((a, b) => b.z - a.z)

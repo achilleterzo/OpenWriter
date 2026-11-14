@@ -1,11 +1,11 @@
-# FileExplorer.jsx
+# eFileExplorer.jsx
 
 Source: [`src/components/FileExplorer.jsx`](../../../../../src/components/FileExplorer.jsx)
 
 Project file tree. Without a project it shows a placeholder with the button that opens a folder.
 
-- Header: the project avatar and name (clicking it opens the folder in the file manager) and the buttons for a new folder, a new document, adding a reference folder, moving a project here, refreshing, and opening the project settings in a window ([ProjectSettingsDialog.jsx](ProjectSettingsDialog.jsx.md), usable for the open project and for a sub-project). A new folder or document is created in the folder last clicked (the header name shows which one) or in the project root.
-- The tree lists folders, documents and images, loads a folder's children when it is expanded, and marks the project root, sub-projects (with their own icon) and empty folders. A document imported from DOCX or PDF shows its original file underneath, read-only and with a lock icon, opened on request.
+- Header: the project avatar and name (clicking it opens the folder in the file manager) and the buttons for a new folder, a new document, adding a reference folder, moving a project here, refreshing, and opening the project settings in a window ([ProjectSettings.jsx](ProjectSettings.jsx.md), usable for the open project and for a sub-project). A new folder or document is created in the folder last clicked (the header name shows which one) or in the project root.
+- The tree lists folders, documents and images, loads a folder's children when it is expanded, and marks the project root, sub-projects (with their own icon) and empty folders. A document imported from DOCX or PDF carries the originals in `entry.originals` and shows them underneath, read-only and with a lock icon ("Original, read-only"): an arrow in front of its name (tooltip "Show the original" / "Hide the original", `aria-expanded`) shows and hides them, they follow the document's selection and open with a click or a double click, and only folders are read when a row is expanded since the originals are already at hand.
 - Keyboard works as in a file manager: the arrows move between the visible rows, Home and End go to the extremes, the right arrow opens a folder (or steps into its content) and the left one closes it (or returns to the folder containing the row). F2 renames, Delete deletes (with confirmation). With an image open, moving over another image shows it in the same tab without taking the focus away from the tree.
 - A single click opens a file as a preview, a double click keeps the tab open ([TabBar.jsx](TabBar.jsx.md)); a document name keeps `.md` when the extension is omitted. Renaming and creating happen in line, in the folder concerned (Enter confirms, Escape cancels, losing focus confirms the rename and cancels the creation), and after a rename the focus returns to the moved row. Renaming a document renames its originals too.
 - Context menu: open, new folder, new document, create sub-project, sub-project settings, open as project, make standalone project, move a project here, copy (Ctrl+C), cut (Ctrl+X), paste (Ctrl+V), rename, delete, reveal in the file manager (with the name the operating system uses).
@@ -22,3 +22,5 @@ Project file tree. Without a project it shows a placeholder with the button that
 The header shows the project name chosen in the settings (read again when `settingsVersion` changes) and the folder name when there is none.
 
 **Deselecting.** A click on the empty area under the rows clears the selection and the folder chosen as the destination of new files (new files go back to the project root). The row of the open document keeps its own highlight, which follows the tab, not the selection.
+
+The `command` prop carries a command of the Project menu (`project-new-folder`, `project-new-document`, `project-add-reference`, `project-move-here`, `project-refresh`): it is run once, by id, and `onCommandHandled` tells the application to drop it, so showing the explorer again later does not repeat it.

@@ -201,7 +201,7 @@ function LiveDocumentPane({ tab, project, active, onOpenFull, onExtractImages, f
   // Quando la scheda non è modificata (appena aperta o salvata) quello che c'è nell'editor è il testo di riferimento.
   useEffect(() => {
     if (editor && !tab.dirty) savedMarkdown.current = editor.state.doc
-  }, [editor, tab.dirty, tab.filePath])
+  }, [editor, tab.dirty, tab.filePath, tab.content])
 
   function applySource(text) {
     const current = editorRef.current

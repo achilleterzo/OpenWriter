@@ -17,7 +17,7 @@ const path = require('node:path')
 const REQUEST_TIMEOUT_MS = 180_000
 const READY_TIMEOUT_MS = 30_000
 
-function createGpuContext({ BrowserWindow, ipcMain, packDirectory, tokenizersFile, idleMs = 120_000 }) {
+function createGpuContext({ BrowserWindow, ipcMain, packDirectory, tokenizersFile, power = () => 'auto', idleMs = 120_000 }) {
   const pageDirectory = path.join(__dirname, 'gpu-embedder')
   let server = null
   let token = ''
@@ -69,7 +69,8 @@ function createGpuContext({ BrowserWindow, ipcMain, packDirectory, tokenizersFil
   }
 
   function onReply(event, id, payload) {
-    if (!window || event.sender !== window.webContents) return // solo la nostra finestra
+    // Solo la nostra finestra. Con la finestra già distrutta (es. il processo della scheda è caduto) `window.webContents` lancia «Object has been destroyed»: dentro un gestore di ipcMain sarebbe un errore non gestito del processo principale.
+    if (!window || window.isDestroyed() || window.webContents.isDestroyed() || event.sender !== window.webContents) return
     if (id === 0) { if (payload?.ready) { pageReady = true; readyResolve?.() } return }
     const entry = pending.get(id)
     if (!entry) return
@@ -142,7 +143,14 @@ function createGpuContext({ BrowserWindow, ipcMain, packDirectory, tokenizersFil
       const id = counter
       const timer = setTimeout(() => { pending.delete(id); reject(new Error('The GPU did not answer in time')) }, REQUEST_TIMEOUT_MS)
       pending.set(id, { resolve, reject, timer })
-      window.webContents.send('embed:request', { id, ...message })
+      try {
+        if (!window || window.isDestroyed() || window.webContents.isDestroyed()) throw new Error('The GPU page is not available')
+        window.webContents.send('embed:request', { id, power: power(), ...message })
+      } catch (error) {
+        clearTimeout(timer)
+        pending.delete(id)
+        reject(error)
+      }
     })
   }
 

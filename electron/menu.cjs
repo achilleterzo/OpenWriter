@@ -9,6 +9,8 @@ function createApplicationMenu(sendCommand, state = {}) {
   const command = (name) => () => sendCommand(name)
   // `state.home`: la Home dei progetti è aperta e il documento non si vede: ciò che lo modifica o lo cerca si disattiva (modifica, ricerca, salvataggio, stampa, esportazione).
   const onDocument = !state.home
+  // Le voci di «Progetto» agiscono sul progetto aperto: senza, restano spente.
+  const hasProject = Boolean(state.project)
 
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
@@ -17,6 +19,7 @@ function createApplicationMenu(sendCommand, state = {}) {
         { label: t('New document'), accelerator: 'CmdOrCtrl+N', click: command('new') },
         { label: t('Open…'), accelerator: 'CmdOrCtrl+O', click: command('open') },
         { label: t('Open project folder…'), accelerator: 'CmdOrCtrl+Shift+O', click: command('open-project') },
+        { label: t('Open project in a new window…'), click: command('open-project-new-window') },
         { label: t('Close tab'), accelerator: 'CmdOrCtrl+W', click: command('close-tab'), enabled: onDocument },
         { type: 'separator' },
         { label: t('Save'), accelerator: 'CmdOrCtrl+S', click: command('save'), enabled: onDocument },
@@ -49,10 +52,24 @@ function createApplicationMenu(sendCommand, state = {}) {
         { role: 'cut', label: t('Cut') },
         { role: 'copy', label: t('Copy') },
         { role: 'paste', label: t('Paste') },
-        { role: 'selectAll', label: t('Select all') },
+        { label: t('Select all'), accelerator: 'CmdOrCtrl+A', click: command('select-all') },
         { type: 'separator' },
         { label: t('Find…'), accelerator: 'CmdOrCtrl+F', click: command('find'), enabled: onDocument },
         { label: t('Replace…'), accelerator: 'CmdOrCtrl+H', click: command('replace'), enabled: onDocument },
+      ],
+    },
+    {
+      label: t('Project'),
+      submenu: [
+        { label: t('New document…'), click: command('project-new-document'), enabled: hasProject },
+        { label: t('New folder…'), click: command('project-new-folder'), enabled: hasProject },
+        { label: t('Add a reference folder…'), click: command('project-add-reference'), enabled: hasProject },
+        { label: t('Move a project here…'), click: command('project-move-here'), enabled: hasProject },
+        { label: t('Refresh'), click: command('project-refresh'), enabled: hasProject },
+        { type: 'separator' },
+        { label: t('Show in file manager'), click: command('project-reveal'), enabled: hasProject },
+        { type: 'separator' },
+        { label: t('Project settings…'), click: command('project-settings'), enabled: hasProject },
       ],
     },
     ...(PAGES_VIEW_ENABLED ? [{

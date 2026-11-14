@@ -69,7 +69,7 @@ export default function TabBar({ tabs, onPromote, unsavedCount = 0, onSaveAll, a
             onContextMenu={(event) => {
               event.preventDefault()
               openMenu({ x: event.clientX, y: event.clientY, items: [
-                tab.kind !== 'browser' && tab.kind !== 'image' && tab.kind !== 'text' && { label: tab.pinned ? t('Unpin tab') : t('Pin tab'), onClick: () => onTogglePin(tab.id) },
+                tab.kind !== 'image' && tab.kind !== 'text' && { label: tab.pinned ? t('Unpin tab') : t('Pin tab'), onClick: () => onTogglePin(tab.id) },
                 { label: t('Close'), onClick: () => onClose(tab.id) },
               ].filter(Boolean) })
             }}
@@ -79,7 +79,7 @@ export default function TabBar({ tabs, onPromote, unsavedCount = 0, onSaveAll, a
           >
             {tab.kind === 'browser' ? <Globe size={14} className="shrink-0" /> : tab.kind === 'image' ? <ImageIcon size={14} className="shrink-0" /> : tab.kind === 'text' ? <FileCode size={14} className="shrink-0" /> : <FileText size={14} className="shrink-0" />}
             <span className={`truncate ${tab.closed ? 'italic opacity-60' : tab.preview ? 'italic' : ''}`} title={tab.preview ? t('Preview: it is replaced by the next file you open, until you work on it. Double-click to keep it.') : undefined}>{tab.title}</span>
-            {tab.kind !== 'browser' && tab.kind !== 'image' && tab.kind !== 'text' && (
+            {tab.kind !== 'image' && tab.kind !== 'text' && (
               <button
                 type="button"
                 aria-label={tab.pinned ? t('Unpin tab') : t('Pin tab')}

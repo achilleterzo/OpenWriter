@@ -14,6 +14,10 @@ Settings → Associations connects OpenWriter with the operating system, in the 
 
 Nothing is registered in the development version, and where something is not possible the page says why. A folder passed to the application (the file manager entry, the command line, a second launch) opens as a project.
 
+## Several windows
+
+"Open project in a new window" (File menu, the menu of a project in the Projects tab and in the Home) starts another window of the application on the project you choose, to work on two projects side by side. A project is open in one window at a time: asking for it in another window brings the window that has it to the front. The same goes for a folder opened from the file manager. The windows share the settings, the browser session and the bubble layout of the Home; the agent servers (MCP, stdio bridge and HTTP) are run by one window only, and when that window is closed another one takes them over by itself.
+
 ## Browser and reader view
 
 A browser tab lets you search and read web pages without leaving the application, and the assistant can read it when web browsing is enabled. The reading view extracts the article from a page and shows it in a clean layout, with adjustable text size and a light or dark theme. The article can be saved as Markdown, with its title and source, into the project. A screenshot of the content of a tab can be saved in the project's `screenshots` folder. Each project keeps its own history of the addresses you visited, offered as suggestions while you type in the address bar (the assistant's browsing is recorded apart, and available to it through a tool). Tabs and logins survive a restart, and the open pages come back where they were.

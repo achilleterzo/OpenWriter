@@ -81,10 +81,11 @@ export function saveAppearance(appearance) {
 
 const systemQuery = window.matchMedia('(prefers-color-scheme: dark)')
 
-// Carattere specifico del progetto aperto (vedi impostazioni del progetto): ha la precedenza su quello generale. Non viene salvato nelle preferenze.
-let projectEditor = { font: '', fontFamily: '' }
+// Carattere e colore d'accento specifici del progetto aperto (vedi impostazioni del progetto): ha la precedenza su quello generale. Non viene salvato nelle preferenze.
+let projectEditor = { font: '', fontFamily: '', accent: '' }
 
-function effective(appearance) {
+function effective(base) {
+  const appearance = projectEditor.accent ? { ...base, accent: projectEditor.accent } : base
   if (projectEditor.fontFamily) return { ...appearance, font: projectEditor.font || appearance.font, fontFamily: projectEditor.fontFamily }
   if (projectEditor.font) return { ...appearance, font: projectEditor.font, fontFamily: '' }
   return appearance
@@ -114,7 +115,7 @@ const listeners = new Set()
 export const getAppearance = () => current
 
 export function setProjectEditor(editor) {
-  projectEditor = { font: editor?.font || '', fontFamily: cleanFamily(editor?.fontFamily).trim() }
+  projectEditor = { font: editor?.font || '', fontFamily: cleanFamily(editor?.fontFamily).trim(), accent: accents.some((item) => item.value === editor?.accent) ? editor.accent : '' }
   applyAppearance(current)
 }
 

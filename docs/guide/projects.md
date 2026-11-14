@@ -6,12 +6,15 @@ What a project is on disk, the file explorer, sub-projects, linked documents, th
 
 A project is a working directory. When it is opened, OpenWriter creates or reuses a `.ow` directory containing project settings, assistant context, skills, conversations, attachments, notes, memory, and document history. These files are plain text or JSON and can be committed to Git or added to `.gitignore`.
 
+The Project menu of the application holds what the file explorer header offers (new document, new folder, reference folder, moving a project here, refresh, showing the folder in the file manager) and the project settings. The settings of a project open in a window like the general settings, with the same tabs where they apply — General (name, icon, context, languages, spell checker), Appearance (editor font and accent color, previewed at once for the open project and kept only when saved), AI (model, reply language, temperature, tools, approval), Quick actions, Skills and Advanced (versions, search index, setup sharing, context copy); what concerns the whole application (associations, local models, agents, updates) stays in the general settings.
+
 The projects view lists the known projects with an avatar (the project's icon, or one generated from its name), and a context menu to open, configure, move, reveal, or remove them. A project can have a name of its own in its settings (the field starts with the folder name; the `@` in front is only decoration): the name is used in the lists, the graph, the explorer, and by agents, and the `@alias` of a project in the searches of other projects comes from it.
 
 ### File explorer
 
 - Move through the tree with the arrow keys, Home, and End; Enter opens a file, F2 renames, Del deletes. Dropping on a folder moves, from outside the project it copies.
 - **Selection.** Ctrl/Cmd+click adds or removes a row, Shift+click (or Shift+arrows) selects a range, Ctrl/Cmd+A selects everything visible. Dragging, the context menu, copy, cut, and delete all act on the whole selection, with a single confirmation.
+- **Any file.** Dragging, dropping and pasting accept every kind of file, not only the supported formats: the assistant can read what the app cannot open and turn it into a Markdown document.
 - **Folders** work like files: they can be dragged inside the tree, dropped from the file manager (copied with their content), copied, cut, and pasted.
 - **System clipboard.** Copy or cut in OpenWriter and paste in the file manager or another program, and the other way round. Dragging also hands files and folders to the system.
 - **DOCX and PDF originals.** A converted document keeps its original under it; deleting the document moves the original to the trash with it, and renaming or moving the document carries the original along.

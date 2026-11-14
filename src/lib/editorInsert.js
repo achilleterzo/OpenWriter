@@ -1,6 +1,32 @@
 import { Fragment, Mark } from '@tiptap/pm/model'
 import { diffText } from './inlineDiff.js'
 
+// Il Markdown ammette combinazioni che lo schema dell'editor non ammette: il codice in linea esclude grassetto, corsivo e barrato (vedi DocumentPane),
+// ma "**un `comando` in grassetto**" li dà tutti sullo stesso testo e ProseMirror rifiuta l'insieme ("Invalid collection of marks for node text").
+// Si ricostruisce ogni insieme di marchi un marchio alla volta: addToSet applica le esclusioni dello schema (il codice resta, gli altri cadono).
+function validMarks(marks) {
+  return marks.length < 2 ? marks : marks.reduce((set, mark) => mark.addToSet(set), [])
+}
+
+function cleanNode(node) {
+  if (node.isText) return Mark.sameSet(validMarks(node.marks), node.marks) ? node : node.mark(validMarks(node.marks))
+  if (!node.childCount) return node
+  const children = []
+  node.content.forEach((child) => children.push(cleanNode(child)))
+  return node.copy(Fragment.fromArray(children))
+}
+
+// Il Markdown come contenuto dell'editor (Fragment con marchi validi), o null se non si può interpretare: allora si lascia fare a Tiptap.
+export function markdownFragment(editor, value) {
+  if (!editor.markdown) return null
+  try {
+    const json = editor.markdown.parse(String(value ?? ''))
+    return cleanNode(editor.schema.nodeFromJSON(json?.type === 'doc' ? json : { type: 'doc', content: json?.content || [] })).content
+  } catch {
+    return null
+  }
+}
+
 /**
  * Scrive nell'editor un testo che può contenere formattazione Markdown (**grassetto**, *corsivo*, `codice`, link…) al posto
  * dell'intervallo `from`–`to`. Un `insertText` semplice lascerebbe gli asterischi come testo letterale (che al salvataggio
@@ -28,7 +54,7 @@ export function replaceRangeWithMarkdown(editor, from, to, markdown) {
       return
     }
   }
-  editor.chain().insertContentAt({ from, to }, value, { contentType: 'markdown' }).run()
+  editor.chain().insertContentAt({ from, to }, markdownFragment(editor, value) ?? value, { contentType: 'markdown' }).run()
 }
 
 // Il Markdown su una riga come contenuto in linea, o null se diventa un blocco.
@@ -39,7 +65,7 @@ function inlineFragment(editor, value) {
   const blocks = json?.content || []
   if (blocks.length !== 1 || blocks[0].type !== 'paragraph' || !blocks[0].content?.length) return null
   try {
-    const paragraph = editor.schema.nodeFromJSON(blocks[0])
+    const paragraph = cleanNode(editor.schema.nodeFromJSON(blocks[0]))
     let hasMarks = false
     paragraph.content.forEach((node) => { if (node.marks.length) hasMarks = true })
     return { fragment: paragraph.content, hasMarks }

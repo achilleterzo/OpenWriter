@@ -10,7 +10,11 @@ Behind everything the renderer draws a backdrop with depth, in neutral greys tha
 
 **Relief.** Each bubble has a `weight` (0–1, from the indexed files of the project): the shader treats the icon as a spherical cap lit from the top left (diffuse shading, a specular highlight, an accent rim light, no magnification: the icon is shown whole and undistorted, like the avatar of the projects list) (no cast shadow). The heavier the project, the stronger the relief; light projects are almost flat.
 
-**Satellite thread.** An edge with a negative `weight` is the thread that ties a satellite to its parent: thinner than a synapse, dashed (regular dashes and gaps along the line, no travelling pulse), in the same accent colour, brighter when either end is highlighted.
+**Relevance tone.** A node carries a `tone` (0–3): 0 for the accent of the view, 1 red, 2 yellow, 3 green. It is the traffic light of a search, the relevance of the project's best passage ([ProjectGraph.jsx](../components/pages/ProjectGraph.jsx.md)), and the shader uses it for the ring and the glow of a lit bubble (the same colours as the bar of the results), so a project found by a weak passage lights red and one found well lights green.
+
+**Satellite thread.** An edge with a negative `weight`
+
+ is the thread that ties a satellite to its parent: thinner than a synapse, dashed (regular dashes and gaps along the line, no travelling pulse), in the same accent colour, brighter when either end is highlighted.
 
 **Animated icons.** `refreshCells(indices)` redraws only the given cells of the atlas (a cell canvas, `texSubImage2D`) and regenerates the mipmaps, so an animated icon changes frame without rebuilding the whole atlas. An entry's `image` can be an `<img>` (`naturalWidth`) or an already decoded `ImageBitmap` (`width`).
 

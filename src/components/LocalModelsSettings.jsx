@@ -86,7 +86,11 @@ export function SemanticModelPicker() {
   const gpu = status?.gpu
   const gpuInfo = gpu?.info
   const gpuUnsupported = gpuInfo && gpuInfo.webgpu === false
-  const adapter = gpuInfo?.webgpu ? [gpuInfo.vendor, gpuInfo.architecture].filter(Boolean).join(' ') || t('Graphics card') : ''
+  const adapterName = (item) => item.description || [item.vendor, item.architecture].filter(Boolean).join(' ') || t('Graphics card')
+  const adapter = gpuInfo?.webgpu ? adapterName(gpuInfo) : ''
+  // Più schede: si sceglie per nome; la voce predefinita (nessuna scelta) porta il nome della scheda che il sistema userebbe.
+  const adapters = gpuInfo?.webgpu && Array.isArray(gpuInfo.adapters) && gpuInfo.adapters.length > 1 ? gpuInfo.adapters : []
+  const defaultAdapter = adapters.find((item) => item.isDefault)
   let gpuLine = null
   if (!gpuInfo) gpuLine = <span className="text-xs text-slate-500">{t('Checking the graphics card…')}</span>
   else if (gpuUnsupported) gpuLine = <span className="text-xs text-amber-400">{t('Not supported on this system: {reason}', { reason: gpuInfo.reason || '' })}</span>
@@ -121,7 +125,20 @@ export function SemanticModelPicker() {
             disabled={Boolean(gpuUnsupported)}
             title={t('Graphics card (experimental)')}
             description={t('Much faster, needs WebGPU · {size} MB.', { size: megabytes(status?.packs?.gpu?.totalBytes) })}
-            extra={<div className="grid gap-1 pl-7">{gpuLine}{failure}</div>}
+            extra={<div className="grid gap-1 pl-7">{gpuLine}{failure}{adapters.length > 0 && (
+              <label className="grid gap-1 text-xs text-slate-400">
+                <span>{t('Which graphics card to use')}</span>
+                <select
+                  value={gpu?.power || 'auto'}
+                  disabled={busy}
+                  className="w-full max-w-xs rounded-md border border-slate-700 bg-slate-800 px-2 py-1.5 text-slate-100 outline-none focus:border-accent-400"
+                  onChange={(event) => run(() => electronAPI.setGpuPower(event.target.value))}
+                >
+                  <option value="auto">{defaultAdapter ? t('Default: {name}', { name: adapterName(defaultAdapter) }) : t('Default (the system decides)')}</option>
+                  {adapters.map((item) => <option key={item.power} value={item.power}>{adapterName(item)}</option>)}
+                </select>
+              </label>
+            )}</div>}
             downloading={downloading.gpu}
             onSelect={(device) => run(() => electronAPI.setSemanticDevice(device))}
             onDownload={download}

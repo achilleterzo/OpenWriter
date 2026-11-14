@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { ContextMenuContext, modKey } from './ContextMenu.jsx'
 import { subscribeAppearance } from '../appearance.js'
-import { ArrowLeft, ArrowRight, BookOpen, Camera, Clock, ExternalLink, FileDown, Loader2, Minus, Moon, Plus, RotateCw, Star, Sun, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BookOpen, Camera, Check, Clock, Copy, Crop, Download, ExternalLink, FileDown, Loader2, Minus, Moon, Paperclip, Plus, RotateCw, Star, Sun, X } from 'lucide-react'
+import { FloatingButton, FloatingDivider } from './FloatingToolbar.jsx'
 import { articleFileName, articleToMarkdown, extractArticle, readerDocument } from '../lib/readerMode.js'
 import { saveFromController } from '../lib/webReferences.js'
+import { rasterizeSvg } from '../lib/svgRaster.js'
 import { isPrivateHost } from '../lib/webAddress.js'
 import { t } from '../i18n/index.js'
 
@@ -56,7 +59,7 @@ function Suggestions({ items, highlight, hasQuery, hasHistory, onPick, onRemove,
 }
 
 // Scheda browser basata su <webview> isolato. Registra un controller con cui l'assistente può navigare e leggere la pagina.
-export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved, onScreenshot, onStatus, webRefsVersion = 0, onWebRefsChanged }) {
+export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved, onScreenshot, onRegion, onOpenTab, onAskAboutText, onStatus, webRefsVersion = 0, onWebRefsChanged }) {
   const viewRef = useRef(null)
   // Una scheda ripristinata dopo un riavvio si apre alla pagina in cui era.
   const initialUrl = useRef(tab.initialUrl || 'about:blank')
@@ -308,6 +311,145 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
     }
   }
 
+  // "Riquadro": si traccia un rettangolo sulla pagina e solo quella parte va all'assistente, come immagine allegata alla chat.
+  const [framing, setFraming] = useState(false)
+  const [frame, setFrame] = useState(null) // { x0, y0, x1, y1 } in pixel dell'area della pagina
+  const [frameBusy, setFrameBusy] = useState(false)
+  const [frameSet, setFrameSet] = useState(false) // il rettangolo è tracciato: la barra offre cosa farne
+  const [frameDone, setFrameDone] = useState('') // ultima azione riuscita (copia, salva), per la spunta
+  const frameOverlay = useRef(null)
+  const closeFrame = () => { setFraming(false); setFrame(null); setFrameSet(false); setFrameDone('') }
+  useEffect(() => { if (!active || reader) { setFraming(false); setFrame(null); setFrameSet(false) } }, [active, reader])
+  useEffect(() => {
+    if (!framing) return undefined
+    const onKey = (event) => { if (event.key === 'Escape') { setFraming(false); setFrame(null); setFrameSet(false); setFrameDone('') } }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [framing])
+  const framePoint = (event) => {
+    const box = frameOverlay.current.getBoundingClientRect()
+    return { x: Math.min(Math.max(event.clientX - box.left, 0), box.width), y: Math.min(Math.max(event.clientY - box.top, 0), box.height) }
+  }
+  // Rilasciato il mouse il riquadro resta lì: si può ritracciare, oppure sceglierne l'uso dalla barra (copia, salva, invia all'assistente).
+  function finishFrame(box) {
+    const width = Math.abs(box.x1 - box.x0)
+    const height = Math.abs(box.y1 - box.y0)
+    if (width < 8 || height < 8) { setFrame(null); onStatus?.(t('The frame is too small: drag over the part of the page to send')); return }
+    setFrame(box)
+    setFrameSet(true)
+  }
+  async function useFrame(kind) {
+    const area = frameOverlay.current?.getBoundingClientRect()
+    if (!frame || !area) return
+    const rect = { x: Math.min(frame.x0, frame.x1), y: Math.min(frame.y0, frame.y1), width: Math.abs(frame.x1 - frame.x0), height: Math.abs(frame.y1 - frame.y0) }
+    setFrameBusy(true)
+    try {
+      const view = viewRef.current
+      const shot = await window.electronAPI.captureWebview(view.getWebContentsId(), { rect, viewport: { width: area.width, height: area.height } })
+      if (kind === 'send') {
+        closeFrame()
+        onRegion?.({ ...shot, title: view.getTitle() || view.getURL() })
+        return
+      }
+      const payload = { data: shot.data, mime: shot.mime || 'image/png', label: 'frame' }
+      const result = kind === 'copy' ? await window.electronAPI.copyImage(payload) : await window.electronAPI.saveImage(payload)
+      if (result) {
+        setFrameDone(kind)
+        setTimeout(() => setFrameDone((value) => (value === kind ? '' : value)), 1500)
+      }
+    } catch (error) {
+      console.error(error)
+      onStatus?.(error.message || t('The operation failed'))
+    } finally {
+      setFrameBusy(false)
+    }
+  }
+  // La barra sta sotto il rettangolo (sopra se non c'è posto), allineata al suo bordo destro.
+  const frameBar = (() => {
+    if (!frameSet || !frame) return null
+    const area = frameOverlay.current?.getBoundingClientRect()
+    const right = Math.max(frame.x0, frame.x1)
+    const bottom = Math.max(frame.y0, frame.y1)
+    const top = Math.min(frame.y0, frame.y1)
+    const height = 40
+    const y = area && bottom + 8 + height > area.height ? Math.max(4, top - 8 - height) : bottom + 8
+    return { x: Math.max(8, right - 150), y }
+  })()
+
+  // Tasto destro nella pagina (e clic centrale sui link, gestito dal processo principale): il menu si compone qui, secondo ciò che sta sotto il cursore.
+  const openMenu = useContext(ContextMenuContext)
+  const menuProps = useRef({})
+  menuProps.current = { openMenu, onOpenTab, onAskAboutText, onRegion, onStatus, onScreenshot }
+  useEffect(() => {
+    const api = window.electronAPI
+    if (!api?.onBrowserContextMenu) return undefined
+    const mine = (contentsId) => { try { return viewRef.current?.getWebContentsId() === contentsId } catch { return false } }
+    const offMenu = api.onBrowserContextMenu((info) => {
+      if (!mine(info.contentsId)) return
+      const view = viewRef.current
+      const { openMenu: open, onOpenTab: openTab, onAskAboutText: askText, onRegion: askImage, onStatus: status, onScreenshot: refreshFiles } = menuProps.current
+      const fail = (error) => status?.(error.message || t('The operation failed'))
+      const act = (action) => api.browserContextAction({ contentsId: info.contentsId, action, x: info.x, y: info.y }).catch(fail)
+      const web = (value) => /^https?:\/\//i.test(value || '')
+      const title = view.getTitle() || view.getURL()
+      const groups = []
+
+      if (web(info.linkURL)) {
+        groups.push([
+          { label: t('Open link in a new tab'), onClick: () => openTab?.(info.linkURL, { background: false }) },
+          { label: t('Open link in a new background tab'), onClick: () => openTab?.(info.linkURL, { background: true }) },
+          { label: t('Copy link address'), onClick: () => navigator.clipboard.writeText(info.linkURL).catch(fail) },
+          { label: t('Open in the system browser'), onClick: () => api.openLink(info.linkURL) },
+        ])
+      }
+      if (info.mediaType === 'image' && (info.hasImageContents || info.srcURL)) {
+        const image = []
+        if (info.hasImageContents) image.push({ label: t('Copy image'), onClick: () => act('copyImage') })
+        if (info.srcURL) {
+          image.push(
+            { label: t('Save image to the project'), onClick: () => api.saveBrowserImage({ contentsId: info.contentsId, url: info.srcURL }).then((saved) => { status?.(t('Image saved: {name}', { name: `images/${saved.split(/[\\/]/).pop()}` })); refreshFiles?.(saved) }).catch(fail) },
+            { label: t('Ask the assistant about this image'), onClick: () => api.fetchBrowserImage({ contentsId: info.contentsId, url: info.srcURL }).then(async (shot) => ({ ...(shot.svg ? await rasterizeSvg(shot.svg) : shot), title })).then((shot) => askImage?.({ ...shot, title, label: t('Image from “{title}”', { title: title.replace(/\s+/g, ' ').slice(0, 40) }) })).catch(fail) },
+          )
+        }
+        if (web(info.srcURL)) image.push({ label: t('Copy image address'), onClick: () => navigator.clipboard.writeText(info.srcURL).catch(fail) })
+        groups.push(image)
+      }
+      const selected = info.selectionText.trim()
+      if (info.isEditable) {
+        groups.push([
+          { label: t('Cut'), hint: `${modKey}X`, disabled: !info.flags?.canCut, onClick: () => act('cut') },
+          { label: t('Copy'), hint: `${modKey}C`, disabled: !info.flags?.canCopy, onClick: () => act('copy') },
+          { label: t('Paste'), hint: `${modKey}V`, disabled: !info.flags?.canPaste, onClick: () => act('paste') },
+          { label: t('Select all'), hint: `${modKey}A`, onClick: () => act('selectAll') },
+        ])
+      } else if (selected) {
+        groups.push([{ label: t('Copy'), hint: `${modKey}C`, onClick: () => act('copy') }])
+      }
+      if (selected) {
+        const passage = { text: selected, title, filePath: null }
+        groups.push([
+          { label: t('Search the web for “{text}”', { text: selected.replace(/\s+/g, ' ').slice(0, 30) }), onClick: () => openTab?.(`https://duckduckgo.com/?q=${encodeURIComponent(selected.replace(/\s+/g, ' ').slice(0, 300))}`, { background: false }) },
+          { label: t('Ask the assistant about the selection'), onClick: () => askText?.(passage, false) },
+          { label: t('Ask the assistant in a new chat'), onClick: () => askText?.(passage, true) },
+        ])
+      }
+      if (!groups.length || (!info.isEditable && !selected && !web(info.linkURL) && info.mediaType !== 'image')) {
+        groups.push([
+          { label: t('Back'), disabled: !view.canGoBack(), onClick: () => view.goBack() },
+          { label: t('Forward'), disabled: !view.canGoForward(), onClick: () => view.goForward() },
+          { label: t('Reload'), onClick: () => view.reload() },
+        ], [{ label: t('Select all'), hint: `${modKey}A`, onClick: () => act('selectAll') }])
+      }
+      const box = view.getBoundingClientRect()
+      const items = groups.flatMap((group, index) => (index ? [{ separator: true }, ...group] : group))
+      // Il punto del clic nella finestra, se il processo principale lo ha dato; altrimenti la posizione della pagina più quella della sua cornice.
+      const exact = Number.isFinite(info.windowX) && Number.isFinite(info.windowY)
+      open({ x: exact ? info.windowX : box.left + info.x, y: exact ? info.windowY : box.top + info.y, items })
+    })
+    const offOpen = api.onBrowserOpenTab?.(({ contentsId, url, background }) => { if (mine(contentsId)) menuProps.current.onOpenTab?.(url, { background }) })
+    return () => { offMenu?.(); offOpen?.() }
+  }, [])
+
   const buttonClass = 'rounded p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-slate-50 disabled:opacity-30 disabled:hover:bg-transparent'
 
   // Se non è la scheda attiva il <webview> resta renderizzato fuori schermo, così l'assistente può continuare a usarlo.
@@ -336,6 +478,7 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
         <button type="button" aria-label={t('History')} title={t('History')} aria-expanded={suggestOpen} className={`${buttonClass} ${suggestOpen ? 'bg-slate-800 text-accent-400' : ''}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (suggestOpen) { closeSuggestions(); inputRef.current?.blur() } else { inputRef.current?.focus() } }}><Clock size={16} /></button>
         <button type="button" aria-label={t('Open in the system browser')} title={t('Open in the system browser')} className={buttonClass} onClick={() => { const url = viewRef.current?.getURL?.(); if (/^https?:\/\//i.test(url || '')) window.electronAPI.openLink(url) }}><ExternalLink size={16} /></button>
         <button type="button" aria-label={t('Save a screenshot')} title={t('Save a screenshot')} disabled={shotBusy || Boolean(reader)} className={buttonClass} onClick={saveScreenshot}>{shotBusy ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}</button>
+        <button type="button" aria-label={t('Frame a region')} title={t('Frame a region')} aria-pressed={framing} disabled={frameBusy || Boolean(reader) || !onRegion} className={`${buttonClass} ${framing ? 'bg-slate-800 text-accent-400' : ''}`} onClick={() => { setFrame(null); setFrameSet(false); setFrameDone(''); setFraming((value) => !value) }}>{frameBusy ? <Loader2 size={16} className="animate-spin" /> : <Crop size={16} />}</button>
         <button type="button" aria-label={savedPage ? t('Remove from the context') : t('Add to the context')} title={savedPage ? t('Remove from the context') : t('Add to the context')} aria-pressed={Boolean(savedPage)} disabled={!canSave || starBusy} className={`${buttonClass} ${savedPage ? 'text-amber-400 hover:text-amber-300' : ''}`} onClick={toggleStar}>{starBusy ? <Loader2 size={16} className="animate-spin" /> : <Star size={16} className={savedPage ? 'fill-amber-400' : ''} />}</button>
         <button type="button" aria-label={reader ? t('Exit reading view') : t('Reading view')} title={reader ? t('Exit reading view') : t('Reading view')} aria-pressed={Boolean(reader)} disabled={readerBusy} className={`${buttonClass} ${reader ? 'bg-slate-800 text-accent-400' : ''}`} onClick={toggleReader}>{readerBusy ? <Loader2 size={16} className="animate-spin" /> : <BookOpen size={16} />}</button>
         {reader && (
@@ -349,7 +492,44 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
         {suggestOpen && <Suggestions items={suggestions} highlight={highlight} hasQuery={Boolean(query.trim())} hasHistory={historyEntries.length > 0} onPick={openUrl} onRemove={removeFromHistory} onClear={clearHistory} />}
       </form>
       {reader && <iframe title={t('Reading view')} sandbox="" srcDoc={readerDocument(reader, { dark: readerDark, size: readerSize })} className="min-h-0 flex-1 border-0" />}
-      <webview ref={viewRef} partition="persist:openwriter-browser" src={initialUrl.current} className={`min-h-0 flex-1 bg-white ${reader ? 'hidden' : ''}`} />
+      <div className={`relative min-h-0 flex-1 ${reader ? 'hidden' : 'flex'}`}>
+        <webview ref={viewRef} partition="persist:openwriter-browser" src={initialUrl.current} className="min-h-0 flex-1 bg-white" />
+        {framing && (
+          <div
+            ref={frameOverlay}
+            role="presentation"
+            className="absolute inset-0 z-10 cursor-crosshair touch-none select-none bg-slate-950/20"
+            onPointerDown={(event) => { if (frameBusy) return; event.currentTarget.setPointerCapture(event.pointerId); setFrameSet(false); setFrameDone(''); const point = framePoint(event); setFrame({ x0: point.x, y0: point.y, x1: point.x, y1: point.y }) }}
+            onPointerMove={(event) => { if (frame && !frameSet) { const point = framePoint(event); setFrame({ ...frame, x1: point.x, y1: point.y }) } }}
+            onPointerUp={(event) => { if (frame && !frameSet) { const point = framePoint(event); finishFrame({ ...frame, x1: point.x, y1: point.y }) } }}
+          >
+            {!frame && <span className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-md bg-slate-900/90 px-3 py-1.5 text-xs text-slate-200 shadow">{t('Drag to frame a region · Esc to cancel')}</span>}
+            {frame && (
+              <div
+                className="pointer-events-none absolute border-2 border-accent-400"
+                style={{ left: Math.min(frame.x0, frame.x1), top: Math.min(frame.y0, frame.y1), width: Math.abs(frame.x1 - frame.x0), height: Math.abs(frame.y1 - frame.y0), boxShadow: '0 0 0 9999px rgba(2, 6, 23, 0.45)' }}
+              />
+            )}
+            {frameBar && (
+              <div
+                role="toolbar"
+                aria-label={t('Region actions')}
+                style={{ left: frameBar.x, top: frameBar.y }}
+                className="absolute z-20 flex cursor-default items-center gap-0.5 rounded-lg border border-slate-700 bg-slate-900 p-1 text-sm text-slate-200 shadow-xl"
+                onPointerDown={(event) => event.stopPropagation()}
+                onPointerUp={(event) => event.stopPropagation()}
+              >
+                <FloatingButton label={t('Attach to chat')} disabled={frameBusy} active onClick={() => useFrame('send')}>{frameBusy ? <Loader2 size={15} className="animate-spin" /> : <Paperclip size={15} />}</FloatingButton>
+                <FloatingDivider />
+                <FloatingButton label={t('Copy the image')} disabled={frameBusy} onClick={() => useFrame('copy')}>{frameDone === 'copy' ? <Check size={15} /> : <Copy size={15} />}</FloatingButton>
+                <FloatingButton label={t('Save the image')} disabled={frameBusy} onClick={() => useFrame('save')}>{frameDone === 'save' ? <Check size={15} /> : <Download size={15} />}</FloatingButton>
+                <FloatingDivider />
+                <FloatingButton label={t('Cancel')} danger onClick={closeFrame}><X size={15} /></FloatingButton>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -8,9 +8,12 @@ Source: [`src/hooks/useDocumentFileCommands.js`](../../../src/hooks/useDocumentF
 
 Hook that applies native-menu document commands to the active tab, subscribing through `onDocumentCommand`.
 
+- `select-all`: forwards to `onSelectAll`.
 - `find` / `replace`: forwards to `workspace.requestFind` (Ctrl+F / Ctrl+H).
 - `new`: opens a new untitled tab; `close-tab`: closes the active tab (confirmation if dirty, handled in App).
-- `open`: file dialog through `electronAPI.openDocument`, then `workspace.openDocument`.
+- `open`: file dialog through `electronAPI.openDocument`, then `workspace.openLoaded`.
+- `extract-markdown-images`: extracts the embedded images of the active document with `workspace.extractImages`.
+- On a text tab (`kind === 'text'`) only `save` and `save-as` are handled, through `workspace.saveText` (status "Saved"); the export and print commands do not concern the text reader.
 - `save` / `save-as`: `workspace.saveTab` with the save-as flag; on success the status says "Saved".
 - `export-docx` / `export-pdf`: exports the editor HTML through the corresponding IPC, reporting the result.
 - `export-markdown-embedded`: exports a self-contained Markdown ([markdown-embed.cjs](../../electron/markdown-embed.cjs.md)) with the editor Markdown and the document path, reporting how many images were embedded and how many could not be.

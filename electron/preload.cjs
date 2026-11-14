@@ -14,7 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('workspace:annotations-changed', listener)
   },
   onWorkspaceChanged: (callback) => {
-    const listener = () => callback()
+    const listener = (_event, paths) => callback(paths)
     ipcRenderer.on('workspace:changed', listener)
     return () => ipcRenderer.removeListener('workspace:changed', listener)
   },
@@ -63,10 +63,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   installSemanticPack: (directory, device) => ipcRenderer.invoke('semantic:install', directory, device),
   removeSemanticPack: (directory, device) => ipcRenderer.invoke('semantic:remove', directory, device),
   setSemanticDevice: (device) => ipcRenderer.invoke('semantic:set-device', device),
+  setGpuPower: (power) => ipcRenderer.invoke('semantic:set-gpu-power', power),
   probeGpu: () => ipcRenderer.invoke('semantic:probe-gpu'),
   setSemanticEnabled: (enabled) => ipcRenderer.invoke('semantic:set-enabled', Boolean(enabled)),
   getIndexActivity: () => ipcRenderer.invoke('knowledge:activity'),
   setProjectQuickActions: (value) => ipcRenderer.invoke('project:set-quick-actions', value),
+  // La disposizione delle bolle del grafo, in un file dei dati dell'app: la vedono tutte le finestre (vedi src/lib/graphLayoutStore.js).
+  layoutStorage: {
+    getItem: (key) => ipcRenderer.sendSync('layout:get', key),
+    setItem: (key, value) => ipcRenderer.sendSync('layout:set', key, String(value)),
+    removeItem: (key) => ipcRenderer.sendSync('layout:remove', key),
+    keys: () => ipcRenderer.sendSync('layout:keys'),
+  },
+  openProjectInNewWindow: (directory) => ipcRenderer.invoke('project:open-new-window', directory),
+  setProjectQuickActionsFor: (directory, value) => ipcRenderer.invoke('projects:set-quick-actions', { directory, value }),
+  setProjectAiOptions: (value) => ipcRenderer.invoke('project:set-ai-options', value),
+  setProjectModelChoiceFor: (directory, choice) => ipcRenderer.invoke('projects:set-model-choice', { directory, choice }),
   getContextChain: (filePath) => ipcRenderer.invoke('project:context-chain', filePath),
   moveIntoDirectory: (request) => ipcRenderer.invoke('workspace:move-path', request),
   saveProjectSettings: (settings) => ipcRenderer.invoke('project:save-settings', settings),
@@ -113,6 +125,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getConversation: (id) => ipcRenderer.invoke('chat:get', id),
   createConversation: (conversation) => ipcRenderer.invoke('chat:create', conversation),
   saveConversation: (conversation) => ipcRenderer.invoke('chat:save', conversation),
+  setConversationQueue: (id, queue) => ipcRenderer.invoke('chat:set-queue', { id, queue }),
   deleteConversation: (id) => ipcRenderer.invoke('chat:delete', id),
   openChatFolder: () => ipcRenderer.invoke('chat:open-folder'),
   listDirectoryForAi: (path, options) => ipcRenderer.invoke('tools:list-directory', path, options),
@@ -134,7 +147,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readImageDescription: (path) => ipcRenderer.invoke('images:read-description', path),
   writeImageDescription: (path, description) => ipcRenderer.invoke('images:write-description', path, description),
   captureRect: (rect) => ipcRenderer.invoke('images:capture-page', rect),
-  captureWebview: (contentsId) => ipcRenderer.invoke('images:capture-webview', contentsId),
+  onBrowserContextMenu: (callback) => {
+    const listener = (_event, info) => callback(info)
+    ipcRenderer.on('browser:context-menu', listener)
+    return () => ipcRenderer.removeListener('browser:context-menu', listener)
+  },
+  onBrowserOpenTab: (callback) => {
+    const listener = (_event, info) => callback(info)
+    ipcRenderer.on('browser:open-tab', listener)
+    return () => ipcRenderer.removeListener('browser:open-tab', listener)
+  },
+  onBrowserPointerDown: (callback) => {
+    const listener = (_event, contentsId) => callback(contentsId)
+    ipcRenderer.on('browser:pointer-down', listener)
+    return () => ipcRenderer.removeListener('browser:pointer-down', listener)
+  },
+  browserContextAction: (request) => ipcRenderer.invoke('browser:context-action', request),
+  saveBrowserImage: (request) => ipcRenderer.invoke('browser:save-image', request),
+  fetchBrowserImage: (request) => ipcRenderer.invoke('browser:fetch-image', request),
+  copyImage: (image) => ipcRenderer.invoke('images:copy', image),
+  saveImage: (image) => ipcRenderer.invoke('images:save', image),
+  captureWebview: (contentsId, region) => ipcRenderer.invoke('images:capture-webview', contentsId, region),
   webRefs: {
     list: () => ipcRenderer.invoke('webrefs:list'),
     find: (url) => ipcRenderer.invoke('webrefs:find', url),
@@ -227,8 +260,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Sceglie un file Markdown e ne restituisce i campi della skill (null se annullato), senza salvarla.
     importFile: () => ipcRenderer.invoke('skills:import-file'),
   },
+  // Client MCP: servizi esterni che l'assistente può usare (vedi mcp-service.cjs). `directory` omesso = il progetto aperto; per i server globali `directory` è null.
+  mcp: {
+    list: (directory) => ipcRenderer.invoke('mcp:list', { directory }),
+    saveServer: (request) => ipcRenderer.invoke('mcp:save-server', request),
+    removeServer: (request) => ipcRenderer.invoke('mcp:remove-server', request),
+    setUse: (directory, ids) => ipcRenderer.invoke('mcp:set-use', { directory, ids }),
+    trustServer: (directory, id) => ipcRenderer.invoke('mcp:trust-server', { directory, id }),
+    testServer: (directory, id) => ipcRenderer.invoke('mcp:test-server', { directory, id }),
+    signIn: (directory, id) => ipcRenderer.invoke('mcp:sign-in', { directory, id }),
+    signOut: (directory, id) => ipcRenderer.invoke('mcp:sign-out', { directory, id }),
+    tools: () => ipcRenderer.invoke('mcp:tools'),
+    callTool: (name, args) => ipcRenderer.invoke('mcp:call-tool', { name, args }),
+  },
   ai: {
     getSettings: () => ipcRenderer.invoke('ai:get-settings'),
+    getEffectiveSettings: () => ipcRenderer.invoke('ai:get-effective-settings'),
     saveSettings: (settings) => ipcRenderer.invoke('ai:save-settings', settings),
     getStatus: (provider) => ipcRenderer.invoke('ai:status', provider),
     login: (provider) => ipcRenderer.invoke('ai:login', provider),
@@ -238,7 +285,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     hasApiKey: (provider) => ipcRenderer.invoke('ai:has-api-key', provider),
     saveApiKey: (value, provider) => ipcRenderer.invoke('ai:save-api-key', value, provider),
     chat: (messages) => ipcRenderer.invoke('ai:chat', messages),
-    getCapabilities: (model) => ipcRenderer.invoke('ai:capabilities', model),
+    getCapabilities: (model, provider) => ipcRenderer.invoke('ai:capabilities', model, provider),
     // Allegati della chat: percorsi scelti dall'utente (solo i tipi indicati), lettura di un file (immagine o PDF), normalizzazione di un'immagine in base64.
     pickAttachments: (types) => ipcRenderer.invoke('chat:pick-attachments', types),
     readAttachment: (path) => ipcRenderer.invoke('chat:read-attachment', path),
@@ -248,7 +295,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
       const listener = (_event, payload) => { if (payload.requestId === requestId) onEvent(payload.event) }
       ipcRenderer.on('ai:stream', listener)
-      const promise = ipcRenderer.invoke('ai:chat-stream', { requestId, messages, tools: options.tools, reasoningCap: options.reasoningCap, use: options.use, temperature: options.temperature }).then((result) => {
+      const promise = ipcRenderer.invoke('ai:chat-stream', { requestId, messages, tools: options.tools, reasoningCap: options.reasoningCap, use: options.use, selection: options.selection, temperature: options.temperature }).then((result) => {
         if (result === null) throw new Error('Richiesta interrotta')
         return result
       }).finally(() => ipcRenderer.removeListener('ai:stream', listener))

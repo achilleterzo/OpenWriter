@@ -58,7 +58,7 @@ export function createGraphSim({ seed = 7, wander = true } = {}) {
       return {
         id: item.id, r: item.r,
         x: item.at ? item.at.x : (random() - 0.5) * width * 0.7, y: item.at ? item.at.y : (random() - 0.5) * height * 0.7, placed: Boolean(item.at),
-        vx: 0, vy: 0, phase: random() * TAU, pinned: false, degree: 0, fresh: true,
+        vx: 0, vy: 0, phase: random() * TAU, pinned: false, held: false, degree: 0, fresh: true,
         z: item.at && Number.isFinite(item.at.z) ? item.at.z : (random() * 2 - 1) * Z_SPREAD * 0.5, vz: 0, zSlot: random() * 2 - 1, data: item.data || 0, mass: 1, inertia: 1, zSpread: Z_SPREAD,
       }
     })
@@ -157,7 +157,7 @@ export function createGraphSim({ seed = 7, wander = true } = {}) {
     }
 
     nodes.forEach((node, i) => {
-      if (node.pinned) { node.vx = 0; node.vy = 0; node.vz = 0; return }
+      if (node.pinned || node.held) { node.vx = 0; node.vy = 0; node.vz = 0; return }
       // La spinta di molle e repulsione si divide per l'inerzia: le bolle leggere si spostano molto, quelle pesanti poco e trascinano le altre.
       ax[i] /= node.inertia; ay[i] /= node.inertia; az[i] /= node.inertia
       if (node.parent) {
@@ -225,7 +225,7 @@ export function createGraphSim({ seed = 7, wander = true } = {}) {
       const level = (node) => { let n = 0; for (let up = node.parent; up; up = up.parent) n += 1; return n }
       const satellites = nodes.filter((node) => node.parent).sort((a, b) => level(a) - level(b))
       for (const node of satellites) {
-        if (node.pinned) continue
+        if (node.pinned || node.held) continue
         node.angle += node.spin * dt
         node.x = node.parent.x + Math.cos(node.angle) * node.orbit
         node.y = node.parent.y + Math.sin(node.angle) * node.orbit

@@ -13,6 +13,7 @@ Non-React helpers used by the editor and the assistant.
 - [documentStats.js](documentStats.js.md) — Word, sentence and reading-time statistics of a document
 - [editorInsert.js](editorInsert.js.md) — Inserts a Markdown text into the editor in place of a range, keeping formatting
 - [embeddedImages.js](embeddedImages.js.md) — Embedded base64 images collapsed for display and for the assistant
+- [exportHtml.js](exportHtml.js.md) — HTML for PDF, print and DOCX: real anchors and heading ids
 - [fonts.js](fonts.js.md) — Editor fonts: bundled families and the Google Fonts catalog
 - [footnoteExtensions.js](footnoteExtensions.js.md) — Footnote references and definitions kept as written
 - [imageExtension.js](imageExtension.js.md) — Tiptap image node, also inside a link
@@ -51,6 +52,10 @@ Non-React helpers used by the editor and the assistant.
 - [selectionText.js](selectionText.js.md) — Text of the editor selection, blocks separated by a blank line
 - [skills.js](skills.js.md) — Writing skills: serialization, active skills, system-prompt block, AI generation prompts
 - [smartDashesExtension.js](smartDashesExtension.js.md) — Dashes and ellipsis typed in the editor
+- [svgRaster.js](svgRaster.js.md) — An SVG rasterised to a PNG for the chat, on a white canvas
+- [temperature.js](temperature.js.md) — The temperature level (0–1) and its bands, shown in the settings and the chat
+- [toasts.js](toasts.js.md) — Notification store: four levels, de-duplication, console diagnostics
 - [textAlignExtension.js](textAlignExtension.js.md) — Text alignment saved as aligned HTML blocks
+- [toolOptions.js](toolOptions.js.md) — The assistant tool groups as the settings show them, with labels and explanations
 - [updateSchedule.js](updateSchedule.js.md) — When the application checks for a new version
 
