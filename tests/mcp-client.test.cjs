@@ -148,3 +148,23 @@ test('mcp: la credenziale arriva al processo del server come variabile d\'ambien
   assert.ok(result.problems.some((problem) => problem.server === 'Broken' && problem.error), 'un server che si chiude subito è un problema, non un blocco')
   assert.ok(result.tools.length >= 1, 'gli altri server restano')
 })
+
+test('mcp-client: un avvio con la vecchia configurazione non si presta a chi ne ha una nuova', async () => {
+  const opened = []
+  const closed = []
+  const sdk = () => ({
+    Client: class { constructor() { this.id = opened.length } async connect() { await new Promise((resolve) => setTimeout(resolve, 30)) } async close() { closed.push(this.id) } async listTools() { return { tools: [] } } async callTool() { return { content: [] } } },
+    stdio: { StdioClientTransport: class { constructor(options) { opened.push(options.args[0]) } }, getDefaultEnvironment: () => ({}) },
+    http: class {},
+  })
+  const client = createMcpClient({ loadSdkImpl: sdk })
+  const entry = (hash) => ({ key: 'k', hash, env: {}, server: { type: 'stdio', command: 'x', args: [hash] } })
+  const [old, fresh] = await Promise.all([
+    client.listTools(entry('old')).catch(() => null),
+    new Promise((resolve) => setTimeout(resolve, 5)).then(() => client.callTool(entry('new'), 't').catch((error) => error)),
+  ])
+  void old; void fresh
+  assert.deepEqual(opened, ['old', 'new'], 'la configurazione nuova ha aperto il suo collegamento')
+  assert.equal(client.openConnections(), 1, 'resta solo quello nuovo')
+  await client.closeAll()
+})
