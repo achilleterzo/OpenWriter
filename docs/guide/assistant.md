@@ -55,3 +55,8 @@ Depending on the enabled settings, the assistant can:
 - Without a project folder open: create a new project from the conversation, after you confirm and choose where it goes.
 
 The `.ow`, `.git`, and `node_modules` directories are excluded from assistant file tools. Read and image operations are size-limited.
+
+## Several windows
+
+When two windows are open on the same project and show the same conversation, they show the same work: the text arrives in both, a message written in the second goes to the queue of the first, and the stop button of either stops it. The window that sent the message does the work, so if it is closed the work stops. A different conversation is independent of it. A conversation saved in one window appears in the other without reloading.
+

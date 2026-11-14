@@ -23,3 +23,8 @@ Everything the editor does with a document: Markdown, notes, bookmarks, history,
 - An Info tab with the statistics of the document in front: last save, words, characters, sentences, pages, reading and speaking time, average and longest sentence, structure (headings, lists, tables, images, links, footnotes, formulas), and the numbers of the selected text.
 - Many modified documents can be saved at once from the tab bar; a document modified by the assistant counts as modified until you accept its edits.
 - The chat box takes a restricted Markdown (bold, italic, code, lists, links) with no visible toolbar: paste Markdown, start a line with `- ` for a list, and the replies and the assistant's questions are rendered as Markdown too.
+
+## Several windows
+
+A document is edited in one window at a time. If you open it in a second window while the first has it open, the second shows it read-only, with a bar that says so and a button that brings the first window to the front. The read-only copy follows what is saved: when the first window saves, the text updates by itself. When the first window closes the document (or is closed), the second one becomes editable. Documents outside the project follow the same rule.
+

@@ -16,7 +16,7 @@ Nothing is registered in the development version, and where something is not pos
 
 ## Several windows
 
-"Open project in a new window" (File menu, the menu of a project in the Projects tab and in the Home) starts another window of the application on the project you choose, to work on two projects side by side. A project is open in one window at a time: asking for it in another window brings the window that has it to the front. The same goes for a folder opened from the file manager. The windows share the settings, the browser session and the bubble layout of the Home; the agent servers (MCP, stdio bridge and HTTP) are run by one window only, and when that window is closed another one takes them over by itself.
+"Open project in a new window" (File menu, the menu of a project in the Projects tab and in the Home) opens another window on the project you choose, to work on two projects side by side. It is the same application, not a second copy: the windows share the settings, the browser session, the bubble layout of the Home and the agent servers (MCP, stdio bridge and HTTP). The same project can be open in more than one window; each window keeps its own tabs and its own saved session. Changes saved to a file reach the windows that show that project. A folder opened from the file manager goes to the window in front.
 
 ## Browser and reader view
 
