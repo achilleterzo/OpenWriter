@@ -26,7 +26,11 @@ async function discover(serverUrl, fetchImpl = fetch) {
   issuer = issuer.replace(/\/+$/, '')
   for (const suffix of ['/.well-known/oauth-authorization-server', '/.well-known/openid-configuration']) {
     try {
-      const metadata = await getJson(fetchImpl, `${issuer}${suffix}`)
+      const issuerUrl = new URL(issuer)
+      const metadataUrl = suffix === '/.well-known/oauth-authorization-server'
+        ? `${issuerUrl.origin}${suffix}${issuerUrl.pathname === '/' ? '' : issuerUrl.pathname}`
+        : `${issuer}${suffix}`
+      const metadata = await getJson(fetchImpl, metadataUrl)
       if (metadata.authorization_endpoint && metadata.token_endpoint) return { authorizationEndpoint: String(metadata.authorization_endpoint), tokenEndpoint: String(metadata.token_endpoint) }
     } catch { /* si prova l'altro indirizzo */ }
   }
