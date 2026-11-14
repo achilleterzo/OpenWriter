@@ -2,6 +2,8 @@ const path = require('node:path')
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/
 const MAX_LIVE_CHARS = 400000
+const MAX_CONSUMED = 500
+const MAX_CONSUMED_CONVERSATIONS = 200
 const text = (value) => (typeof value === 'string' ? value.slice(-MAX_LIVE_CHARS) : '')
 
 // La stessa conversazione è la stessa anche con un'altra grafia del percorso del progetto (su Windows le maiuscole non contano).
@@ -23,6 +25,7 @@ const storeKey = (project) => (project ? (process.platform === 'win32' ? path.re
  */
 function createChatRuns({ events }) {
   const runs = new Map() // chiave → { project, conversationId, driver, live }
+  const consumed = new Map() // chiave → Set di id delle voci di coda già consumate
   const keyOf = (project, conversationId) => `${storeKey(project)}|${conversationId}`
   const valid = (conversationId) => typeof conversationId === 'string' && ID_PATTERN.test(conversationId)
 
@@ -79,6 +82,26 @@ function createChatRuns({ events }) {
       if (!valid(conversationId)) return 0
       return events.toStore(project, { except: sender }, 'chat:changed', { conversationId, kind, ...(kind === 'queue' ? { queue } : {}) })
     },
+
+    // Una voce della coda si consuma una volta sola. `consume` segna quelle già prese (→ gli id presi adesso: chi le chiede per secondo non le ottiene) e
+    // `wasConsumed` serve a chi riscrive la coda per intero con una copia vecchia: una voce già presa non deve riapparire, o verrebbe inviata due volte.
+    // Gli id sono casuali, quindi la lista non si riusa; si tengono gli ultimi.
+    consume({ project, conversationId, ids }) {
+      if (!valid(conversationId)) return []
+      const key = keyOf(project, conversationId)
+      const seen = consumed.get(key) || new Set()
+      const taken = []
+      for (const id of Array.isArray(ids) ? ids : []) {
+        if (typeof id === 'string' && !seen.has(id)) { seen.add(id); taken.push(id) }
+      }
+      while (seen.size > MAX_CONSUMED) seen.delete(seen.values().next().value)
+      consumed.delete(key)
+      consumed.set(key, seen)
+      while (consumed.size > MAX_CONSUMED_CONVERSATIONS) consumed.delete(consumed.keys().next().value)
+      return taken
+    },
+    wasConsumed: ({ project, conversationId, itemId }) => Boolean(consumed.get(keyOf(project, conversationId))?.has(itemId)),
+    forget: ({ project, conversationId }) => { consumed.delete(keyOf(project, conversationId)) },
 
     active: () => runs.size,
   }

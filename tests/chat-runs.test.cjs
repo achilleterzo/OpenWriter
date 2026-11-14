@@ -104,3 +104,25 @@ test('chat-runs: senza progetto le finestre condividono le chat del progetto «m
   runs.start({ sender: one.webContents, project: null, conversationId: 'c9' })
   assert.deepEqual(two.received, [['chat:run-state', { conversationId: 'c9', running: true }]])
 })
+
+test('chat-runs: una voce della coda si consuma una volta sola, e una copia vecchia non la fa riapparire', () => {
+  const { runs } = setup()
+  const where = { project: 'D:/Libri/A', conversationId: 'c1' }
+  assert.deepEqual(runs.consume({ ...where, ids: ['q1', 'q2'] }), ['q1', 'q2'])
+  assert.deepEqual(runs.consume({ ...where, ids: ['q1', 'q3'] }), ['q3'], 'chi arriva dopo non ottiene quella già presa')
+  assert.equal(runs.wasConsumed({ ...where, itemId: 'q1' }), true)
+  assert.equal(runs.wasConsumed({ ...where, itemId: 'q9' }), false)
+  assert.equal(runs.wasConsumed({ project: 'D:/Libri/B', conversationId: 'c1', itemId: 'q1' }), false, "un altro progetto è un'altra coda")
+  assert.deepEqual(runs.consume({ ...where, ids: [5, null, 'q4'] }), ['q4'])
+  runs.forget(where)
+  assert.equal(runs.wasConsumed({ ...where, itemId: 'q1' }), false)
+  assert.deepEqual(runs.consume({ conversationId: '../x', project: null, ids: ['a'] }), [], 'un id di conversazione non valido non si registra')
+})
+
+test('chat-runs: si tengono solo le voci consumate più recenti', () => {
+  const { runs } = setup()
+  const where = { project: 'D:/Libri/A', conversationId: 'c1' }
+  runs.consume({ ...where, ids: Array.from({ length: 600 }, (_, k) => `q${k}`) })
+  assert.equal(runs.wasConsumed({ ...where, itemId: 'q0' }), false, 'le più vecchie cadono')
+  assert.equal(runs.wasConsumed({ ...where, itemId: 'q599' }), true)
+})
