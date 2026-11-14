@@ -50,9 +50,9 @@ function markTerms(snippet, query) {
   const text = String(snippet ?? '')
   if (!text || text.includes('«')) return text
   const fold = (value) => String(value).normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
-  const words = [...new Set((String(query).match(/\p{L}+/gu) || []).map(fold).filter((word) => word.length >= 3))]
+  const words = [...new Set((String(query).match(/\p{L}[\p{L}\p{M}]*/gu) || []).map(fold).filter((word) => word.length >= 3))]
   if (!words.length) return text
-  return text.replace(/\p{L}+/gu, (token) => { const folded = fold(token); return words.some((word) => folded.startsWith(word)) ? `«${token}»` : token })
+  return text.replace(/\p{L}[\p{L}\p{M}]*/gu, (token) => { const folded = fold(token); return words.some((word) => folded.startsWith(word)) ? `«${token}»` : token })
 }
 
 module.exports = { mergeSearches, cleanTerms, markTerms }
