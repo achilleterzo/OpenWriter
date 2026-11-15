@@ -267,7 +267,10 @@ function AskStepView({ step, initial, onAnswer }) {
             >
               <span className="mt-0.5 flex h-5 min-w-5 items-center justify-center rounded bg-slate-900 px-1 text-xs text-slate-400">{index + 1}</span>
               <span className="min-w-0 flex-1">
-                <span className="block break-words"><MarkdownMessage inline softBreaks>{option.label}</MarkdownMessage></span>
+                <span className="flex items-start gap-1.5">
+                  <span className="min-w-0 break-words"><MarkdownMessage inline softBreaks>{option.label}</MarkdownMessage></span>
+                  {option.recommended && <span role="img" aria-label={t('Recommended')} title={t('Recommended')} className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-emerald-400" />}
+                </span>
                 {option.description && <span className="block break-words text-xs text-slate-400"><MarkdownMessage inline softBreaks>{option.description}</MarkdownMessage></span>}
               </span>
               {auto && !stopped && option.label === auto.label && (
@@ -612,6 +615,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const pendingAskRef = useRef(null)
   const [projectSettings, setProjectSettings] = useState(null)
   const [contextChain, setContextChain] = useState([])
+  // Sale quando l'assistente ha modificato i file di istruzioni del progetto (.ow/context.md…): le istruzioni si rileggono.
+  const [instructionsVersion, setInstructionsVersion] = useState(0)
   const [skillsData, setSkillsData] = useState(noSkills)
   // Creazione di una skill dalla chat: { step: 'generate', source, text } e poi { step: 'edit', fields }.
   const [skillDraft, setSkillDraft] = useState(null)
@@ -728,7 +733,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     if (!project) { setProjectSettings(null); return }
     api.getProjectSettings().then(setProjectSettings).catch(() => setProjectSettings(null))
     setGeneralAutoApprove(api.preferences?.values?.['openwriter.autoApprove'] === 'on')
-  }, [project, settingsVersion])
+  }, [project, settingsVersion, instructionsVersion])
 
   // Contesto del documento attivo: cambia col documento (un sotto-progetto ha le sue istruzioni, oltre a quelle del padre).
   useEffect(() => {
@@ -736,7 +741,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     let cancelled = false
     api.getContextChain(JSON.parse(contextPathsKey)).then((chain) => { if (!cancelled) setContextChain(chain) }).catch(() => { if (!cancelled) setContextChain([]) })
     return () => { cancelled = true }
-  }, [project, settingsVersion, contextPathsKey])
+  }, [project, settingsVersion, contextPathsKey, instructionsVersion])
 
   // Skill di scrittura visibili dal documento attivo (globali e dei progetti della catena) e quelle attive di default.
   const [skillsReload, setSkillsReload] = useState(0)
@@ -1297,6 +1302,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     })
     // Progetto creato dall'assistente in questo turno: appena il risultato è salvato la conversazione passa al nuovo progetto.
     let handoff = null
+    let instructionsEdited = false
     const runTool = createToolRunner({
       api,
       project: loose ? null : project,
@@ -1332,7 +1338,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       onFilesChanged: () => toolBridge.onFilesChanged(),
       onMemoryChanged: () => toolBridge.onMemoryChanged(),
       onPathChanged: (change) => toolBridge.onPathChanged(change),
-      onDocumentEdited: (tab) => editedTabs.add(tab.id),
+      onDocumentEdited: (tab) => { editedTabs.add(tab.id); if (/[\\/]\.ow[\\/][^\\/]+\.md$/i.test(tab.filePath || '')) instructionsEdited = true },
       onDocumentOpened: (tab) => openedTabs.add(tab.id),
       openFile: (absolutePath) => toolBridge.openFile(absolutePath),
       beforeEdit: async (tab, targetEditor) => {
@@ -1545,6 +1551,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       // Con "Approva per me" le modifiche si accettano prima di salvare (senza, un documento con modifiche da rivedere non si salva).
       if (autoApproveRef.current) for (const id of editedTabs) { try { toolBridge.acceptPending(id) } catch (error) { console.error(error) } }
       for (const id of editedTabs) await toolBridge.saveDocument(id).catch((error) => console.error(error))
+      if (instructionsEdited) setInstructionsVersion((value) => value + 1)
       for (const id of openedTabs) await toolBridge.closeDocument(id).catch((error) => console.error(error))
       await toolBridge.closeAgentBrowsers?.().catch((error) => console.error(error))
       cancelAnimationFrame(frameRef.current)
