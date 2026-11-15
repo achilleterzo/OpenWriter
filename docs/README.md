@@ -10,7 +10,7 @@ What each area does, written for the user and moved out of the root [README](../
 
 ## Design notes
 
-Designs agreed before they are built: [Workspaces](design/workspaces.md) (a filter that limits the project list, the Home and the knowledge reachable by the assistant and the agents).
+Designs agreed before they are built: [Workspaces](design/workspaces.md) (a filter that limits the project list, the Home and the knowledge reachable by the assistant and the agents); [Core and windows](design/core-and-windows.md) (proposal: one process with the services as a core and the windows as views, shared chat runs, changes visible between windows).
 
 ## Technology Stack
 
@@ -215,8 +215,11 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [mcp-oauth.cjs.md](reference/electron/mcp-oauth.cjs.md) ([mcp-oauth.cjs](../electron/mcp-oauth.cjs)) — OAuth sign-in for MCP services: discovery, PKCE with a local redirect, token refresh
   - [mcp-service.cjs.md](reference/electron/mcp-service.cjs.md) ([mcp-service.cjs](../electron/mcp-service.cjs)) — The MCP client as the assistant sees it: tools offered, confirmation before a call, limits
   - [path-compare.cjs.md](reference/electron/path-compare.cjs.md) ([path-compare.cjs](../electron/path-compare.cjs)) — Platform-aware path comparison
-  - [primary-instance.cjs.md](reference/electron/primary-instance.cjs.md) ([primary-instance.cjs](../electron/primary-instance.cjs)) — Lock that elects the instance running the MCP bridge and HTTP server
-  - [instance-registry.cjs.md](reference/electron/instance-registry.cjs.md) ([instance-registry.cjs](../electron/instance-registry.cjs)) — Which project each window has open, and the focus request to bring it forward
+  - [document-owners.cjs.md](reference/electron/document-owners.cjs.md) ([document-owners.cjs](../electron/document-owners.cjs)) — Which window edits which document: one at a time
+  - [chat-runs.cjs.md](reference/electron/chat-runs.cjs.md) ([chat-runs.cjs](../electron/chat-runs.cjs)) — Who is working on which conversation, and what the other windows see
+  - [layout-merge.cjs.md](reference/electron/layout-merge.cjs.md) ([layout-merge.cjs](../electron/layout-merge.cjs)) — Merge of bubble positions into the remembered arrangement, done by the core
+  - [event-bus.cjs.md](reference/electron/event-bus.cjs.md) ([event-bus.cjs](../electron/event-bus.cjs)) — Where events to the windows are sent from: to all, to a project, to the focused window, to a page
+  - [window-context.cjs.md](reference/electron/window-context.cjs.md) ([window-context.cjs](../electron/window-context.cjs)) — The project open in a window and the stores that depend on it
   - [menu.cjs.md](reference/electron/menu.cjs.md) ([menu.cjs](../electron/menu.cjs)) — Native application menu
   - [updates.cjs.md](reference/electron/updates.cjs.md) ([updates.cjs](../electron/updates.cjs)) — Latest version from the GitHub releases
   - [projects.cjs.md](reference/electron/projects.cjs.md) ([projects.cjs](../electron/projects.cjs)) — Recently opened projects
@@ -226,7 +229,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [main.jsx.md](reference/src/main.jsx.md) ([main.jsx](../src/main.jsx)) — React entry point
   - [appearance.js.md](reference/src/appearance.js.md) ([appearance.js](../src/appearance.js)) — Theme, colors, editor preferences
   - [styles.css.md](reference/src/styles.css.md) ([styles.css](../src/styles.css)) — Global stylesheet
-  - [hooks.md](reference/src/hooks.md) ([useDocumentFileCommands.js](../src/hooks/useDocumentFileCommands.js)) — Document and file commands hook
+  - [hooks.md](reference/src/hooks.md) ([useDocumentFileCommands.js](../src/hooks/useDocumentFileCommands.js), [useSharedChatRun.js](../src/hooks/useSharedChatRun.js)) — Document and file commands hook; the assistant's work seen from another window
   - [i18n/](reference/src/i18n/)
     - [i18n.md](reference/src/i18n/i18n.md) ([index.js](../src/i18n/index.js)) — Translation runtime index
     - [locales/](reference/src/i18n/locales/)
@@ -276,6 +279,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [graphLayout.js.md](reference/src/lib/graphLayout.js.md) ([graphLayout.js](../src/lib/graphLayout.js)) — Physics of the Home network of projects
     - [graphRenderer.js.md](reference/src/lib/graphRenderer.js.md) ([graphRenderer.js](../src/lib/graphRenderer.js)) — WebGL2 drawing of the Home network
     - [queryExpansion.js.md](reference/src/lib/queryExpansion.js.md) ([queryExpansion.js](../src/lib/queryExpansion.js)) — Synonyms of a search asked to the language model
+    - [searchStages.js.md](reference/src/lib/searchStages.js.md) ([searchStages.js](../src/lib/searchStages.js)) — Rules for the stages of a search that arrives little by little: a stage never removes what is shown
     - [synonymCache.js.md](reference/src/lib/synonymCache.js.md) ([synonymCache.js](../src/lib/synonymCache.js)) — Remembers the synonyms already asked to the model
     - [quickActions.js.md](reference/src/lib/quickActions.js.md) ([quickActions.js](../src/lib/quickActions.js)) — Chat quick actions and their defaults
     - [rawMarkdownExtensions.js.md](reference/src/lib/rawMarkdownExtensions.js.md) ([rawMarkdownExtensions.js](../src/lib/rawMarkdownExtensions.js)) — Front matter and HTML kept as raw text

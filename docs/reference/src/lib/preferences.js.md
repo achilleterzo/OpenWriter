@@ -8,3 +8,5 @@ Interface preferences (theme, language, panel widths, notes view…). They live 
 - `setPreference(key, value)`: saves the value through the main process and also in `localStorage`, which remains as a fallback (and for whoever opens the page in a browser).
 
 Values are cached in memory for the session, so a read does not go through the bridge every time.
+
+A preference chosen in another window arrives through `preferences.onChange` and updates the cache, so `getPreference` returns it from then on.

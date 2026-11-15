@@ -2,9 +2,25 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron')
 
 // Preferenze dell'interfaccia lette all'avvio, in modo sincrono: la pagina sa subito tema e lingua (vedi src/lib/preferences.js).
 const preferenceValues = ipcRenderer.sendSync('preferences:load') || {}
+const preferenceListeners = new Set()
+ipcRenderer.on('preferences:changed', (_event, { key, value }) => {
+  preferenceValues[key] = value
+  for (const callback of preferenceListeners) { try { callback(key, value) } catch { /* chi ascolta non deve fermare gli altri */ } }
+})
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  preferences: { values: preferenceValues, set: (key, value) => ipcRenderer.send('preferences:set', key, value) },
+  preferences: {
+    values: preferenceValues,
+    set: (key, value) => ipcRenderer.send('preferences:set', key, value),
+    // Un'altra finestra ha cambiato una preferenza: `values` si aggiorna (chi la legge dopo la trova) e chi ascolta è avvisato.
+    onChange: (callback) => { preferenceListeners.add(callback); return () => preferenceListeners.delete(callback) },
+  },
+  // Le impostazioni generali (assistente, correttore…) le ha cambiate un'altra finestra: `{ scope }`.
+  onSettingsChanged: (callback) => {
+    const listener = (_event, payload) => callback(payload)
+    ipcRenderer.on('app:settings-changed', listener)
+    return () => ipcRenderer.removeListener('app:settings-changed', listener)
+  },
   copyFilesToClipboard: (request) => ipcRenderer.invoke('clipboard:copy-files', request),
   pasteFilesFromClipboard: (request) => ipcRenderer.invoke('clipboard:paste-files', request),
   watchWorkspace: () => ipcRenderer.invoke('workspace:watch'),
@@ -74,6 +90,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setItem: (key, value) => ipcRenderer.sendSync('layout:set', key, String(value)),
     removeItem: (key) => ipcRenderer.sendSync('layout:remove', key),
     keys: () => ipcRenderer.sendSync('layout:keys'),
+    // Unisce le posizioni di alcune bolle a quelle ricordate: lo fa il nucleo, in un passo solo (layout-merge.cjs).
+    merge: (key, nodes) => ipcRenderer.sendSync('layout:merge', key, nodes),
+    onChanged: (callback) => { const listener = () => callback(); ipcRenderer.on('layout:changed', listener); return () => ipcRenderer.removeListener('layout:changed', listener) },
   },
   openProjectInNewWindow: (directory) => ipcRenderer.invoke('project:open-new-window', directory),
   setProjectQuickActionsFor: (directory, value) => ipcRenderer.invoke('projects:set-quick-actions', { directory, value }),
@@ -121,12 +140,38 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFileInfo: (target) => ipcRenderer.invoke('workspace:file-info', target),
   getSpellcheck: () => ipcRenderer.invoke('spellcheck:get'),
   setSpellcheckLanguages: (languages) => ipcRenderer.invoke('spellcheck:set-global', languages),
+  // Un documento si modifica in una finestra alla volta (document-owners.cjs). `setHeld(paths)` dichiara quelli che questa finestra vuole modificare e risponde con quelli
+  // rifiutati (li sta già modificando un'altra); `onReleased` avvisa quando uno si libera; `focusOwner` porta avanti la finestra che lo modifica; `onReveal` (in quella finestra)
+  // chiede di mostrare la scheda; `onSaved` avvisa che un'altra finestra ha salvato un documento.
+  documents: {
+    setHeld: (paths) => ipcRenderer.invoke('documents:set-held', paths),
+    focusOwner: (filePath) => ipcRenderer.invoke('documents:focus-owner', filePath),
+    onReleased: (callback) => { const listener = (_event, payload) => callback(payload); ipcRenderer.on('documents:released', listener); return () => ipcRenderer.removeListener('documents:released', listener) },
+    onReveal: (callback) => { const listener = (_event, payload) => callback(payload); ipcRenderer.on('documents:reveal', listener); return () => ipcRenderer.removeListener('documents:reveal', listener) },
+    onSaved: (callback) => { const listener = (_event, payload) => callback(payload); ipcRenderer.on('document:saved', listener); return () => ipcRenderer.removeListener('document:saved', listener) },
+  },
   listConversations: () => ipcRenderer.invoke('chat:list'),
   getConversation: (id) => ipcRenderer.invoke('chat:get', id),
   createConversation: (conversation) => ipcRenderer.invoke('chat:create', conversation),
   saveConversation: (conversation) => ipcRenderer.invoke('chat:save', conversation),
   setConversationQueue: (id, queue) => ipcRenderer.invoke('chat:set-queue', { id, queue }),
+  // Consuma voci della coda (per inviarle): le ottiene una finestra sola. → le voci prese ({ id, text, now }).
+  takeQueueItems: (id, ids) => ipcRenderer.invoke('chat:take-queue', { id, ids }),
   deleteConversation: (id) => ipcRenderer.invoke('chat:delete', id),
+  // Il lavoro dell'assistente su una conversazione, condiviso tra le finestre dello stesso progetto (chat-runs.cjs). La finestra che lo guida usa start / live / end;
+  // le altre ascoltano lo stato (`onState`), il testo che arriva (`onLive`) e le modifiche salvate (`onChanged`), e possono chiedere di fermarlo (`cancel`).
+  chatRuns: {
+    // → true se questa finestra guida la conversazione; false se un'altra la sta già guidando (allora non si avvia nulla).
+    start: (id) => ipcRenderer.invoke('chat:run-start', id),
+    live: (id, live) => ipcRenderer.send('chat:run-live', id, live),
+    end: (id) => ipcRenderer.send('chat:run-end', id),
+    list: () => ipcRenderer.invoke('chat:runs'),
+    cancel: (id) => ipcRenderer.invoke('chat:cancel-run', id),
+    onState: (callback) => { const listener = (_event, payload) => callback(payload); ipcRenderer.on('chat:run-state', listener); return () => ipcRenderer.removeListener('chat:run-state', listener) },
+    onLive: (callback) => { const listener = (_event, payload) => callback(payload); ipcRenderer.on('chat:run-live', listener); return () => ipcRenderer.removeListener('chat:run-live', listener) },
+    onChanged: (callback) => { const listener = (_event, payload) => callback(payload); ipcRenderer.on('chat:changed', listener); return () => ipcRenderer.removeListener('chat:changed', listener) },
+    onCancel: (callback) => { const listener = (_event, payload) => callback(payload); ipcRenderer.on('chat:run-cancel', listener); return () => ipcRenderer.removeListener('chat:run-cancel', listener) },
+  },
   openChatFolder: () => ipcRenderer.invoke('chat:open-folder'),
   listDirectoryForAi: (path, options) => ipcRenderer.invoke('tools:list-directory', path, options),
   readFileForAi: (request) => ipcRenderer.invoke('tools:read-file', request),
@@ -231,7 +276,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getMainProject: () => ipcRenderer.invoke('workspace:get-main'),
   listProjects: () => ipcRenderer.invoke('workspace:list-projects'),
   getProjectGraph: (options) => ipcRenderer.invoke('projects:graph', options),
-  searchProjects: (args) => ipcRenderer.invoke('projects:search', args),
+  // La ricerca della Home. Con `onPartial(risposta)` (e un `args.stream`, un id scelto da chi chiede) i risultati arrivano a stadi mentre si trovano: prima le parole cercate, poi
+  // un aggiornamento per ogni sinonimo; la risposta finale è la stessa di sempre. `cancelProjectSearch(id)` ferma il lavoro che resta.
+  searchProjects: (args, onPartial) => {
+    if (typeof onPartial !== 'function' || typeof args?.stream !== 'string') return ipcRenderer.invoke('projects:search', args)
+    const listener = (_event, payload) => { if (payload.id === args.stream) onPartial(payload.partial) }
+    ipcRenderer.on('projects:search-partial', listener)
+    return ipcRenderer.invoke('projects:search', args).finally(() => ipcRenderer.removeListener('projects:search-partial', listener))
+  },
+  cancelProjectSearch: (id) => ipcRenderer.send('projects:search-cancel', id),
   openProject: (directory, options) => ipcRenderer.invoke('workspace:open-project', directory, options),
   createProject: (name) => ipcRenderer.invoke('workspace:create-project', name),
   removeProject: (directory) => ipcRenderer.invoke('workspace:remove-project', directory),

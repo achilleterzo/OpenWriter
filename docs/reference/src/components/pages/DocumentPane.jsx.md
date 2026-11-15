@@ -16,3 +16,8 @@ The editor is configured with the content and content type of the tab (Markdown,
 - The toolbar also runs the AI-likelihood check and shows its result (`tab.aiScore`).
 
 A pinned tab whose document was closed shows `ClosedDocumentPane` instead: an icon, the title, the source path, and the button that reopens it.
+
+**Edited in another window.** A tab with `heldElsewhere` shows a bar ("This document is being edited in another window: here it is read-only and follows what is saved.") with "Bring that window to the front" (`onFocusOwner`). The editor follows `tab.readOnly` at any time (`editor.setEditable`), so a document that another window frees becomes editable without being opened again.
+
+**The Save button no longer flashes on opening.** `onUpdate` ignores a transaction that does not change the text (`transaction.docChanged` false): the `focus` the editor gets when a document opens emits one, and it used to mark the tab as modified until the check that compares it with the saved text put it back. `setEditable` (read-only following) acts only when the state really changes and without emitting an update.
+

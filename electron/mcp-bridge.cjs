@@ -88,7 +88,8 @@ function createMcpBridge({ directory, getWindow, getProjectPath, isEnabled = () 
     try { message = JSON.parse(body) } catch { reply(response, 400, { ok: false, error: 'Invalid JSON' }); return }
     if (!ALLOWED.has(message.tool)) { reply(response, 400, { ok: false, error: `Unknown tool: ${message.tool}` }); return }
     if (!LOCAL.has(message.tool) && !isEnabled()) { reply(response, 403, { ok: false, error: 'Editing by agents is turned off in OpenWriter (Settings > Agents (MCP))' }); return }
-    const open = getProjectPath()
+    // Con più finestre il progetto «aperto» è quello che l'agente chiede, se una finestra lo mostra (altrimenti vale quello della finestra in primo piano).
+    const open = getProjectPath(message.project)
     // Gli strumenti locali di sola lettura (la ricerca) non dipendono dal progetto aperto: ricevono quello da cui cerca l'agente e decidono da sé.
     const wide = LOCAL.has(message.tool)
     if (!wide && !open && !ANY_PROJECT.has(message.tool)) { reply(response, 409, { ok: false, error: 'No project is open in OpenWriter' }); return }
