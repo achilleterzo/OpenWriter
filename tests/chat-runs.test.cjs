@@ -44,7 +44,8 @@ test('chat-runs: chi guida annuncia, le altre finestre dello stesso progetto seg
   assert.deepEqual(one.received, [], 'chi guida non riceve il proprio annuncio')
   assert.deepEqual(other.received, [], 'un altro progetto non lo vede')
 
-  runs.live({ sender: one.webContents, project: 'd:/libri/a', conversationId: 'c1', live: { text: 'Ciao', thinking: '', status: '' } })
+  // Su Windows le maiuscole del percorso non contano; altrove sì.
+  runs.live({ sender: one.webContents, project: process.platform === 'win32' ? 'd:/libri/a' : 'D:/Libri/A', conversationId: 'c1', live: { text: 'Ciao', thinking: '', status: '' } })
   assert.deepEqual(two.received[1], ['chat:run-live', { conversationId: 'c1', live: { text: 'Ciao', thinking: '', status: '' } }])
 
   assert.deepEqual(runs.list('D:/Libri/A'), [{ conversationId: 'c1', running: true, live: { text: 'Ciao', thinking: '', status: '' } }], 'chi arriva dopo ritrova il testo')
