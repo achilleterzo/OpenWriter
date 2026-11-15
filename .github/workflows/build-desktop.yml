@@ -51,7 +51,11 @@ jobs:
             git fetch origin main
             git switch --force-create main origin/main
 
-            npm version "$version" --no-git-tag-version --no-commit-hooks >/dev/null
+            # `npm version` fails with "Version not changed" when main already has this version (for example when the release is re-run).
+            current_version="$(node -p "require('./package.json').version")"
+            if [ "$current_version" != "$version" ]; then
+              npm version "$version" --no-git-tag-version --no-commit-hooks >/dev/null
+            fi
             echo "Changed version files:"
             git status --short -- package.json package-lock.json
 
