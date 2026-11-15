@@ -261,7 +261,7 @@ export default function NotesPanel({ tab, editor, project, notes, activeNoteId, 
                 )}
                 {note.status === 'open' && note.kind === 'comment' && (
                   <>
-                    {!orphan && <button type="button" className={`${smallButton} bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25`} onClick={() => askAi(note)}><Pencil size={12} /> {t('Apply correction…')}</button>}
+                    {!orphan && <button type="button" className={`${smallButton} bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25`} title={t('The assistant makes the change the note suggests')} onClick={() => askAi(note)}><Check size={12} /> {t('Accept')}</button>}
                     <button type="button" className={`${smallButton} bg-slate-700 text-slate-100 hover:bg-slate-600`} title={t('Closes the note without changing the document')} onClick={() => setClosing({ id: note.id, status: 'resolved', reason: '' })}><Check size={12} /> {t('Resolve without changing')}</button>
                   </>
                 )}
