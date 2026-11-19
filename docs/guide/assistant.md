@@ -8,12 +8,15 @@ The providers, the built-in assistant, its quick actions, skills and memory, and
 
 OpenWriter currently supports:
 
-- Ollama through a configurable local endpoint
+- Ollama through a configurable endpoint (local or remote), with an optional token for servers behind a proxy
 - Ollama Cloud through an API key stored in the operating system's encrypted credential storage
 - OpenRouter (hundreds of hosted models) through an API key stored the same way
 - OpenAI Codex CLI through its OAuth flow
 - Claude Code through its OAuth flow
 - Gemini through a Google AI Studio API key, using the OpenAI-compatible endpoint
+- The settings list only the providers you have added: the "+" next to "AI assistant" adds one, the cross on a card removes it from the list (its configuration and key are kept), and the OpenAI-compatible card can have an icon of your own choosing.
+- You can add several OpenAI-compatible servers at once (for example LM Studio and an experimental service), each with its own name, address, token, icon and settings: the "+" menu has an "OpenAI-compatible" entry that creates a new one, and removing it deletes its settings (the saved token stays on the computer).
+- OpenAI-compatible servers, local or remote, through a service preset (LM Studio, llama.cpp, vLLM, OpenAI, Groq, Together AI, Mistral, DeepSeek, or a custom address). The token is optional for local servers and required for hosted services, it is stored for that service and address only, and the model's image and tool support is asked to the server when it can say it (Ollama does, even behind `/v1`) and can always be set by hand with Yes or No, because a generic server often does not say. You can give it a name of your own, shown on its card and in the chat
 
 Responses can stream text, reasoning, and status updates. Requests can be cancelled, token usage is shown per reply and per conversation, and the maximum number of chained tool steps is configurable. The model and reasoning effort can be changed from the chat, and the model picker can filter by what a model accepts (images, PDFs).
 

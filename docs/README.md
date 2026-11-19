@@ -199,6 +199,8 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [markdown-images.cjs.md](reference/electron/markdown-images.cjs.md) ([markdown-images.cjs](../electron/markdown-images.cjs)) — Images of a document found and rewritten through the tokens
   - [markdown-embed.cjs.md](reference/electron/markdown-embed.cjs.md) ([markdown-embed.cjs](../electron/markdown-embed.cjs)) — Self-contained Markdown export with embedded images
   - [markdown-extract.cjs.md](reference/electron/markdown-extract.cjs.md) ([markdown-extract.cjs](../electron/markdown-extract.cjs)) — The reverse: base64 images become files beside the document
+  - [openai-chat.cjs.md](reference/electron/openai-chat.cjs.md) ([openai-chat.cjs](../electron/openai-chat.cjs)) — Codec of the OpenAI-compatible chat protocol: request body, messages and stream reading
+  - [provider-descriptors.cjs.md](reference/electron/provider-descriptors.cjs.md) ([provider-descriptors.cjs](../electron/provider-descriptors.cjs)) — OpenAI-compatible services described as data (URL, token, parameter names)
   - [model-choice.cjs.md](reference/electron/model-choice.cjs.md) ([model-choice.cjs](../electron/model-choice.cjs)) — The AI model chosen for a project or a conversation, applied on top of the general settings
   - [temperature.cjs.md](reference/electron/temperature.cjs.md) ([temperature.cjs](../electron/temperature.cjs)) — The temperature level converted into each provider's degrees, with its style hint
   - [document-images.cjs.md](reference/electron/document-images.cjs.md) ([document-images.cjs](../electron/document-images.cjs)) — Images following a document that is moved
@@ -291,6 +293,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [skills.js.md](reference/src/lib/skills.js.md) ([skills.js](../src/lib/skills.js)) — Writing skills helpers
     - [smartDashesExtension.js.md](reference/src/lib/smartDashesExtension.js.md) ([smartDashesExtension.js](../src/lib/smartDashesExtension.js)) — Dashes and ellipsis typed in the editor
     - [svgRaster.js.md](reference/src/lib/svgRaster.js.md) ([svgRaster.js](../src/lib/svgRaster.js)) — An SVG rasterised to a PNG for the chat
+    - [providerIcon.js.md](reference/src/lib/providerIcon.js.md) ([providerIcon.js](../src/lib/providerIcon.js)) — Custom provider icon: an image scaled to a small PNG data URL
     - [temperature.js.md](reference/src/lib/temperature.js.md) ([temperature.js](../src/lib/temperature.js)) — The temperature level (0–1), its bands and its labels
     - [textAlignExtension.js.md](reference/src/lib/textAlignExtension.js.md) ([textAlignExtension.js](../src/lib/textAlignExtension.js)) — Text alignment saved as aligned blocks
     - [toasts.js.md](reference/src/lib/toasts.js.md) ([toasts.js](../src/lib/toasts.js)) — Notification store: four levels, de-duplication, console diagnostics
