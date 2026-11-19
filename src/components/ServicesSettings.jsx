@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, Pencil, Play, Plus, ShieldCheck, Trash2, X } from 'lucide-react'
 import Switch from './Switch.jsx'
+import { useDialogs } from './Dialogs.jsx'
 import { t } from '../i18n/index.js'
 
 const electronAPI = window.electronAPI
@@ -163,6 +164,7 @@ function ToolList({ server, directory, tools, onChanged }) {
 }
 
 function ServerCard({ server, directory, secureStorage, used, onUse, onChanged }) {
+  const dialogs = useDialogs()
   const [editing, setEditing] = useState(false)
   const [tools, setTools] = useState(null)
   const [testing, setTesting] = useState(false)
@@ -188,7 +190,8 @@ function ServerCard({ server, directory, secureStorage, used, onUse, onChanged }
     try { await electronAPI.mcp.signOut(directory || null, server.id); setTools(null); onChanged() } catch (reason) { setError(reason.message) }
   }
   async function remove() {
-    if (!window.confirm(t('Remove the service “{name}”?', { name: server.name }))) return
+    // La finestra di conferma dell'app (in Electron window.confirm lascia i campi non selezionabili).
+    if (!(await dialogs.confirm(t('Remove the service “{name}”?', { name: server.name }), { danger: true, confirmLabel: t('Remove') }))) return
     try { await electronAPI.mcp.removeServer({ directory: target, id: server.id }); onChanged() } catch (reason) { setError(reason.message) }
   }
 
