@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Bot, CheckCircle2, RefreshCw } from 'lucide-react'
 import { reasoningByProvider } from '../lib/aiOptions.js'
 import ParameterSlider, { InfoTip } from './ParameterSlider.jsx'
@@ -12,7 +12,8 @@ const electronAPI = window.electronAPI
 const ai = electronAPI?.ai
 
 // Provider che si usano con una chiave API salvata dall'app.
-const keyProviders = ['ollama-cloud', 'openrouter', 'gemini']
+// Per Ollama in locale la chiave è facoltativa (server dietro un proxy con token).
+const keyProviders = ['ollama', 'ollama-cloud', 'openrouter', 'gemini']
 const languages = ['Italiano', 'English', 'Español', 'Français', 'Deutsch', 'Português']
 
 // Provider con chiamate native agli strumenti, ammessi per l'assistente di ricerca.
@@ -56,6 +57,10 @@ export default function AiProviderSettings({ project = null }) {
   const openRouter = provider === 'openrouter'
   const gemini = provider === 'gemini'
   const hasSavedKey = Boolean(savedKeys[provider])
+  // Ollama (locale o cloud): stesso driver, endpoint configurabile e token Bearer (facoltativo in locale).
+  const ollamaFamily = provider === 'ollama' || cloud
+  // Il token verso un endpoint remoto in http:// viaggerebbe in chiaro.
+  const insecureEndpoint = ollamaFamily && (apiKey.trim() || hasSavedKey) && /^http:\/\//i.test(config.endpoint || '') && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(?=[:/]|$)/i.test(config.endpoint)
 
   const persist = useCallback((next) => {
     setSettings(next)
@@ -97,28 +102,47 @@ export default function AiProviderSettings({ project = null }) {
     saveChoice({ provider: value, model: base.model || '', reasoning: base.reasoning || '' })
   }
 
+  // Numero dell'ultima richiesta di modelli e di stato: se nel frattempo si cambia provider (o se ne lancia una nuova),
+  // la risposta di quella vecchia arriva tardi e va scartata, altrimenti sovrascrive l'elenco del provider ora selezionato.
+  const modelsRequest = useRef(0)
+  const statusRequest = useRef(0)
+
   const loadModels = useCallback(async (request = {}) => {
+    const id = ++modelsRequest.current
     setModelsLoading(true)
     setError('')
     try {
-      setModels(await ai.listModels({ provider, endpoint: config.endpoint, ...request }))
+      const list = await ai.listModels({ provider, endpoint: config.endpoint, ...request })
+      if (id !== modelsRequest.current) return
+      setModels(list)
       setModelsVersion((value) => value + 1)
     } catch (reason) {
+      if (id !== modelsRequest.current) return
       setModels([])
       setError(reason.message)
     } finally {
-      setModelsLoading(false)
+      if (id === modelsRequest.current) setModelsLoading(false)
     }
   }, [provider, config.endpoint])
 
   const refreshStatus = useCallback(async () => {
+    const id = ++statusRequest.current
     setStatus(null)
-    try { setStatus(await ai.getStatus(provider)) } catch (reason) { setError(reason.message) }
+    try {
+      const next = await ai.getStatus(provider)
+      if (id === statusRequest.current) setStatus(next)
+    } catch (reason) {
+      if (id === statusRequest.current) setError(reason.message)
+    }
   }, [provider])
 
   // Al cambio provider (o all'attivazione dell'AI) ricarica stato e modelli disponibili.
   useEffect(() => {
     if (!settings?.aiEnabled || !provider) return
+    // Le richieste ancora in corso sono del provider precedente: si scartano.
+    modelsRequest.current += 1
+    statusRequest.current += 1
+    setModelsLoading(false)
     setModels([])
     setError('')
     setApiKey('')
@@ -130,7 +154,9 @@ export default function AiProviderSettings({ project = null }) {
   // Il modello scelto sa guardare le immagini? Serve per l'opzione "Immagini e schermate".
   useEffect(() => {
     if (!settings?.aiEnabled || !provider) return
-    ai.getCapabilities(config.model, provider).then(setCapabilities).catch(() => setCapabilities(null))
+    let cancelled = false
+    ai.getCapabilities(config.model, provider).then((value) => { if (!cancelled) setCapabilities(value) }).catch(() => { if (!cancelled) setCapabilities(null) })
+    return () => { cancelled = true }
   }, [settings?.aiEnabled, provider, config.model])
 
   async function saveKey() {
@@ -248,26 +274,32 @@ export default function AiProviderSettings({ project = null }) {
             <p className="break-all text-xs text-slate-500">{t('Did the browser not open?')} <a href={loginInfo.url} target="_blank" rel="noreferrer" className="text-accent-400 underline">{t('Open the sign-in link')}</a></p>
           )}
 
-          {(cloud || openRouter || gemini) && (
-            <label className="text-sm text-slate-300">{cloud ? t('Ollama Cloud API key') : gemini ? t('Gemini API key') : t('OpenRouter API key')} {hasSavedKey && <span className="text-emerald-400">{t('(saved)')}</span>}
+          {ollamaFamily && (
+            <label className="text-sm text-slate-300">{t('Ollama endpoint')}<div className="flex gap-2">
+                <input value={config.endpoint || ''} onChange={(event) => updateConfig({ endpoint: event.target.value })} className={fieldClass} />
+                <button type="button" className={`${buttonClass} mt-2`} disabled={modelsLoading} onClick={() => loadModels()}>{modelsLoading ? t('Connecting…') : t('Connect')}</button>
+              </div>
+            </label>
+          )}
+
+          {(ollamaFamily || openRouter || gemini) && (
+            <label className="text-sm text-slate-300">{cloud ? t('Ollama Cloud API key') : provider === 'ollama' ? t('Ollama token (optional)') : gemini ? t('Gemini API key') : t('OpenRouter API key')} {hasSavedKey && <span className="text-emerald-400">{t('(saved)')}</span>}
               <div className="flex gap-2">
                 <input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} className={fieldClass} placeholder={hasSavedKey ? '••••••••' : t('Paste the API key')} />
                 <button type="button" className={`${buttonClass} mt-2`} disabled={!apiKey.trim() && !hasSavedKey} onClick={saveKey}>{apiKey.trim() ? t('Save') : t('Remove')}</button>
               </div>
+              {provider === 'ollama' && !hasSavedKey && (
+                <span className="mt-2 block text-xs text-slate-500">{t('Only needed if the server is behind a proxy or service that asks for a token. Local Ollama works without it.')}</span>
+              )}
+              {insecureEndpoint && (
+                <span className="mt-2 block text-xs text-amber-400">{t('This endpoint uses http:// and is not on this computer: the token would travel unencrypted. Use https:// if you can.')}</span>
+              )}
               {openRouter && !hasSavedKey && (
                 <span className="mt-2 block text-xs text-slate-500">{t('You can create a key on')} <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="text-accent-400 underline">openrouter.ai/keys</a></span>
               )}
               {gemini && !hasSavedKey && (
                 <span className="mt-2 block text-xs text-slate-500">{t('You can create a key on')} <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="text-accent-400 underline">aistudio.google.com/apikey</a></span>
               )}
-            </label>
-          )}
-
-          {provider === 'ollama' && (
-            <label className="text-sm text-slate-300">{t('Ollama endpoint')}<div className="flex gap-2">
-                <input value={config.endpoint || ''} onChange={(event) => updateConfig({ endpoint: event.target.value })} className={fieldClass} />
-                <button type="button" className={`${buttonClass} mt-2`} disabled={modelsLoading} onClick={() => loadModels()}>{modelsLoading ? t('Connecting…') : t('Connect')}</button>
-              </div>
             </label>
           )}
 

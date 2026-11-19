@@ -7,7 +7,7 @@ import geminiLogo from '../assets/provider-logos/gemini.svg'
 
 // I provider AI tra cui scegliere, con il logo: la scelta generale (AiProviderSettings) e quella di un progetto (AiProviderSettings con `project`) usano le stesse schede.
 export const providers = [
-  { value: 'ollama', label: 'Ollama', description: t('Local HTTP service') },
+  { value: 'ollama', label: 'Ollama', description: t('Local or remote HTTP service') },
   { value: 'ollama-cloud', label: 'Ollama Cloud', description: t('Hosted API with an API key') },
   { value: 'openrouter', label: 'OpenRouter', description: t('Hundreds of models with one API key') },
   { value: 'codex', label: 'Codex', description: t('Native CLI with ChatGPT OAuth') },
