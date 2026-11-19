@@ -20,11 +20,19 @@ export const toolLabels = () => ({
   web: t('Web browsing'),
 })
 
-export const reasoningByProvider = {
+// Un server compatibile OpenAI è un provider a sé: il primo ha id "openai", gli altri "openai-<codice>" (stessa regola di provider-descriptors.cjs).
+export const isCompatibleId = (id) => /^openai(?:-[a-z0-9]{4,12})?$/.test(String(id || ''))
+// Id per un nuovo server compatibile.
+export const newServerId = () => `openai-${Math.random().toString(36).slice(2, 8).padEnd(6, '0')}`
+
+const reasoningTable = {
   ollama: ollamaReasoning,
   'ollama-cloud': ollamaReasoning,
   openrouter: [defaultReasoning, ...ollamaReasoning.slice(1)],
   codex: [defaultReasoning, ...ollamaReasoning.slice(1), { value: 'xhigh', label: t('Very high') }],
   gemini: [defaultReasoning, ...ollamaReasoning.slice(1)],
+  openai: [defaultReasoning, ...ollamaReasoning.slice(1)],
   claude: [defaultReasoning, ...ollamaReasoning.slice(1), { value: 'xhigh', label: t('Very high') }, { value: 'max', label: t('Maximum') }],
 }
+// I server compatibili aggiunti dall'utente hanno gli stessi livelli di "openai".
+export const reasoningByProvider = new Proxy(reasoningTable, { get: (table, key) => table[key] ?? (isCompatibleId(key) ? table.openai : undefined) })

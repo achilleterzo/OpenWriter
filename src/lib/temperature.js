@@ -6,7 +6,7 @@ export const TEMPERATURE_MIN = 0
 export const TEMPERATURE_MAX = 1
 export const TEMPERATURE_STEP = 0.02
 
-const PROVIDER_MAX = { ollama: 4, 'ollama-cloud': 2, openrouter: 2, gemini: 2 }
+const PROVIDER_MAX = { ollama: 4, 'ollama-cloud': 2, openrouter: 2, gemini: 2, openai: 2 }
 
 // Limite superiore di ogni fascia, nell'ordine delle etichette di `temperatureLabel`.
 const BAND_LIMITS = [0.2, 0.4, 0.6, 0.8]
@@ -21,7 +21,7 @@ export const formatTemperature = (value) => `${temperatureLabel(value)} · ${val
 
 // La temperatura generale di un provider (nei suoi gradi, '' = predefinito del modello) espressa come livello; '' se non ha un intervallo (le CLI).
 export function levelOf(provider, degrees) {
-  const max = PROVIDER_MAX[provider]
+  const max = PROVIDER_MAX[provider] ?? (String(provider).startsWith('openai-') ? PROVIDER_MAX.openai : undefined)
   if (!max || degrees === '' || degrees == null || !Number.isFinite(Number(degrees))) return ''
   return Math.min(1, Math.max(0, Math.round((Number(degrees) / max) * 100) / 100))
 }

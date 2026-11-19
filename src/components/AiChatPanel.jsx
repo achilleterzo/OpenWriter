@@ -9,7 +9,7 @@ import ParameterSlider from './ParameterSlider.jsx'
 import ChatOptionsMenu from './ChatOptionsMenu.jsx'
 import { TEMPERATURE_MAX, TEMPERATURE_MIN, TEMPERATURE_STEP, firstLevel, formatTemperature, levelOf } from '../lib/temperature.js'
 import { runResearch } from '../lib/researchAgent.js'
-import { reasoningByProvider, toolLabels } from '../lib/aiOptions.js'
+import { isCompatibleId, reasoningByProvider, toolLabels } from '../lib/aiOptions.js'
 import { formatDateTime, languageEnglishName } from '../i18n/index.js'
 import { quickActionsFor } from '../lib/quickActions.js'
 import { selectedText } from '../lib/selectionText.js'
@@ -731,7 +731,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
 
   // Il modello della conversazione, se l'utente l'ha cambiato dal selettore; altrimenti quello del progetto o delle impostazioni generali.
   const selection = current.selection || null
-  const provider = selection?.provider || settings?.provider
+  // Un server compatibile tolto dalle impostazioni non c'è più: la scelta della conversazione che lo indica non vale.
+  const provider = settings?.providers?.[selection?.provider] ? selection.provider : settings?.provider
   const model = (selection && selection.model) || settings?.providers?.[provider]?.model
   const reasoningChoice = (selection && reasoningByProvider[provider]?.some((option) => option.value === selection.reasoning) && selection.reasoning) || settings?.providers?.[provider]?.reasoning
 
@@ -843,7 +844,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     if (stickRef.current) scrollToEnd()
   }, [current.messages, live, remote.live, busy, pendingAsk, queued])
 
-  const providerLabel = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', openrouter: 'OpenRouter', codex: 'Codex', claude: 'Claude', gemini: 'Gemini' }[provider]
+  const providerLabel = { ollama: 'Ollama', 'ollama-cloud': 'Ollama Cloud', openrouter: 'OpenRouter', codex: 'Codex', claude: 'Claude', gemini: 'Gemini' }[provider] || settings?.providers?.[provider]?.label || provider
   const enabled = Boolean(settings?.aiEnabled)
   // Quali istruzioni di progetto stanno arrivando all'assistente: una sola → "contesto del progetto"; più d'una → i nomi dei progetti.
   const instructed = contextChain.filter((owner) => owner.context?.trim() || owner.extraContext?.length)
@@ -851,7 +852,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     ? t(' · context: {names}', { names: instructed.map((owner) => owner.name).join(' + ') })
     : (instructed.length || (!contextChain.length && projectSettings?.ai?.context?.trim())) ? t(' · project context') : ''
   // Per Ollama il modello va scelto per forza; Claude e Codex hanno un predefinito.
-  const canUseNativeProvider = ['ollama', 'ollama-cloud', 'gemini'].includes(provider)
+  const canUseNativeProvider = ['ollama', 'ollama-cloud', 'gemini'].includes(provider) || isCompatibleId(provider)
   // Prompt suggerito dall'ultima risposta dell'assistente, finché la conversazione non prosegue.
   const lastMessage = current.messages[current.messages.length - 1]
   const suggestion = !busy && lastMessage?.role === 'assistant' && !lastMessage.error && editingIndex === null ? lastMessage.nextPrompt || '' : ''
@@ -1316,7 +1317,9 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     const disabledTools = Object.keys(labels).filter((group) => !toolSettings[group]).map((group) => ({ group, label: labels[group] }))
     // Senza cartella di progetto (area di lavoro "main") l'assistente lavora solo sui documenti aperti nelle schede.
     if (loose) toolsOn.loose = true
-    const canUseNative = ['ollama', 'ollama-cloud', 'openrouter', 'gemini'].includes(current.selection?.provider || settings.provider)
+    // Un server compatibile OpenAI usa le chiamate native solo se l'utente ha dichiarato che il modello gli strumenti li accetta.
+    const chosenProvider = settings.providers?.[current.selection?.provider] ? current.selection.provider : settings.provider
+    const canUseNative = (['ollama', 'ollama-cloud', 'openrouter', 'gemini'].includes(chosenProvider) || isCompatibleId(chosenProvider)) && !(isCompatibleId(chosenProvider) && capabilities?.tools === false)
     const snapshotted = new Set()
     // Documenti modificati dall'assistente in questa richiesta: a lavoro finito vengono salvati (la versione precedente è archiviata da beforeEdit).
     const editedTabs = new Set()
