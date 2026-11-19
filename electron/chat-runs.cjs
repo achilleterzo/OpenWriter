@@ -31,6 +31,8 @@ function createChatRuns({ events }) {
 
   function finish(run, interrupted) {
     runs.delete(keyOf(run.project, run.conversationId))
+    // L'ascoltatore di "pagina chiusa" non serve più: lasciarlo ne accumulerebbe uno per ogni lavoro (avviso di perdita di memoria dopo una decina).
+    if (run.onDestroyed) run.driver.removeListener?.('destroyed', run.onDestroyed)
     events.toStore(run.project, { except: run.driver }, 'chat:run-state', { conversationId: run.conversationId, running: false, ...(interrupted ? { interrupted: true } : {}) })
   }
 
@@ -45,7 +47,8 @@ function createChatRuns({ events }) {
       const run = { project, conversationId, driver: sender, live: null }
       runs.set(key, run)
       // La pagina pilota sparisce (finestra chiusa, processo caduto): il lavoro è interrotto per tutti.
-      sender.once?.('destroyed', () => { if (runs.get(key) === run) finish(run, true) })
+      run.onDestroyed = () => { if (runs.get(key) === run) finish(run, true) }
+      sender.once?.('destroyed', run.onDestroyed)
       events.toStore(project, { except: sender }, 'chat:run-state', { conversationId, running: true })
       return true
     },

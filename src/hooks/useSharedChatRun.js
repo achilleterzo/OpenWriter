@@ -26,10 +26,14 @@ export default function useSharedChatRun({ api, project, conversationId, driving
     let cancelled = false
     runs.list().then((list) => {
       const run = (list || []).find((item) => item.conversationId === conversationId)
-      if (!cancelled && run) setRemote({ running: true, live: run.live || null })
+      // Se il lavoro lo guida questa finestra, l'istantanea parla di sé: non è un lavoro altrui (e la fine non arriverebbe mai, gli eventi escludono chi guida).
+      if (!cancelled && run && !latest.current.driving) setRemote({ running: true, live: run.live || null })
     }).catch(() => { /* senza istantanea si seguono gli eventi */ })
     return () => { cancelled = true }
   }, [runs, conversationId, project])
+
+  // Quando questa finestra inizia o finisce di guidare, non resta traccia di uno stato "altrui" (una conversazione nuova prende l'id a lavoro già avviato).
+  useEffect(() => { setRemote({ running: false, live: null }) }, [driving])
 
   useEffect(() => {
     if (!runs) return undefined
