@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { ContextMenuContext, modKey } from './ContextMenu.jsx'
 import { subscribeAppearance } from '../appearance.js'
-import { ArrowLeft, ArrowRight, BookOpen, Camera, Check, Clock, Copy, Crop, Download, ExternalLink, FileDown, Loader2, Minus, Moon, Paperclip, Plus, RotateCw, Star, Sun, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BookOpen, Camera, Check, Clock, Copy, Crop, Download, ExternalLink, FileDown, KeyRound, Loader2, Minus, Moon, Paperclip, Plus, RotateCw, Star, Sun, X } from 'lucide-react'
 import { FloatingButton, FloatingDivider } from './FloatingToolbar.jsx'
 import { articleFileName, articleToMarkdown, extractArticle, readerDocument } from '../lib/readerMode.js'
 import { saveFromController } from '../lib/webReferences.js'
@@ -379,7 +379,7 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
   // Tasto destro nella pagina (e clic centrale sui link, gestito dal processo principale): il menu si compone qui, secondo ciò che sta sotto il cursore.
   const openMenu = useContext(ContextMenuContext)
   const menuProps = useRef({})
-  menuProps.current = { openMenu, onOpenTab, onAskAboutText, onRegion, onStatus, onScreenshot }
+  menuProps.current = { openMenu, onOpenTab, onAskAboutText, onRegion, onStatus, onScreenshot, hidden: Boolean(tab.hidden) }
   useEffect(() => {
     const api = window.electronAPI
     if (!api?.onBrowserContextMenu) return undefined
@@ -446,10 +446,53 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
       const exact = Number.isFinite(info.windowX) && Number.isFinite(info.windowY)
       open({ x: exact ? info.windowX : box.left + info.x, y: exact ? info.windowY : box.top + info.y, items })
     })
-    const offOpen = api.onBrowserOpenTab?.(({ contentsId, url, background }) => { if (mine(contentsId)) menuProps.current.onOpenTab?.(url, { background }) })
+    // La scheda nascosta dell'assistente non apre schede: le finestre che le sue pagine chiedono si scartano (la navigazione nascosta resta separata).
+    const offOpen = api.onBrowserOpenTab?.(({ contentsId, url, background }) => { if (mine(contentsId) && !menuProps.current.hidden) menuProps.current.onOpenTab?.(url, { background }) })
     return () => { offMenu?.(); offOpen?.() }
   }, [])
 
+  // Password salvate: la proposta di salvare quella appena usata in un modulo di accesso (arriva dal processo principale, senza la password) e il menu per compilare.
+  const [offer, setOffer] = useState(null)
+  useEffect(() => {
+    if (tab.hidden) return undefined
+    return window.electronAPI?.browserPasswords?.onOffer((info) => {
+      let own = false
+      try { own = viewRef.current?.getWebContentsId() === info.contentsId } catch { /* pagina non pronta */ }
+      if (own) setOffer(info)
+    })
+  }, [tab.hidden])
+  async function answerOffer(action) {
+    const current = offer
+    setOffer(null)
+    if (!current) return
+    try {
+      const result = await window.electronAPI.browserPasswords.respond(current.offerId, action)
+      if (result?.saved) onStatus?.(t('Password saved'))
+    } catch (reason) { onStatus?.(reason.message) }
+  }
+  async function openPasswordMenu(event) {
+    const box = event.currentTarget.getBoundingClientRect()
+    const place = { x: box.left, y: box.bottom + 4 }
+    let items
+    try {
+      const page = await window.electronAPI.browserPasswords.forPage(viewRef.current.getWebContentsId())
+      if (!page.available) items = [{ label: t('Saving passwords is not available on this computer'), disabled: true }]
+      else if (!page.origin) items = [{ label: t('Passwords can only be saved for secure (https) sites'), disabled: true }]
+      else if (!page.entries.length) items = [{ label: t('No saved password for this site'), disabled: true }]
+      else {
+        items = page.entries.map((entry) => ({
+          label: entry.username || t('(no username)'),
+          onClick: async () => {
+            try {
+              const result = await window.electronAPI.browserPasswords.fill(viewRef.current.getWebContentsId(), entry.id)
+              onStatus?.(result?.userOnly ? t('Username filled in: use the key again on the password step') : result?.filled ? t('Password filled in') : t('No password field found on this page'))
+            } catch (reason) { onStatus?.(reason.message) }
+          },
+        }))
+      }
+    } catch (reason) { items = [{ label: reason.message, disabled: true }] }
+    openMenu({ x: place.x, y: place.y, items })
+  }
   const buttonClass = 'rounded p-1.5 text-slate-400 transition hover:bg-slate-800 hover:text-slate-50 disabled:opacity-30 disabled:hover:bg-transparent'
 
   // Se non è la scheda attiva il <webview> resta renderizzato fuori schermo, così l'assistente può continuare a usarlo.
@@ -477,6 +520,7 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
         />
         <button type="button" aria-label={t('History')} title={t('History')} aria-expanded={suggestOpen} className={`${buttonClass} ${suggestOpen ? 'bg-slate-800 text-accent-400' : ''}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (suggestOpen) { closeSuggestions(); inputRef.current?.blur() } else { inputRef.current?.focus() } }}><Clock size={16} /></button>
         <button type="button" aria-label={t('Open in the system browser')} title={t('Open in the system browser')} className={buttonClass} onClick={() => { const url = viewRef.current?.getURL?.(); if (/^https?:\/\//i.test(url || '')) window.electronAPI.openLink(url) }}><ExternalLink size={16} /></button>
+        <button type="button" aria-label={t('Saved passwords')} title={t('Fill in a saved password')} className={buttonClass} onClick={openPasswordMenu}><KeyRound size={16} /></button>
         <button type="button" aria-label={t('Save a screenshot')} title={t('Save a screenshot')} disabled={shotBusy || Boolean(reader)} className={buttonClass} onClick={saveScreenshot}>{shotBusy ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}</button>
         <button type="button" aria-label={t('Frame a region')} title={t('Frame a region')} aria-pressed={framing} disabled={frameBusy || Boolean(reader) || !onRegion} className={`${buttonClass} ${framing ? 'bg-slate-800 text-accent-400' : ''}`} onClick={() => { setFrame(null); setFrameSet(false); setFrameDone(''); setFraming((value) => !value) }}>{frameBusy ? <Loader2 size={16} className="animate-spin" /> : <Crop size={16} />}</button>
         <button type="button" aria-label={savedPage ? t('Remove from the context') : t('Add to the context')} title={savedPage ? t('Remove from the context') : t('Add to the context')} aria-pressed={Boolean(savedPage)} disabled={!canSave || starBusy} className={`${buttonClass} ${savedPage ? 'text-amber-400 hover:text-amber-300' : ''}`} onClick={toggleStar}>{starBusy ? <Loader2 size={16} className="animate-spin" /> : <Star size={16} className={savedPage ? 'fill-amber-400' : ''} />}</button>
@@ -491,9 +535,19 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
         )}
         {suggestOpen && <Suggestions items={suggestions} highlight={highlight} hasQuery={Boolean(query.trim())} hasHistory={historyEntries.length > 0} onPick={openUrl} onRemove={removeFromHistory} onClear={clearHistory} />}
       </form>
+      {offer && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200">
+          <KeyRound size={15} className="shrink-0 text-accent-400" />
+          <span className="min-w-0 flex-1 truncate">{offer.update ? t('Update the saved password for {user} on {site}?', { user: offer.username || t('(no username)'), site: offer.origin.replace(/^https?:\/\//, '') }) : t('Save the password for {user} on {site}?', { user: offer.username || t('(no username)'), site: offer.origin.replace(/^https?:\/\//, '') })}</span>
+          <button type="button" className="rounded bg-accent-600 px-2.5 py-1 text-white transition hover:bg-accent-500" onClick={() => answerOffer('save')}>{offer.update ? t('Update') : t('Save')}</button>
+          <button type="button" className="rounded px-2.5 py-1 text-slate-300 transition hover:bg-slate-800" onClick={() => answerOffer('dismiss')}>{t('Not now')}</button>
+          <button type="button" className="rounded px-2.5 py-1 text-slate-400 transition hover:bg-slate-800" onClick={() => answerOffer('never')}>{t('Never for this site')}</button>
+        </div>
+      )}
       {reader && <iframe title={t('Reading view')} sandbox="" srcDoc={readerDocument(reader, { dark: readerDark, size: readerSize })} className="min-h-0 flex-1 border-0" />}
       <div className={`relative min-h-0 flex-1 ${reader ? 'hidden' : 'flex'}`}>
-        <webview ref={viewRef} partition="persist:openwriter-browser" src={initialUrl.current} className="min-h-0 flex-1 bg-white" />
+        {/* allowpopups: senza, Chromium blocca target="_blank" e window.open prima che arrivino al gestore del processo principale (main.cjs), che li apre come schede. */}
+        <webview ref={viewRef} partition="persist:openwriter-browser" allowpopups="true" src={initialUrl.current} className="min-h-0 flex-1 bg-white" />
         {framing && (
           <div
             ref={frameOverlay}
