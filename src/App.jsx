@@ -949,7 +949,8 @@ export default function App() {
     requestAiCheck(id) {
       setActiveId(id)
       setAssistantOpen(true)
-      setChatRequest({ id: Date.now(), text: t('Check how likely this document is to have been written by an AI rather than by a person, and record the result with the set_ai_score tool. Read the whole text first. Judge only from its style and structure, and be cautious: it is only an indication.') })
+      // `hidden`: la chat mostra una pillola come per gli strumenti al posto del testo della richiesta, che il modello riceve comunque.
+      setChatRequest({ id: Date.now(), text: t('Check how likely this document is to have been written by an AI rather than by a person, and record the result with the set_ai_score tool. Read the whole text first. Judge only from its style and structure, and be cautious: it is only an indication.'), attachment: { label: t('Checking whether the text was written by an AI'), source: 'ai-check', hidden: true } })
     },
     // Nella scheda di un'immagine si passa a un'altra immagine (frecce, pulsanti ai lati): la scheda resta la stessa.
     changeImage(id, imagePath) {

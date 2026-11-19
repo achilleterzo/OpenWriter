@@ -165,7 +165,7 @@ function toModelMessages(messages, context, native, loaded = new Map()) {
       const content = `${pruned ? pruneToolResult(message.content) : message.content}${omitted ? `\n(${omitted === 1 ? 'image no longer attached' : `${omitted} images no longer attached`} to save tokens: call describe_image right after looking at an image so that view_image returns the saved description instead of the image; do not view ${omitted === 1 ? 'it' : 'them'} again without one)` : ''}`
       if (native) {
         const result = { role: 'tool', tool_name: message.name, content }
-        return attached.length ? [result, { role: 'user', content: `[Image returned by ${message.name}]`, images: attached.map((image) => image.data) }] : [result]
+        return attached.length ? [result, { role: 'user', content: `[Image returned by your ${message.name} call: this is the tool result, not a new message from the user. Continue the task, or finish it]`, images: attached.map((image) => image.data) }] : [result]
       }
       return [{ role: 'user', content: `[Result of ${message.name}]\n${content}`, ...(attached.length ? { images: attached } : {}) }]
     }
@@ -519,6 +519,18 @@ const Message = memo(function Message({ message, index, editor, onBranch, onEdit
       <div className="group flex flex-col items-start gap-1">
         <ToolResult message={message} />
         {message.images?.length > 0 && <ToolImages images={message.images} onOpen={onOpenImage} />}
+        {onBranch && <div className="flex text-xs text-slate-500 opacity-0 transition group-hover:opacity-100"><button type="button" className={actionClass} onClick={() => onBranch(index)}><GitBranch size={12} /> {t('Branch from here')}</button></div>}
+      </div>
+    )
+  }
+
+  // Richiesta dell'app (es. controllo AI del documento): il testo va al modello ma in chat si vede solo una pillola, come per gli strumenti.
+  if (message.role === 'user' && message.attachment?.hidden) {
+    return (
+      <div className="group flex flex-col items-end gap-1">
+        <p className="flex max-w-[92%] items-center gap-1.5 rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-400" title={message.attachment.label}>
+          <Wrench size={12} className="shrink-0" /> <span className="truncate">{message.attachment.label}</span>
+        </p>
         {onBranch && <div className="flex text-xs text-slate-500 opacity-0 transition group-hover:opacity-100"><button type="button" className={actionClass} onClick={() => onBranch(index)}><GitBranch size={12} /> {t('Branch from here')}</button></div>}
       </div>
     )
