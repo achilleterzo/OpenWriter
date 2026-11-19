@@ -1,5 +1,5 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { ArrowDown, Brain, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Clock, Copy, CornerDownLeft, Download, FileText, FolderOpen, GitBranch, Loader2, Paperclip, Pencil, Pin, Plus, Quote, RotateCcw, Send, Settings, Sparkles, Square, Trash2, Wand2, Wrench, X } from 'lucide-react'
+import { ArrowDown, Brain, Check, ChevronLeft, ChevronRight, Image as ImageIcon, Clock, Copy, CornerDownLeft, Download, FileText, FolderOpen, GitBranch, Loader2, Paperclip, Pencil, Pin, Plus, Quote, RotateCcw, Send, Settings, Sparkles, Square, Trash2, Wand2, Wrench, X, ExternalLink } from 'lucide-react'
 import MarkdownMessage from './MarkdownMessage.jsx'
 import ChatComposer from './ChatComposer.jsx'
 import { useDialogs } from './Dialogs.jsx'
@@ -75,6 +75,9 @@ async function loadUserAttachments(messages, capabilities) {
   return loaded
 }
 
+// Tempo massimo di ogni passo della pulizia a fine richiesta (salvataggio, chiusura delle schede).
+const CLEANUP_TIMEOUT_MS = 8000
+
 // Parti allegate a un messaggio dell'utente; quelle non caricate restano come nota testuale, così il modello sa che esistevano.
 function userAttachmentParts(message, loaded) {
   const images = (message.images || []).map((entry) => loaded.get(imageKey(entry))).filter(Boolean)
@@ -91,7 +94,7 @@ function userAttachmentParts(message, loaded) {
 
 // Titoli lunghi: nelle liste a discesa si abbreviano, il titolo completo resta nel tooltip.
 const ellipsize = (value, limit) => (value.length > limit ? `${value.slice(0, limit - 1).trimEnd()}…` : value)
-const blankConversation = () => ({ id: null, title: '', parentId: null, branchedAt: null, contextFrom: [], skillOverrides: { add: [], remove: [] }, temperature: '', selection: null, passages: [], messages: [] })
+const blankConversation = () => ({ id: null, title: '', parentId: null, branchedAt: null, contextFrom: [], skillOverrides: { add: [], remove: [] }, temperature: '', webMode: '', selection: null, passages: [], messages: [] })
 const noSkills = { skills: [], defaults: [], problems: [], chain: [] }
 // Skill attive in una conversazione, come oggetti completi (istruzioni, esempi, azioni), nell'ordine di attivazione.
 const activeSkillsOf = (data, overrides) => {
@@ -460,8 +463,19 @@ function conversationItems(messages) {
   return items
 }
 
+// La chiamata a uno strumento in una riga; se riguarda un indirizzo web (anche aperto in una scheda nascosta) lo si può visitare nel browser interno.
+function CallPill({ call, onOpenUrl, className }) {
+  const url = typeof call.arguments?.url === 'string' && /^https?:\/\//i.test(call.arguments.url.trim()) ? call.arguments.url.trim() : ''
+  return (
+    <p className={`flex items-center gap-1.5 rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-400 ${className}`}>
+      <Wrench size={12} className="shrink-0" /> <span className="truncate">{describeCall(call.name, call.arguments)}</span>
+      {url && onOpenUrl && <button type="button" aria-label={t('Open in the browser')} title={`${t('Open in the browser')}: ${url}`} className="shrink-0 text-slate-400 transition hover:text-accent-400" onClick={() => onOpenUrl(url)}><ExternalLink size={12} /></button>}
+    </p>
+  )
+}
+
 // Cella con le chiamate agli strumenti di una tratta del lavoro: chiusa, una riga; aperta, ogni chiamata con il suo risultato.
-function ToolGroup({ entries, onBranch, onOpenImage }) {
+function ToolGroup({ entries, onBranch, onOpenImage, onOpenUrl }) {
   const calls = entries.filter(({ message }) => message.role === 'assistant')
   const results = entries.filter(({ message }) => message.role === 'tool')
   const count = Math.max(calls.length, results.length)
@@ -483,16 +497,16 @@ function ToolGroup({ entries, onBranch, onOpenImage }) {
         {entries.map(({ index, message }) => (message.role === 'assistant'
           ? <div key={index} className="flex max-w-full flex-col items-start gap-1.5">
             {message.thinking && <ThinkingBlock text={message.thinking} />}
-            <p className="flex max-w-full items-center gap-1.5 rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-400"><Wrench size={12} className="shrink-0" /> <span className="truncate">{describeCall(message.toolCall.name, message.toolCall.arguments)}</span></p>
+            <CallPill call={message.toolCall} onOpenUrl={onOpenUrl} className="max-w-full" />
           </div>
-          : <Message key={index} message={message} index={index} onBranch={onBranch} onOpenImage={onOpenImage} />))}
+          : <Message key={index} message={message} index={index} onBranch={onBranch} onOpenImage={onOpenImage} onOpenUrl={onOpenUrl} />))}
       </div>
     </details>
   )
 }
 
 // memo: ogni tasto digitato nella casella rirenderizza il pannello, ma i messaggi (con il Markdown) non devono rifarsi.
-const Message = memo(function Message({ message, index, editor, onBranch, onEdit, onOpenImage, onOpenNote, hideCall = false }) {
+const Message = memo(function Message({ message, index, editor, onBranch, onEdit, onOpenImage, onOpenNote, onOpenUrl, hideCall = false }) {
   const [copied, setCopied] = useState(false)
   const assistant = message.role === 'assistant'
 
@@ -539,7 +553,7 @@ const Message = memo(function Message({ message, index, editor, onBranch, onEdit
         </div>
       )}
       {message.toolCall && !hideCall && (
-        <p className="flex max-w-[92%] items-center gap-1.5 rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-400"><Wrench size={12} className="shrink-0" /> <span className="truncate">{describeCall(message.toolCall.name, message.toolCall.arguments)}</span></p>
+        <CallPill call={message.toolCall} onOpenUrl={onOpenUrl} className="max-w-[92%]" />
       )}
       {assistant && message.usage && (
         <p className="text-[11px] text-slate-500" title={`${t('Input tokens')}: ${message.usage.input.toLocaleString()} · ${t('Output tokens')}: ${message.usage.output.toLocaleString()}`}>↑ {formatTokens(message.usage.input)} ↓ {formatTokens(message.usage.output)}</p>
@@ -917,6 +931,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       branchedAt: index,
       contextFrom: current.contextFrom,
       temperature: current.temperature ?? '',
+      webMode: current.webMode ?? '',
       selection: current.selection || null,
       passages: current.passages || [],
       messages: current.messages.slice(0, index + 1),
@@ -1050,6 +1065,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
   const handlers = useRef({})
   const onBranchStable = useCallback((index) => handlers.current.branchFrom(index), [])
   const onEditStable = useCallback((index) => handlers.current.startEdit(index), [])
+  const onOpenUrlStable = useCallback((url) => toolBridge.openUrl?.(url), [toolBridge])
 
   function startEdit(index) {
     setEditingIndex(index)
@@ -1261,6 +1277,9 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
 
     // Gli strumenti del progetto prevalgono su quelli generali, solo dove il progetto ha fatto una scelta.
     const toolSettings = { ...(settings.tools || {}), ...(projectSettings?.ai?.tools || {}) }
+    // La navigazione web si sceglie anche per conversazione (menu delle opzioni): spenta, con la pagina in vista o nascosta.
+    const webMode = conversation.webMode || ''
+    if (webMode) toolSettings.web = webMode !== 'off'
     // Strumenti dei servizi esterni (MCP) che il progetto usa: se un servizio non parte, l'assistente lavora senza e lo dice.
     let mcpOffer = { tools: [], problems: [] }
     if (project && !loose && api.mcp) { try { mcpOffer = await api.mcp.tools() } catch { /* senza servizi si lavora comunque */ } }
@@ -1313,7 +1332,7 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       getDocument: (path) => toolBridge.getDocument(path),
       getOpenDocumentText: (path) => toolBridge.getOpenDocumentText(path),
       listBrowserTabs: () => toolBridge.listBrowserTabs(),
-      getBrowser: (options) => toolBridge.getBrowser({ ...options, agent: true }),
+      getBrowser: (options) => toolBridge.getBrowser({ ...options, agent: true, hidden: webMode === 'hidden' }),
       captureDocument: (path) => toolBridge.captureDocument(path),
       captureBrowser: (tab) => toolBridge.captureBrowser(tab),
       askUser,
@@ -1548,16 +1567,39 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
         if (runRef.current.cancelled) break
       }
     } finally {
-      // Con "Approva per me" le modifiche si accettano prima di salvare (senza, un documento con modifiche da rivedere non si salva).
-      if (autoApproveRef.current) for (const id of editedTabs) { try { toolBridge.acceptPending(id) } catch (error) { console.error(error) } }
-      for (const id of editedTabs) await toolBridge.saveDocument(id).catch((error) => console.error(error))
-      if (instructionsEdited) setInstructionsVersion((value) => value + 1)
-      for (const id of openedTabs) await toolBridge.closeDocument(id).catch((error) => console.error(error))
-      await toolBridge.closeAgentBrowsers?.().catch((error) => console.error(error))
-      cancelAnimationFrame(frameRef.current)
-      frameRef.current = null
-      setLive(null)
-      setBusy(false)
+      // Pulizia a fine richiesta (salvare, richiudere le schede): ogni passo ha un tempo massimo e "Interrompi" la salta, così la chat non resta mai
+      // su "Elaboro…" per un salvataggio o una chiusura che non rispondono.
+      let released = false
+      const release = () => {
+        if (released) return
+        released = true
+        runRef.current.release = null
+        cancelAnimationFrame(frameRef.current)
+        frameRef.current = null
+        setLive(null)
+        setBusy(false)
+      }
+      runRef.current.release = release
+      // Ogni passo finisce anche nel file di diagnostica (ai-diagnostics.log): i toast spariscono da soli.
+      const trace = (line) => { try { api.logDiagnostic?.(`Fine richiesta: ${line}`) } catch { /* solo diagnostica */ } }
+      const within = (promise, label) => {
+        const started = Date.now()
+        let timer
+        return Promise.race([
+          Promise.resolve(promise).then((value) => { trace(`«${label}» ok in ${Date.now() - started} ms (${String(value)})`) }, (error) => { trace(`«${label}» errore in ${Date.now() - started} ms: ${error?.message || error}`); console.error(error) }),
+          new Promise((resolve) => { timer = setTimeout(() => { trace(`«${label}» senza risposta dopo ${CLEANUP_TIMEOUT_MS / 1000} s`); console.error(`Fine richiesta: «${label}» non ha risposto in ${CLEANUP_TIMEOUT_MS / 1000} s`); resolve() }, CLEANUP_TIMEOUT_MS) }),
+        ]).finally(() => clearTimeout(timer))
+      }
+      try {
+        // Con "Approva per me" le modifiche si accettano prima di salvare (senza, un documento con modifiche da rivedere non si salva).
+        if (autoApproveRef.current) for (const id of editedTabs) { try { toolBridge.acceptPending(id) } catch (error) { console.error(error) } }
+        for (const id of editedTabs) { if (released) break; await within(toolBridge.saveDocument(id), 'salvataggio') }
+        if (instructionsEdited) setInstructionsVersion((value) => value + 1)
+        for (const id of openedTabs) { if (released) break; await within(toolBridge.closeDocument(id), 'chiusura scheda') }
+        if (!released) await within(toolBridge.closeAgentBrowsers?.(), 'chiusura browser')
+      } finally {
+        release()
+      }
     }
   }
 
@@ -1646,6 +1688,8 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
     runRef.current.cancelled = true
     runRef.current.cancel?.()
     pendingAskRef.current?.({ answers: [], cancelled: true })
+    // Se la richiesta è già alla pulizia finale e questa non risponde, "Interrompi" libera subito la chat.
+    runRef.current.release?.()
   }
 
   const hasPassages = (current.passages || []).length > 0
@@ -1728,14 +1772,14 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
       ) : (
         <>
           <div className="relative flex min-h-0 flex-1 flex-col">
-          <div ref={listRef} data-select-scope onScroll={onListScroll} style={dockHeight ? { paddingBottom: dockHeight + 12 } : undefined} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+          <div ref={listRef} data-select-scope onScroll={onListScroll} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
             {!current.messages.length && !busy && (
               <p className="m-auto max-w-[16rem] text-center text-sm text-slate-500">{t('Ask to proofread, rewrite or discuss the document. If you select some text, the assistant works on that.')}
               </p>
             )}
             {items.map((item) => (item.type === 'group'
-              ? <ToolGroup key={`g${item.index}`} entries={item.entries} onBranch={canBranch ? onBranchStable : null} onOpenImage={setViewer} />
-              : <Message key={item.index} message={current.messages[item.index]} index={item.index} hideCall={item.hideCall} editor={editor} onBranch={canBranch ? onBranchStable : null} onEdit={current.messages[item.index].role === 'user' && !busy ? onEditStable : null} onOpenImage={setViewer} onOpenNote={onOpenNote} />))}
+              ? <ToolGroup key={`g${item.index}`} entries={item.entries} onBranch={canBranch ? onBranchStable : null} onOpenImage={setViewer} onOpenUrl={onOpenUrlStable} />
+              : <Message key={item.index} message={current.messages[item.index]} index={item.index} hideCall={item.hideCall} editor={editor} onBranch={canBranch ? onBranchStable : null} onEdit={current.messages[item.index].role === 'user' && !busy ? onEditStable : null} onOpenImage={setViewer} onOpenNote={onOpenNote} onOpenUrl={onOpenUrlStable} />))}
             {canResume && (
               <button type="button" className="flex items-center gap-1.5 self-start rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300 transition hover:border-accent-400 hover:text-slate-50" onClick={() => send('', null, { resume: true })}><RotateCcw size={12} /> {t('Resume from here')}</button>
             )}
@@ -1754,10 +1798,11 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
             {error && <p className="text-sm text-rose-400">{error}</p>}
             <div ref={endRef} />
           </div>
-          {/* La coda sta ancorata in fondo alla chat, in un vassoio sopra il campo di scrittura, non in coda all'elenco: con la chat scorsa verso l'alto le pillole
-              restavano a metà pagina, lontane da dove si scrive. L'elenco riserva sotto di sé lo spazio del vassoio (`dockHeight`), così in fondo non nasconde nulla. */}
+          {/* La coda sta in fondo alla chat, in un vassoio sopra il campo di scrittura, non in coda all'elenco: con la chat scorsa verso l'alto le pillole
+              restavano a metà pagina, lontane da dove si scrive. Il vassoio è una riga dello stesso stack (senza sfondo né linee), sotto l'elenco: l'elenco si accorcia
+              e la sua barra di scorrimento resta libera. `dockHeight` serve solo a tenere il pulsante «vai in fondo» sopra il vassoio. */}
           {queued.length > 0 && (
-            <div ref={dockRef} className="absolute inset-x-0 bottom-0 flex flex-col gap-1.5 border-t border-slate-800 bg-slate-900/95 px-3 py-2 backdrop-blur-sm">
+            <div ref={dockRef} className="flex flex-col gap-1.5 px-3 pb-2 pt-1">
             {/* Iniezioni (Ctrl+Invio): appaiono subito in chat, sbiadite, e diventano normali quando entrano nel lavoro in corso. */}
                 {queued.filter((item) => item.now).map((item) => (
                   <div key={item.id} className="group pointer-events-auto flex flex-col items-end gap-1 opacity-60" title={t('Sent with Ctrl+Enter: it reaches the assistant as soon as the tool in progress has finished')}>
@@ -1904,6 +1949,21 @@ export default function AiChatPanel({ editor, contextTab, openDocuments = [], co
                 <fieldset disabled={busy} className="min-w-0">
                   <ParameterSlider id="chat-temperature" label={t('Temperature')} value={current.temperature ?? ''} inherited={firstLevel(projectSettings?.ai?.temperature, levelOf(provider, settings.providers?.[provider]?.temperature))} onChange={(value) => updateConversation({ temperature: value })} min={TEMPERATURE_MIN} max={TEMPERATURE_MAX} step={TEMPERATURE_STEP} format={formatTemperature} />
                 </fieldset>
+                <label className="grid min-w-0 gap-0.5">{t('Web browsing')}
+                  <select
+                    aria-label={t('Web browsing')}
+                    disabled={busy}
+                    title={t('Off, on with the page in view (the assistant works in a browser tab you can watch), or on and hidden (no tab is shown; the links of its calls open the pages in the browser).')}
+                    value={current.webMode || ''}
+                    className="w-full min-w-0 rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-xs text-slate-100 outline-none focus:border-accent-400 disabled:opacity-50"
+                    onChange={(event) => updateConversation({ webMode: event.target.value })}
+                  >
+                    <option value="">{({ ...(settings.tools || {}), ...(projectSettings?.ai?.tools || {}) }).web ? t('As in the settings (on, page in view)') : t('As in the settings (off)')}</option>
+                    <option value="off">{t('Off')}</option>
+                    <option value="visible">{t('On, page in view')}</option>
+                    <option value="hidden">{t('On, hidden')}</option>
+                  </select>
+                </label>
                 {project && !loose && (
                   <label className="grid min-w-0 gap-0.5">{t('Edits to the documents')}
                     <select

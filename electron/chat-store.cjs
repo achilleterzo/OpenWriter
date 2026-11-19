@@ -63,6 +63,8 @@ function createChatStore({ getProjectPath }) {
       skillOverrides: { add: skillIds(input.skillOverrides?.add), remove: skillIds(input.skillOverrides?.remove) },
       // Temperatura propria della conversazione ('' = segue quella del progetto).
       temperature: cleanTemperature(input.temperature),
+      // Navigazione web della conversazione: '' = come nelle impostazioni, 'off' spenta, 'visible' con la pagina in vista, 'hidden' nascosta.
+      webMode: ['off', 'visible', 'hidden'].includes(input.webMode) ? input.webMode : '',
       // Modello scelto per questa conversazione dal selettore della chat (null = quello del progetto, o le impostazioni generali).
       selection: cleanModelChoice(input.selection),
       // Task in coda (e iniezioni non ancora consegnate): sopravvivono a un arresto improvviso. Si cambiano solo con `setQueue`: un salvataggio della conversazione,
