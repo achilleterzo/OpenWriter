@@ -2560,6 +2560,7 @@ ipcMain.handle('ai:get-settings', () => aiProviders.getSettings())
 ipcMain.handle('ai:get-effective-settings', () => aiProviders.getEffectiveSettings())
 ipcMain.handle('ai:save-settings', (event, settings) => { const saved = aiProviders.saveSettings(settings); events.toOthers(event.sender, 'app:settings-changed', { scope: 'ai' }); return saved })
 ipcMain.handle('ai:status', (_event, provider) => aiProviders.getStatus(provider))
+ipcMain.handle('ai:presets', () => aiProviders.presets())
 ipcMain.handle('ai:login', (_event, provider) => aiProviders.login(provider, {
   openExternal: (url) => (/^https:\/\//.test(url) ? shell.openExternal(url) : false),
 }))

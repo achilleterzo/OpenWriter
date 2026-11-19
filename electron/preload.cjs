@@ -349,6 +349,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getEffectiveSettings: () => ipcRenderer.invoke('ai:get-effective-settings'),
     saveSettings: (settings) => ipcRenderer.invoke('ai:save-settings', settings),
     getStatus: (provider) => ipcRenderer.invoke('ai:status', provider),
+    getPresets: () => ipcRenderer.invoke('ai:presets'),
     login: (provider) => ipcRenderer.invoke('ai:login', provider),
     submitLoginCode: (code) => ipcRenderer.invoke('ai:login-code', code),
     listModels: (request) => ipcRenderer.invoke('ai:models', request),
