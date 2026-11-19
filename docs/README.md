@@ -213,6 +213,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [mcp-servers-store.cjs.md](reference/electron/mcp-servers-store.cjs.md) ([mcp-servers-store.cjs](../electron/mcp-servers-store.cjs)) — Servers the assistant connects to as an MCP client: global and per project, encrypted credentials, trust of project servers
   - [mcp-client.cjs.md](reference/electron/mcp-client.cjs.md) ([mcp-client.cjs](../electron/mcp-client.cjs)) — MCP client on the official SDK: stdio and HTTP, lazy start, timeouts
   - [mcp-oauth.cjs.md](reference/electron/mcp-oauth.cjs.md) ([mcp-oauth.cjs](../electron/mcp-oauth.cjs)) — OAuth sign-in for MCP services: discovery, PKCE with a local redirect, token refresh
+  - [browser-passwords.cjs.md](reference/electron/browser-passwords.cjs.md) ([browser-passwords.cjs](../electron/browser-passwords.cjs)) — saved passwords of the internal browser: encrypted store, form capture in an isolated world, filling
   - [mcp-service.cjs.md](reference/electron/mcp-service.cjs.md) ([mcp-service.cjs](../electron/mcp-service.cjs)) — The MCP client as the assistant sees it: tools offered, confirmation before a call, limits
   - [path-compare.cjs.md](reference/electron/path-compare.cjs.md) ([path-compare.cjs](../electron/path-compare.cjs)) — Platform-aware path comparison
   - [document-owners.cjs.md](reference/electron/document-owners.cjs.md) ([document-owners.cjs](../electron/document-owners.cjs)) — Which window edits which document: one at a time
