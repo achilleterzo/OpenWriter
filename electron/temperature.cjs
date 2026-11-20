@@ -8,7 +8,9 @@ const LEVEL_MIN = 0
 const LEVEL_MAX = 1
 
 // Temperatura massima accettata da ciascun provider. Le CLI (Claude, Codex) non ne hanno: il livello arriva loro come indicazione di stile.
-const PROVIDER_MAX = { ollama: 4, 'ollama-cloud': 2, openrouter: 2, gemini: 2 }
+const { isCompatibleProvider } = require('./provider-descriptors.cjs')
+
+const PROVIDER_MAX = { ollama: 4, 'ollama-cloud': 2, openrouter: 2, gemini: 2, openai: 2 }
 
 function cleanTemperature(value) {
   if (value === '' || value == null) return ''
@@ -18,7 +20,7 @@ function cleanTemperature(value) {
 
 // Il livello nei gradi del provider ('' se non ne ha o se non c'è livello).
 function nativeTemperature(provider, level) {
-  const max = PROVIDER_MAX[provider]
+  const max = PROVIDER_MAX[provider] ?? (isCompatibleProvider(provider) ? PROVIDER_MAX.openai : undefined)
   const clean = cleanTemperature(level)
   return max && clean !== '' ? Math.round(clean * max * 100) / 100 : ''
 }

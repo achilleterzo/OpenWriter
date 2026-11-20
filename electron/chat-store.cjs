@@ -63,6 +63,8 @@ function createChatStore({ getProjectPath }) {
       skillOverrides: { add: skillIds(input.skillOverrides?.add), remove: skillIds(input.skillOverrides?.remove) },
       // Temperatura propria della conversazione ('' = segue quella del progetto).
       temperature: cleanTemperature(input.temperature),
+      // Navigazione web della conversazione: '' = come nelle impostazioni, 'off' spenta, 'visible' con la pagina in vista, 'hidden' nascosta.
+      webMode: ['off', 'visible', 'hidden'].includes(input.webMode) ? input.webMode : '',
       // Modello scelto per questa conversazione dal selettore della chat (null = quello del progetto, o le impostazioni generali).
       selection: cleanModelChoice(input.selection),
       // Task in coda (e iniezioni non ancora consegnate): sopravvivono a un arresto improvviso. Si cambiano solo con `setQueue`: un salvataggio della conversazione,
@@ -84,7 +86,7 @@ function createChatStore({ getProjectPath }) {
           // Ragionamento mostrato dal modello e chiamate agli strumenti restano nel log della conversazione.
           // Contesto allegato dall'app (es. una nota): etichetta mostrata all'utente, dettaglio inviato al modello, id della nota per il collegamento.
           ...(message.role === 'user' && message.attachment && typeof message.attachment === 'object'
-            ? { attachment: { label: text(message.attachment.label, 300), detail: text(message.attachment.detail, MAX_MESSAGE_CHARS), ...(message.attachment.noteId ? { noteId: text(message.attachment.noteId, 80) } : {}), ...(message.attachment.source === 'mcp' ? { source: 'mcp', agent: text(message.attachment.agent, 60) } : {}) } }
+            ? { attachment: { label: text(message.attachment.label, 300), detail: text(message.attachment.detail, MAX_MESSAGE_CHARS), ...(message.attachment.noteId ? { noteId: text(message.attachment.noteId, 80) } : {}), ...(message.attachment.source === 'mcp' ? { source: 'mcp', agent: text(message.attachment.agent, 60) } : {}), ...(message.attachment.hidden === true ? { hidden: true, ...(message.attachment.source === 'ai-check' ? { source: 'ai-check' } : {}) } : {}) } }
             : {}),
           ...(message.role === 'assistant' && message.nextPrompt ? { nextPrompt: text(message.nextPrompt, 300) } : {}),
           ...(message.thinking ? { thinking: text(message.thinking, MAX_MESSAGE_CHARS) } : {}),

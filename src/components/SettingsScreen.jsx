@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Bot, Cpu, FileSymlink, Info, Palette, Plug, Puzzle, SlidersHorizontal, Wand2, Zap } from 'lucide-react'
+import { Bot, Cpu, FileSymlink, Info, Palette, Plug, Puzzle, SlidersHorizontal, Wand2, Zap, KeyRound } from 'lucide-react'
 import AboutSettings from './AboutSettings.jsx'
 import AssociationSettings from './AssociationSettings.jsx'
 import AiProviderSettings from './AiProviderSettings.jsx'
@@ -9,6 +9,7 @@ import LocalModelsSettings from './LocalModelsSettings.jsx'
 import McpSettings from './McpSettings.jsx'
 import QuickActionsSettings from './QuickActionsSettings.jsx'
 import ServicesSettings from './ServicesSettings.jsx'
+import PasswordsSettings from './PasswordsSettings.jsx'
 import SettingsShell from './SettingsShell.jsx'
 import SkillsManager from './SkillsManager.jsx'
 import { t } from '../i18n/index.js'
@@ -22,6 +23,7 @@ const sections = [
   { id: 'actions', label: t('Quick actions'), icon: Zap },
   { id: 'skills', label: t('Skills'), icon: Wand2 },
   { id: 'services', label: t('Services'), icon: Puzzle },
+  { id: 'passwords', label: t('Passwords'), icon: KeyRound },
   { id: 'associations', label: t('Associations'), icon: FileSymlink },
   { id: 'models', label: t('Local models'), icon: Cpu },
   { id: 'agents', label: t('Agents (MCP)'), icon: Plug },
@@ -44,6 +46,7 @@ export default function SettingsScreen({ initialSection = 'general', project, on
         </section>
       )}
       {section === 'services' && <ServicesSettings />}
+      {section === 'passwords' && <PasswordsSettings />}
       {section === 'associations' && <AssociationSettings />}
       {section === 'models' && <LocalModelsSettings />}
       {section === 'agents' && <McpSettings project={project} />}

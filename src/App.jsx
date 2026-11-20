@@ -296,7 +296,7 @@ export default function App() {
       conversationId: latest.current.conversationId,
       chatContext: { includeActive: latest.current.contextPins.includeActive, pinnedIds: latest.current.contextPins.pinnedIds.filter((id) => currentTabs.some((tab) => tab.id === id)) },
       // Schede del browser: indirizzo attuale e posizione tra le schede. Si riaprono alla pagina dov'erano (non la cronologia di navigazione).
-      browser: currentTabs.map((tab, index) => ({ tab, index })).filter(({ tab }) => tab.kind === 'browser').map(({ tab, index }) => ({ id: tab.id, title: tab.title, url: browserControllers.current.get(tab.id)?.info().url || tab.initialUrl || '', index, ...(tab.pinned ? { pinned: true } : {}) })),
+      browser: currentTabs.map((tab, index) => ({ tab, index })).filter(({ tab }) => tab.kind === 'browser' && !tab.hidden).map(({ tab, index }) => ({ id: tab.id, title: tab.title, url: browserControllers.current.get(tab.id)?.info().url || tab.initialUrl || '', index, ...(tab.pinned ? { pinned: true } : {}) })),
       activeBrowserId: currentTabs.some((tab) => tab.id === currentActive && tab.kind === 'browser') ? currentActive : null,
       // Schede del lettore testuale: il file, la posizione tra le schede e, se ci sono modifiche non salvate, il testo (bozza).
       texts: currentTabs.map((tab, index) => ({ tab, index })).filter(({ tab }) => tab.kind === 'text').map(({ tab, index }) => ({
@@ -949,7 +949,8 @@ export default function App() {
     requestAiCheck(id) {
       setActiveId(id)
       setAssistantOpen(true)
-      setChatRequest({ id: Date.now(), text: t('Check how likely this document is to have been written by an AI rather than by a person, and record the result with the set_ai_score tool. Read the whole text first. Judge only from its style and structure, and be cautious: it is only an indication.') })
+      // `hidden`: la chat mostra una pillola come per gli strumenti al posto del testo della richiesta, che il modello riceve comunque.
+      setChatRequest({ id: Date.now(), text: t('Check how likely this document is to have been written by an AI rather than by a person, and record the result with the set_ai_score tool. Read the whole text first. Judge only from its style and structure, and be cautious: it is only an indication.'), attachment: { label: t('Checking whether the text was written by an AI'), source: 'ai-check', hidden: true } })
     },
     // Nella scheda di un'immagine si passa a un'altra immagine (frecce, pulsanti ai lati): la scheda resta la stessa.
     changeImage(id, imagePath) {
@@ -1126,7 +1127,7 @@ export default function App() {
     // riusata o aperta una volta e chiusa a fine risposta, mai in una scheda dell'utente, nemmeno se la indica; la lettura può riguardare qualsiasi scheda (indicata,
     // altrimenti la sua, altrimenti quella in primo piano, l'ultima usata o la prima). Senza `agent` (l'utente) si usa la scheda in primo piano o l'ultima, o una nuova con `newTab`.
     // `create` ne apre una nuova se non ce n'è; `activate` la porta in primo piano. Il risultato dice se la scheda è dell'assistente (`own`) e se quella indicata è stata lasciata stare (`skippedUserTab`).
-    async getBrowser({ tab: reference, newTab = false, create = true, activate = true, agent = false, navigate = false } = {}) {
+    async getBrowser({ tab: reference, newTab = false, create = true, activate = true, agent = false, navigate = false, hidden = false } = {}) {
       const list = latest.current.tabs.filter((item) => item.kind === 'browser')
       const isOwn = (item) => agentBrowsers.current.ids.has(item.id)
       const ownTab = () => list.find(isOwn) || null
@@ -1148,12 +1149,16 @@ export default function App() {
       if (!target) {
         if (!create && !newTab && !working) throw new Error(t('No browser tab is open: the user can open one (globe icon) or you can with web_open or web_search, if web browsing is enabled'))
         target = createBrowserTab()
+        // Navigazione nascosta: la scheda dell'assistente non compare tra le schede e non passa in primo piano (la pagina si carica comunque).
+        if (agent && hidden) target = { ...target, hidden: true }
         number = list.length + 1
         if (agent) agentBrowsers.current.ids.add(target.id)
         setTabs((current) => [...current, target])
       }
+      // Una scheda nascosta torna in vista se l'utente passa alla navigazione con la pagina visibile.
+      if (agent && !hidden && target.hidden) { const shownId = target.id; target = { ...target, hidden: false }; setTabs((current) => current.map((item) => (item.id === shownId ? { ...item, hidden: false } : item))) }
       lastBrowserId.current = target.id
-      if (activate) {
+      if (activate && !target.hidden) {
         if (agent) {
           if (agentBrowsers.current.previous === null) agentBrowsers.current.previous = latest.current.activeId
           agentBrowsers.current.touched.add(target.id)
@@ -1180,6 +1185,10 @@ export default function App() {
       return { title: tab.title, image: await electronAPI.captureRect({ x, y, width, height }) }
     },
     // Schermata di una scheda del browser; se la scheda è fuori schermo e il risultato è vuoto la porta in primo piano e riprova.
+    // Apre un indirizzo in una scheda del browser interno (per i link delle chiamate dell'assistente).
+    openUrl(url) {
+      if (/^https?:\/\//i.test(String(url))) workspaceRef.current.openBrowser(String(url))
+    },
     async captureBrowser(reference) {
       let target = await toolBridge.getBrowser({ tab: reference, create: false, activate: false, agent: true })
       const info = target.controller.info()
@@ -1188,7 +1197,7 @@ export default function App() {
       try {
         image = await capture()
       } catch {
-        target = await toolBridge.getBrowser({ tab: target.id, create: false, activate: true, agent: true })
+        target = await toolBridge.getBrowser({ tab: target.id, create: false, activate: true, agent: true, hidden: Boolean(latest.current.tabs.find((item) => item.id === target.id)?.hidden) })
         await sleep(600)
         image = await capture()
       }
@@ -1732,7 +1741,7 @@ export default function App() {
         )}
         <main className="flex min-w-0 flex-1 flex-col">
           <div className={homeOpen ? 'hidden' : 'contents'}>
-          <TabBar tabs={tabs} onPromote={workspace.promoteTab} unsavedCount={unsavedTabs(tabs).length} onSaveAll={saveAllTabs} activeId={activeTab?.id ?? null} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
+          <TabBar tabs={tabs.filter((tab) => !tab.hidden)} onPromote={workspace.promoteTab} unsavedCount={unsavedTabs(tabs).length} onSaveAll={saveAllTabs} activeId={activeTab?.id ?? null} onSelect={setActiveId} onClose={workspace.closeTab} onTogglePin={workspace.togglePin} onMove={workspace.moveTab} onNew={workspace.newTab} onNewBrowser={workspace.openBrowser} assistantOpen={assistantOpen} onToggleAssistant={() => setAssistantOpen((open) => !open)} />
           <section className="flex min-h-0 flex-1 flex-col bg-slate-900">
             {!tabs.length && (
               <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-slate-500">

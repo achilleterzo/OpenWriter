@@ -158,6 +158,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Consuma voci della coda (per inviarle): le ottiene una finestra sola. → le voci prese ({ id, text, now }).
   takeQueueItems: (id, ids) => ipcRenderer.invoke('chat:take-queue', { id, ids }),
   deleteConversation: (id) => ipcRenderer.invoke('chat:delete', id),
+  // Una riga nel file di diagnostica (ai-diagnostics.log), per ciò che l'interfaccia non può mostrare in modo duraturo.
+  logDiagnostic: (line) => ipcRenderer.send('diagnostic:log', line),
   // Il lavoro dell'assistente su una conversazione, condiviso tra le finestre dello stesso progetto (chat-runs.cjs). La finestra che lo guida usa start / live / end;
   // le altre ascoltano lo stato (`onState`), il testo che arriva (`onLive`) e le modifiche salvate (`onChanged`), e possono chiedere di fermarlo (`cancel`).
   chatRuns: {
@@ -196,6 +198,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (_event, info) => callback(info)
     ipcRenderer.on('browser:context-menu', listener)
     return () => ipcRenderer.removeListener('browser:context-menu', listener)
+  },
+  // Password dei siti del browser: la password non esce mai dal processo principale (l'interfaccia vede solo sito e utente).
+  browserPasswords: {
+    status: () => ipcRenderer.invoke('browser-passwords:status'),
+    list: () => ipcRenderer.invoke('browser-passwords:list'),
+    remove: (id) => ipcRenderer.invoke('browser-passwords:remove', id),
+    clear: () => ipcRenderer.invoke('browser-passwords:clear'),
+    removeNever: (origin) => ipcRenderer.invoke('browser-passwords:remove-never', origin),
+    forPage: (contentsId) => ipcRenderer.invoke('browser-passwords:for-page', contentsId),
+    fill: (contentsId, id) => ipcRenderer.invoke('browser-passwords:fill', { contentsId, id }),
+    respond: (offerId, action) => ipcRenderer.invoke('browser-passwords:respond', { offerId, action }),
+    onOffer: (callback) => {
+      const listener = (_event, offer) => callback(offer)
+      ipcRenderer.on('browser:password-offer', listener)
+      return () => ipcRenderer.removeListener('browser:password-offer', listener)
+    },
   },
   onBrowserOpenTab: (callback) => {
     const listener = (_event, info) => callback(info)
@@ -331,6 +349,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getEffectiveSettings: () => ipcRenderer.invoke('ai:get-effective-settings'),
     saveSettings: (settings) => ipcRenderer.invoke('ai:save-settings', settings),
     getStatus: (provider) => ipcRenderer.invoke('ai:status', provider),
+    getPresets: () => ipcRenderer.invoke('ai:presets'),
     login: (provider) => ipcRenderer.invoke('ai:login', provider),
     submitLoginCode: (code) => ipcRenderer.invoke('ai:login-code', code),
     listModels: (request) => ipcRenderer.invoke('ai:models', request),

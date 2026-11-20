@@ -3,7 +3,9 @@
  * Il progetto la salva nel proprio `project.json`; la conversazione nel proprio file. Contiene solo nomi: chiavi API, endpoint e parametri
  * avanzati restano nelle impostazioni generali, sul computer.
  */
-const PROVIDERS = ['ollama', 'ollama-cloud', 'openrouter', 'codex', 'claude', 'gemini']
+const { isCompatibleProvider } = require('./provider-descriptors.cjs')
+
+const PROVIDERS = ['ollama', 'ollama-cloud', 'openrouter', 'codex', 'claude', 'gemini', 'openai']
 
 // Un nome di modello o di livello è testo semplice: niente caratteri di controllo, lunghezza ragionevole.
 const plain = (value, limit) => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, limit)
@@ -26,7 +28,7 @@ function cleanParams(value) {
 
 /** Una scelta pulita, oppure null quando non c'è un provider valido (= nessuna scelta, valgono le impostazioni generali). */
 function cleanModelChoice(value) {
-  if (!value || typeof value !== 'object' || !PROVIDERS.includes(value.provider)) return null
+  if (!value || typeof value !== 'object' || !(PROVIDERS.includes(value.provider) || isCompatibleProvider(value.provider))) return null
   return { provider: value.provider, model: plain(value.model, 200), reasoning: plain(value.reasoning, 30), params: cleanParams(value.params) }
 }
 
@@ -37,8 +39,9 @@ function cleanModelChoice(value) {
  */
 function applyModelChoice(settings, choice, { reasoningLevels = {}, usable = () => true } = {}) {
   const clean = cleanModelChoice(choice)
-  if (!clean || !usable(clean.provider)) return settings
-  const general = settings.providers?.[clean.provider] || {}
+  // Un provider che non c'è più nelle impostazioni (un server compatibile tolto dall'elenco) non si può scegliere: restano le impostazioni generali.
+  if (!clean || !settings.providers?.[clean.provider] || !usable(clean.provider)) return settings
+  const general = settings.providers[clean.provider]
   const reasoning = (reasoningLevels[clean.provider] || []).includes(clean.reasoning) ? clean.reasoning : general.reasoning
   return {
     ...settings,

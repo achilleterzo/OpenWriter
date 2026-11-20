@@ -14,6 +14,7 @@ const { createChatRuns } = require('./chat-runs.cjs')
 const { createDocumentOwners } = require('./document-owners.cjs')
 const { AsyncLocalStorage } = require('node:async_hooks')
 const { createMcpServersStore } = require('./mcp-servers-store.cjs')
+const { createPasswordStore, originOf, parseCapture, fillScript, CAPTURE_SCRIPT } = require('./browser-passwords.cjs')
 const { createMcpClient } = require('./mcp-client.cjs')
 const { createMcpService } = require('./mcp-service.cjs')
 const mcpOauth = require('./mcp-oauth.cjs')
@@ -1974,6 +1975,13 @@ ipcMain.handle('chat:run-start', (event, id) => chatRuns.start({ sender: event.s
 ipcMain.on('chat:run-live', (event, id, live) => { chatRuns.live({ sender: event.sender, project: windowContext.project, conversationId: String(id || ''), live }) })
 ipcMain.on('chat:run-end', (event, id) => { chatRuns.end({ sender: event.sender, project: windowContext.project, conversationId: String(id || '') }) })
 ipcMain.handle('chat:runs', () => chatRuns.list(windowContext.project))
+// Una riga di diagnostica dall'interfaccia (es. i passi di fine richiesta dell'assistente), nello stesso file del resto: i toast spariscono, il file resta.
+ipcMain.on('diagnostic:log', (_event, line) => {
+  try {
+    const file = path.join(app.getPath('userData'), 'ai-diagnostics.log')
+    require('node:fs').appendFileSync(file, `${new Date().toISOString()} [UI] ${String(line).slice(0, 500)}\n`)
+  } catch { /* la diagnostica non deve mai bloccare */ }
+})
 ipcMain.handle('chat:cancel-run', (_event, id) => chatRuns.cancel({ project: windowContext.project, conversationId: String(id || '') }))
 ipcMain.handle('chat:open-folder', () => shell.openPath(chatStore.ensureDirectory()))
 ipcMain.handle('spellcheck:get', () => spellcheckState())
@@ -2552,6 +2560,7 @@ ipcMain.handle('ai:get-settings', () => aiProviders.getSettings())
 ipcMain.handle('ai:get-effective-settings', () => aiProviders.getEffectiveSettings())
 ipcMain.handle('ai:save-settings', (event, settings) => { const saved = aiProviders.saveSettings(settings); events.toOthers(event.sender, 'app:settings-changed', { scope: 'ai' }); return saved })
 ipcMain.handle('ai:status', (_event, provider) => aiProviders.getStatus(provider))
+ipcMain.handle('ai:presets', () => aiProviders.presets())
 ipcMain.handle('ai:login', (_event, provider) => aiProviders.login(provider, {
   openExternal: (url) => (/^https:\/\//.test(url) ? shell.openExternal(url) : false),
 }))
@@ -2562,6 +2571,81 @@ ipcMain.handle('ai:has-api-key', (_event, provider) => aiProviders.hasApiKey(pro
 ipcMain.handle('ai:save-api-key', (_event, value, provider) => aiProviders.saveApiKey(value, provider))
 ipcMain.handle('ai:chat', (_event, messages) => aiProviders.chat(messages))
 
+// --- Password dei siti del browser interno: si propone di salvarle all'invio di un modulo di accesso e si compilano su richiesta (vedi browser-passwords.cjs).
+let passwordParts = null
+function passwords() {
+  if (passwordParts) return passwordParts
+  const secrets = {
+    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+    decrypt: (value) => safeStorage.decryptString(Buffer.from(value, 'base64')),
+  }
+  passwordParts = { store: createPasswordStore({ directory: app.getPath('userData'), secrets }), offers: new Map() }
+  return passwordParts
+}
+const PASSWORD_WORLD = 997
+// Una pagina con un modulo di accesso: lo script (in un mondo separato dagli script del sito) segnala l'invio; la proposta di salvataggio va all'interfaccia SENZA la password,
+// che resta qui finché l'utente non risponde.
+function watchPasswordForms(contents) {
+  const inject = () => { try { contents.executeJavaScriptInIsolatedWorld(PASSWORD_WORLD, [{ code: CAPTURE_SCRIPT }]).catch(() => {}) } catch { /* pagina chiusa */ } }
+  contents.on('dom-ready', inject)
+  // Il nome utente scritto in un passo precedente (accessi a più passi), per sito: vale pochi minuti.
+  let userHint = null
+  contents.on('console-message', (...args) => {
+    const details = args[0] && typeof args[0].message === 'string' ? args[0] : null
+    const capture = parseCapture(details ? details.message : args[2])
+    if (!capture) return
+    // Il sito è quello della pagina che ha scritto la riga (non quello che il contenuto dichiara): se nel frattempo si è passati ad altro, la proposta si scarta.
+    const origin = originOf((details && details.frame && details.frame.origin) || contents.getURL())
+    if (!origin || capture.origin !== origin) return
+    const { store, offers } = passwords()
+    if (!store.available() || store.isNever(origin)) return
+    if (capture.kind === 'user') { userHint = { origin, username: capture.username, at: Date.now() }; return }
+    const username = capture.username || (userHint && userHint.origin === origin && Date.now() - userHint.at < 10 * 60 * 1000 ? userHint.username : '')
+    if (capture.username) userHint = { origin, username: capture.username, at: Date.now() }
+    const known = store.find(origin, username)
+    if (known && known.password === capture.password) return
+    const id = require('node:crypto').randomUUID()
+    offers.set(id, { origin, username, password: capture.password })
+    while (offers.size > 20) offers.delete(offers.keys().next().value)
+    events.toHostOf(contents, 'browser:password-offer', { contentsId: contents.id, offerId: id, origin, username, update: Boolean(known) })
+  })
+}
+// Le richieste dell'interfaccia sulle pagine devono riguardare un browser di QUESTA finestra.
+const ownGuest = (event, contentsId) => {
+  const contents = webContents.fromId(Number(contentsId))
+  if (!contents || contents.getType() !== 'webview' || contents.hostWebContents !== event.sender) throw new Error('Invalid page')
+  return contents
+}
+ipcMain.handle('browser-passwords:status', () => ({ available: passwords().store.available() }))
+ipcMain.handle('browser-passwords:list', () => ({ entries: passwords().store.list(), never: passwords().store.neverList() }))
+ipcMain.handle('browser-passwords:remove', (_event, id) => { passwords().store.remove(String(id)) })
+ipcMain.handle('browser-passwords:clear', () => { passwords().store.clear() })
+ipcMain.handle('browser-passwords:remove-never', (_event, origin) => { passwords().store.removeNever(String(origin)) })
+ipcMain.handle('browser-passwords:for-page', (event, contentsId) => {
+  const contents = ownGuest(event, contentsId)
+  const origin = originOf(contents.getURL())
+  const { store } = passwords()
+  return { origin, available: store.available(), entries: origin ? store.listFor(origin) : [] }
+})
+ipcMain.handle('browser-passwords:fill', async (event, { contentsId, id }) => {
+  const contents = ownGuest(event, contentsId)
+  const credential = passwords().store.get(String(id))
+  // Solo nel sito a cui la password appartiene.
+  if (!credential || originOf(contents.getURL()) !== credential.origin) throw new Error(t('This password belongs to another site'))
+  const result = await contents.executeJavaScriptInIsolatedWorld(PASSWORD_WORLD, [{ code: fillScript(credential) }])
+  return { filled: result === 'ok' || result === 'user', userOnly: result === 'user' }
+})
+ipcMain.handle('browser-passwords:respond', (_event, { offerId, action }) => {
+  const { store, offers } = passwords()
+  const offer = offers.get(String(offerId))
+  offers.delete(String(offerId))
+  if (!offer) return { saved: false }
+  if (action === 'save') { store.save(offer); return { saved: true } }
+  if (action === 'never') store.addNever(offer.origin)
+  return { saved: false }
+})
+
 app.on('web-contents-created', (_event, contents) => {
   if (contents.getType() !== 'webview') return
   // Come in un browser: il clic centrale (o Ctrl+clic) su un link lo apre in una scheda nuova in secondo piano, un link con target="_blank" in una scheda nuova davanti.
@@ -2571,6 +2655,7 @@ app.on('web-contents-created', (_event, contents) => {
     return { action: 'deny' }
   })
   contents.on('will-navigate', (event, url) => { if (!/^(https?:|about:blank)/i.test(url)) event.preventDefault() })
+  watchPasswordForms(contents)
   // Un clic (o la rotella) dentro la pagina non arriva alla finestra dell'app: la si avvisa, così i menu aperti si chiudono come con un clic altrove.
   contents.on('input-event', (_event, input) => {
     if (input.type === 'mouseDown' || input.type === 'mouseWheel') events.toHostOf(contents, 'browser:pointer-down', contents.id)
