@@ -202,6 +202,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
   - [openai-chat.cjs.md](reference/electron/openai-chat.cjs.md) ([openai-chat.cjs](../electron/openai-chat.cjs)) — Codec of the OpenAI-compatible chat protocol: request body, messages and stream reading
   - [provider-descriptors.cjs.md](reference/electron/provider-descriptors.cjs.md) ([provider-descriptors.cjs](../electron/provider-descriptors.cjs)) — OpenAI-compatible services described as data (URL, token, parameter names)
   - [model-choice.cjs.md](reference/electron/model-choice.cjs.md) ([model-choice.cjs](../electron/model-choice.cjs)) — The AI model chosen for a project or a conversation, applied on top of the general settings
+  - [unicode-text.cjs.md](reference/electron/unicode-text.cjs.md) ([unicode-text.cjs](../electron/unicode-text.cjs)) — Text styled with look-alike Unicode characters, converted both ways with Markdown
   - [temperature.cjs.md](reference/electron/temperature.cjs.md) ([temperature.cjs](../electron/temperature.cjs)) — The temperature level converted into each provider's degrees, with its style hint
   - [document-images.cjs.md](reference/electron/document-images.cjs.md) ([document-images.cjs](../electron/document-images.cjs)) — Images following a document that is moved
   - [pdf-import.cjs.md](reference/electron/pdf-import.cjs.md) ([pdf-import.cjs](../electron/pdf-import.cjs)) — PDF text extraction with the images in place
@@ -295,6 +296,7 @@ Documentation pages under `docs/reference/`, in their real directory hierarchy. 
     - [svgRaster.js.md](reference/src/lib/svgRaster.js.md) ([svgRaster.js](../src/lib/svgRaster.js)) — An SVG rasterised to a PNG for the chat
     - [providerIcon.js.md](reference/src/lib/providerIcon.js.md) ([providerIcon.js](../src/lib/providerIcon.js)) — Custom provider icon: an image scaled to a small PNG data URL
     - [temperature.js.md](reference/src/lib/temperature.js.md) ([temperature.js](../src/lib/temperature.js)) — The temperature level (0–1), its bands and its labels
+    - [textFormat.js.md](reference/src/lib/textFormat.js.md) ([textFormat.js](../src/lib/textFormat.js)) — Names of the Unicode text styles, conversion losses in words, undoable replacement in a text field
     - [textAlignExtension.js.md](reference/src/lib/textAlignExtension.js.md) ([textAlignExtension.js](../src/lib/textAlignExtension.js)) — Text alignment saved as aligned blocks
     - [toasts.js.md](reference/src/lib/toasts.js.md) ([toasts.js](../src/lib/toasts.js)) — Notification store: four levels, de-duplication, console diagnostics
     - [toolOptions.js.md](reference/src/lib/toolOptions.js.md) ([toolOptions.js](../src/lib/toolOptions.js)) — The assistant tool groups as the settings show them
