@@ -27,6 +27,7 @@ React UI components. Each file has its own reference page under [`docs/reference
 - [WorkspaceDialog.jsx](pages/WorkspaceDialog.jsx.md) — Creates or edits a workspace, with a switch for each project
 - [TextPane.jsx](pages/TextPane.jsx.md) — Text reader: edits any text file, with line numbers, find and replace
 - [TextFindBar.jsx](pages/TextFindBar.jsx.md) — Find and replace of the text reader
+- [TextFormatStatus.jsx](pages/TextFormatStatus.jsx.md) — Line ending and encoding of the open text file, in the status bar
 - [FindPanel.jsx](pages/FindPanel.jsx.md) — Shared look of the find and replace bar
 - [ImagePane.jsx](pages/ImagePane.jsx.md) — Zoomable read-only tab for a project image
 - [IndexProgress.jsx](pages/IndexProgress.jsx.md) — Progress of the search index in the status bar

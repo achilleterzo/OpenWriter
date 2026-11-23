@@ -62,6 +62,8 @@ Rebuilding the index of a project (`project:knowledge-rebuild`) also reconfigure
 
 **Extracting embedded images.** `document:extract-markdown-images` takes a Markdown file whose images are base64 and writes a light `.md` beside the original, with the images in an `images/` folder ([markdown-extract.cjs](markdown-extract.cjs.md)); the original is not touched, and a destination equal to the source is refused. The work happens on the file on disk, not through the editor, and since it blocks the main process for a while the window is told first (`document:extract-markdown-images-start`, with name and size in MB) so that it can show the wait. It returns the path, the number of images and the bytes.
 
+**Unicode text style.** `text-format:styles` (the menu list), `text-format:stylize`, `text-format:apply` (a style over text that may already have one), `text-format:unstyle`, `text-format:to-text` and `text-format:to-markdown` call [unicode-text.cjs](unicode-text.cjs.md) for the text reader; the text is capped at 2 MB and the options are reduced to the known ones (accents default to `keep`).
+
 **Text reader.** `text:open` reads a file for the text reader
 
  and `text:save` writes it ([text-file.cjs](text-file.cjs.md)); the Open dialog now also offers "All files" and returns a file that is not a document already read, with `format: 'text'`. A path is accepted only if it is in the project, was chosen by the user with a dialog (`userTextPaths`), or was in the session (`texts`): `resolveTextPath`. The file tree marks as `openable` every file that is not of a known binary type. The refusals (binary or not UTF-8, over 1 MB) come back as translated messages.

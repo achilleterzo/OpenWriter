@@ -27,6 +27,7 @@ import OutlinePanel from './components/OutlinePanel.jsx'
 import AnchorsPanel from './components/AnchorsPanel.jsx'
 import ToastHost from './components/ToastHost.jsx'
 import IndexProgress from './components/IndexProgress.jsx'
+import TextFormatStatus from './components/TextFormatStatus.jsx'
 import { notify } from './lib/toasts.js'
 import PanelResizer from './components/PanelResizer.jsx'
 import SettingsScreen from './components/SettingsScreen.jsx'
@@ -107,7 +108,7 @@ const createBrowserTab = (initialUrl) => ({ id: crypto.randomUUID(), kind: 'brow
 // Le schede del browser e delle immagini non hanno editor né file da salvare: non sono documenti.
 const createImageTab = (imagePath) => ({ id: crypto.randomUUID(), kind: 'image', title: baseName(imagePath), imagePath, filePath: null, sourcePath: null, dirty: false })
 // Il lettore testuale: un file di testo qualsiasi, letto e salvato com'è. Non è un documento (niente editor, note, cronologia né assistente): ha una scheda propria.
-const createTextTab = (file, id = crypto.randomUUID()) => ({ id, kind: 'text', title: baseName(file.filePath), textPath: file.filePath, text: file.content, savedText: file.content, eol: file.eol === 'crlf' ? 'crlf' : 'lf', bom: Boolean(file.bom), filePath: null, sourcePath: null, dirty: false })
+const createTextTab = (file, id = crypto.randomUUID()) => ({ id, kind: 'text', title: baseName(file.filePath), textPath: file.filePath, text: file.content, savedText: file.content, eol: file.eol === 'crlf' ? 'crlf' : 'lf', bom: Boolean(file.bom), savedEol: file.eol === 'crlf' ? 'crlf' : 'lf', savedBom: Boolean(file.bom), filePath: null, sourcePath: null, dirty: false })
 const DOCUMENT_FILE = /\.(md|markdown|mdown|docx|pdf)$/i
 const isDocument = (tab) => tab && tab.kind !== 'browser' && tab.kind !== 'image' && tab.kind !== 'text'
 // Una scheda fissata chiusa resta al suo posto senza documento caricato (con il pulsante "Apri"): non ha editor.
@@ -990,6 +991,13 @@ export default function App() {
       setActiveId(tab.id)
     },
     // Salva una scheda del lettore testuale nel suo file (o, con "salva con nome", dove si sceglie): il testo, con i suoi a capo e la sua firma, com'è nel campo.
+    // Il formato con cui si salverà il file di testo: `eol` ('lf' o 'crlf') e `bom` (la firma UTF-8). Si sceglie dalla barra di stato.
+    setTextFormat(id, { eol, bom } = {}) {
+      setTabs((current) => current.map((item) => (item.id === id && item.kind === 'text'
+        ? { ...item, ...(eol === 'lf' || eol === 'crlf' ? { eol } : {}), ...(typeof bom === 'boolean' ? { bom } : {}) }
+        : item)))
+      scheduleSave()
+    },
     async saveText(id, { saveAs = false } = {}) {
       const tab = latest.current.tabs.find((item) => item.id === id)
       const buffer = textBuffers.current.get(id)
@@ -999,7 +1007,7 @@ export default function App() {
         const savedPath = await electronAPI.saveTextFile({ filePath: tab.textPath, text, eol: tab.eol, bom: tab.bom, saveAs })
         if (!savedPath) return false
         buffer.markSaved(text)
-        setTabs((current) => current.map((item) => (item.id === id ? { ...item, textPath: savedPath, title: baseName(savedPath), dirty: false, preview: false } : item)))
+        setTabs((current) => current.map((item) => (item.id === id ? { ...item, textPath: savedPath, title: baseName(savedPath), dirty: false, preview: false, savedEol: tab.eol, savedBom: tab.bom } : item)))
         setExplorerRefresh((value) => value + 1)
         scheduleSave()
         return true
@@ -1778,6 +1786,7 @@ export default function App() {
             <span className="flex shrink-0 items-center gap-4">
               <IndexProgress project={project} />
               <span>{status}</span>
+              {activeTab?.kind === 'text' && !homeOpen && <TextFormatStatus tab={activeTab} onChange={(changes) => workspace.setTextFormat(activeTab.id, changes)} />}
             </span>
           </footer>
         </main>
@@ -1803,7 +1812,7 @@ export default function App() {
           />
         </aside>
       </div>
-      {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
+      {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} above={contextMenu.above} onClose={() => setContextMenu(null)} />}
       {updateRelease && updateNoticeVisible && (
         <div className="fixed bottom-12 right-6 z-30 flex max-w-md items-center gap-4 rounded-xl border border-accent-500/50 bg-slate-900 p-4 text-sm shadow-xl">
           <div className="min-w-0">
