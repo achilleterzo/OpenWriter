@@ -12,6 +12,7 @@ const { writeFileAtomic } = require('./atomic-write.cjs')
  *   readTextFile(file, { limit })     → { filePath, content, eol, bom, size }; errore con `code` 'TEXT_TOO_LARGE' oltre `limit` byte
  *   writeTextFile(file, text, opts)   scrittura atomica
  *   isBinaryName(name)                → true per le estensioni note di file non testuali (l'albero non li offre come apribili)
+ *   newTextFileName(name, { reserved }) → il nome di un nuovo file di testo creato dall'utente (.txt se manca l'estensione); errore con `code` 'INVALID_NAME' o 'BINARY_TYPE'
  */
 const TEXT_LIMIT = 1024 * 1024
 
@@ -31,6 +32,17 @@ const BINARY_EXTENSIONS = new Set([
 ])
 
 const isBinaryName = (name) => BINARY_EXTENSIONS.has(path.extname(String(name || '')).toLowerCase())
+
+// Il nome di un nuovo file di testo creato dal file manager: senza estensione diventa .txt; l'estensione è libera (.log, .json, .yml…) purché non sia di un file
+// binario né di un tipo che l'app tratta a parte (`reserved`: immagini, DOCX, PDF). Un nome che comincia con un punto resterebbe nascosto nell'albero: si rifiuta.
+function newTextFileName(name, { reserved = [] } = {}) {
+  const clean = String(name || '').trim()
+  if (!clean || clean.startsWith('.') || clean.endsWith('.') || /[\\/:*?"<>|]/.test(clean)) throw Object.assign(new Error('Invalid name'), { code: 'INVALID_NAME' })
+  const extension = path.extname(clean).toLowerCase()
+  if (!extension) return `${clean}.txt`
+  if (isBinaryName(clean) || reserved.includes(extension)) throw Object.assign(new Error('This kind of file cannot be created as text'), { code: 'BINARY_TYPE' })
+  return clean
+}
 
 function notText() {
   const error = new Error('This file does not look like text (it is binary or not UTF-8)')
@@ -80,4 +92,4 @@ function writeTextFile(filePath, text, options) {
   if (mode !== undefined) fs.chmodSync(filePath, mode)
 }
 
-module.exports = { TEXT_LIMIT, BINARY_EXTENSIONS, isBinaryName, decodeText, encodeText, readTextFile, writeTextFile }
+module.exports = { TEXT_LIMIT, BINARY_EXTENSIONS, isBinaryName, newTextFileName, decodeText, encodeText, readTextFile, writeTextFile }

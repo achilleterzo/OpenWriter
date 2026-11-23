@@ -35,6 +35,7 @@ const { writeFileAtomic } = require('./atomic-write.cjs')
 const { createFontsStore } = require('./fonts.cjs')
 const { parsePdf, MARKER } = require('./pdf-import.cjs')
 const textFiles = require('./text-file.cjs')
+const unicodeText = require('./unicode-text.cjs')
 const { createReferencesStore } = require('./project-references.cjs')
 const { webFolderOf } = require('./web-references.cjs')
 const projectPack = require('./project-pack.cjs')
@@ -1047,6 +1048,22 @@ function createWindow(context) {
 
 ipcMain.handle('document:open', openDocument)
 // Lettore testuale: apre e salva file di testo qualsiasi, senza interpretarli (text-file.cjs).
+// Formattazione del testo con caratteri Unicode (vedi unicode-text.cjs): funzioni pure, qui perché la pagina non carica l'analizzatore Markdown del processo principale.
+// Il testo è quello selezionato (o tutto il file) del lettore testuale, che non supera il limite di lettura; si accetta un po' di più per chi converte un documento intero.
+const TEXT_FORMAT_LIMIT = 2 * 1024 * 1024
+const formatInput = (value) => {
+  const text = String(value ?? '')
+  if (text.length > TEXT_FORMAT_LIMIT) throw new Error(t('The text is too long to convert'))
+  return text
+}
+// Le lettere accentate restano normali, salvo richiesta: l'accento combinato su una lettera con stile lo disegnano male molti programmi (il Blocco note, per esempio).
+const formatAccents = (value) => (value === 'combine' ? 'combine' : 'keep')
+ipcMain.handle('text-format:styles', () => unicodeText.styleMenu())
+ipcMain.handle('text-format:stylize', (_event, { text, style, accents } = {}) => unicodeText.stylize(formatInput(text), [].concat(style ?? []).map(String), { accents: formatAccents(accents) }))
+ipcMain.handle('text-format:apply', (_event, { text, style, accents } = {}) => unicodeText.applyStyle(formatInput(text), String([].concat(style ?? [])[0] ?? ''), { accents: formatAccents(accents) }))
+ipcMain.handle('text-format:unstyle', (_event, text) => unicodeText.unstyle(formatInput(text)))
+ipcMain.handle('text-format:to-text', (_event, { text, family, links, accents } = {}) => unicodeText.markdownToText(formatInput(text), { family: family === 'serif' ? 'serif' : 'sans', links: links === 'text' ? 'text' : 'inline', accents: formatAccents(accents) }))
+ipcMain.handle('text-format:to-markdown', (_event, { text, escape, unmapped } = {}) => unicodeText.textToMarkdown(formatInput(text), { escape: escape !== false, unmapped: unmapped === 'plain' ? 'plain' : 'keep' }))
 ipcMain.handle('text:open', async (_event, filePath) => readTextForTab(resolveTextPath(filePath)))
 ipcMain.handle('text:save', async (_event, { filePath, text, eol, bom, saveAs }) => {
   let target = filePath && !saveAs ? resolveTextPath(filePath) : null
@@ -2165,17 +2182,24 @@ ipcMain.handle('tools:move-path', async (_event, { from, to } = {}) => {
 })
 ipcMain.handle('tools:create-directory', (_event, relativePath) => projectTools.createDirectory(relativePath))
 ipcMain.handle('tools:create-file', (_event, { path: relativePath, content } = {}) => projectTools.createFile(relativePath, content))
-// Dal file manager: nuova cartella o nuovo documento Markdown vuoto dentro `parent`; restituisce il percorso assoluto creato.
+// Dal file manager: nuova cartella, nuovo documento Markdown vuoto (type 'file') o nuovo file di testo vuoto (type 'text': .txt se manca l'estensione, altrimenti
+// quella scelta, se non è di un file binario o di un tipo trattato a parte) dentro `parent`; restituisce il percorso assoluto creato.
 ipcMain.handle('workspace:create-entry', async (_event, { parent, name, type } = {}) => {
   const base = resolveInProject(parent)
-  const clean = String(name || '').trim()
+  let clean = String(name || '').trim()
   if (!clean || clean === '.' || clean === '..' || /[\\/:*?"<>|]/.test(clean)) throw new Error(t('Invalid name'))
-  const relative = path.relative(windowContext.project, path.join(base, clean)).split(path.sep).join('/')
   const directory = type === 'directory'
+  const text = type === 'text'
+  if (text) {
+    try { clean = textFiles.newTextFileName(clean, { reserved: ['.docx', '.pdf', ...IMAGE_EXTENSIONS] }) } catch (error) {
+      throw new Error(error.code === 'BINARY_TYPE' ? t('This kind of file cannot be created as text') : t('Invalid name'))
+    }
+  }
+  const relative = path.relative(windowContext.project, path.join(base, clean)).split(path.sep).join('/')
   const final = directory || path.extname(clean) ? relative : `${relative}.md`
   if (fsSync.existsSync(path.join(windowContext.project, final))) throw new Error(t('An item with this name already exists'))
   // Dall'albero il nome lo sceglie l'utente: lo stesso nome in un'altra cartella è lecito (README.md, index.md…); il controllo sui doppioni vale per l'assistente.
-  return (directory ? await projectTools.createDirectory(final) : await projectTools.createFile(final, '')).absolute
+  return (directory ? await projectTools.createDirectory(final) : await projectTools.createFile(final, '', { anyText: text })).absolute
 })
 ipcMain.handle('app:open-link', (_event, url) => (/^https?:\/\//i.test(String(url)) ? shell.openExternal(String(url)) : false))
 ipcMain.handle('images:pick', async () => {
