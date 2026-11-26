@@ -62,6 +62,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   openTextFile: (filePath) => ipcRenderer.invoke('text:open', filePath),
   saveTextFile: (payload) => ipcRenderer.invoke('text:save', payload),
+  // Testo con caratteri Unicode che imitano grassetto, corsivo…: stili, applicazione, rimozione e conversione da e verso il Markdown (vedi unicode-text.cjs).
+  textFormat: {
+    styles: () => ipcRenderer.invoke('text-format:styles'),
+    stylize: (request) => ipcRenderer.invoke('text-format:stylize', request),
+    apply: (request) => ipcRenderer.invoke('text-format:apply', request),
+    unstyle: (text) => ipcRenderer.invoke('text-format:unstyle', text),
+    toText: (request) => ipcRenderer.invoke('text-format:to-text', request),
+    toMarkdown: (request) => ipcRenderer.invoke('text-format:to-markdown', request),
+  },
   openDocument: () => ipcRenderer.invoke('document:open'),
   openDocumentPath: (filePath, options) => ipcRenderer.invoke('document:open-path', filePath, options),
   reopenDocument: (filePath) => ipcRenderer.invoke('document:reopen', filePath),

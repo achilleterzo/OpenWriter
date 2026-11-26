@@ -32,7 +32,7 @@ Secure bridge between the renderer and the main process, exposed as `window.elec
 
 `takeExternalProjects` / `onExternalProject`: folders to open as a project (file manager entry, command line). `getIntegrationStatus`, `setMarkdownAssociation(on)`, `setFolderMenu(on)`, `openDefaultApps()`: system integration (see [system-integration.cjs](system-integration.cjs.md)).
 
-`openTextFile(path)` and `saveTextFile({ filePath, text, eol, bom, saveAs })`: the text reader (see [text-file.cjs](text-file.cjs.md)).
+`openTextFile(path)` and `saveTextFile({ filePath, text, eol, bom, saveAs })`: the text reader (see [text-file.cjs](text-file.cjs.md)). `textFormat`: `styles()`, `stylize({ text, style, accents })`, `apply({ text, style, accents })`, `unstyle(text)`, `toText({ text, family, links, accents })` and `toMarkdown({ text, escape, unmapped })`, the Unicode text style of the text reader (see [unicode-text.cjs](unicode-text.cjs.md)).
 
 `onAppNotice(callback)`: the errors and warnings of the main process, arriving on `app:notice` as `{ level, message, detail }` and shown as notifications ([toasts.js](../../src/lib/toasts.js.md)).
 

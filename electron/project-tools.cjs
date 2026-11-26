@@ -145,11 +145,12 @@ function createProjectTools({ getProjectPath, readDocument }) {
   }
 
   // Crea un nuovo documento di testo (.md, o .txt) con il contenuto dato; non sovrascrive mai un file esistente.
-  async function createFile(relativePath, content = '') {
+  // `anyText`: il nome l'ha scelto l'utente dal file manager (e verificato prima: newTextFileName), quindi l'estensione è libera; per l'assistente restano .md, .markdown e .txt.
+  async function createFile(relativePath, content = '', { anyText = false } = {}) {
     const requested = String(relativePath || '').trim()
     if (!requested) throw new Error(t('Invalid name'))
     const extension = path.extname(requested).toLowerCase()
-    if (extension && !TEXT_DOCUMENT_EXTENSIONS.has(extension)) throw new Error(t('Only .md and .txt documents can be created'))
+    if (extension && !anyText && !TEXT_DOCUMENT_EXTENSIONS.has(extension)) throw new Error(t('Only .md and .txt documents can be created'))
     const { target, relative } = resolveInside(extension ? requested : `${requested}.md`)
     const text = String(content ?? '')
     if (text.length > MAX_CREATED_CHARS) throw new Error(t('The content is too long'))

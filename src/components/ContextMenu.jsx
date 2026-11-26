@@ -13,7 +13,7 @@ const isActionable = (item) => !item.separator && !item.disabled
  * Item: { label, hint?, bold?, danger?, disabled?, separator?, onClick }.
  * Il focus resta dov'era (editor o campo di testo), così Taglia / Incolla / Sostituisci agiscono sull'elemento giusto.
  */
-export default function ContextMenu({ x, y, items, onClose }) {
+export default function ContextMenu({ x, y, items, above = false, onClose }) {
   const ref = useRef(null)
   const [position, setPosition] = useState({ left: x, top: y })
   const [active, setActive] = useState(-1)
@@ -23,8 +23,10 @@ export default function ContextMenu({ x, y, items, onClose }) {
   // Resta dentro la finestra anche se aperto vicino al bordo.
   useLayoutEffect(() => {
     const { width, height } = ref.current.getBoundingClientRect()
-    setPosition({ left: Math.max(4, Math.min(x, window.innerWidth - width - 4)), top: Math.max(4, Math.min(y, window.innerHeight - height - 4)) })
-  }, [x, y, items])
+    // `above`: y è il bordo inferiore del menu (aperto sopra un pulsante in fondo alla finestra), non quello superiore.
+    const top = above ? y - height : y
+    setPosition({ left: Math.max(4, Math.min(x, window.innerWidth - width - 4)), top: Math.max(4, Math.min(top, window.innerHeight - height - 4)) })
+  }, [x, y, items, above])
 
   useEffect(() => {
     const move = (direction) => {
@@ -68,7 +70,7 @@ export default function ContextMenu({ x, y, items, onClose }) {
       ref={ref}
       role="menu"
       style={position}
-      className="fixed z-50 min-w-48 max-w-80 select-none border border-slate-600 bg-slate-800 py-1 text-sm text-slate-100 shadow-xl"
+      className="fixed z-50 max-h-[calc(100vh-8px)] min-w-48 max-w-80 select-none overflow-y-auto border border-slate-600 bg-slate-800 py-1 text-sm text-slate-100 shadow-xl"
       onContextMenu={(event) => event.preventDefault()}
     >
       {items.map((item, index) => (item.separator

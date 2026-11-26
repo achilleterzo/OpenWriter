@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { AlertCircle, ChevronDown, ChevronRight, FilePlus, FileText, Folder, FolderInput, FolderOpen, FolderPlus, FolderRoot, Library, Link2, Lock, RefreshCw, Settings, X } from 'lucide-react'
+import { AlertCircle, ChevronDown, ChevronRight, FileCode, FilePlus, FileText, Folder, FolderInput, FolderOpen, FolderPlus, FolderRoot, Library, Link2, Lock, RefreshCw, Settings, X } from 'lucide-react'
 import FileIcon from './FileIcon.jsx'
 
 import { ContextMenuContext } from './ContextMenu.jsx'
@@ -13,6 +13,8 @@ const electronAPI = window.electronAPI
 const revealLabel = /Win/.test(navigator.platform) ? t('Show in File Explorer') : /Mac/.test(navigator.platform) ? t('Reveal in Finder') : t('Show in file manager')
 const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes('Files')
 const parentOf = (target) => target.replace(/[\\/][^\\/]*$/, '')
+// L'area libera dell'albero: il punto cliccato non è una riga, un campo, un pulsante o una riga delle sezioni dei riferimenti e dei collegamenti.
+const isEmptyArea = (event) => !event.target.closest?.('input, textarea, select, button, a, [data-tree-path], [data-tree-row], [data-aside-row]')
 // Il percorso sta dentro la cartella del progetto (maiuscole e separatori come in pathCompare.js).
 const isInsideProject = (target, project) => isInsidePath(target.replace(/\/+$/, ''), project.replace(/\/+$/, ''))
 
@@ -56,6 +58,8 @@ function RenameInput({ entry, onCommit, onCancel }) {
 function CreateRow({ depth, menu }) {
   const ref = useRef(null)
   const directory = menu.creating.type === 'directory'
+  const text = menu.creating.type === 'text'
+  const label = directory ? t('Folder name') : text ? t('Text file name') : t('Document name')
 
   useEffect(() => {
     ref.current?.focus()
@@ -65,13 +69,13 @@ function CreateRow({ depth, menu }) {
   return (
     <div style={{ paddingLeft: 8 + depth * 14 }} className="flex items-center gap-1.5 py-0.5 pr-2">
       <span className="w-3.5 shrink-0" />
-      {directory ? <Folder size={14} className="shrink-0 text-accent-400" /> : <FileText size={14} className="shrink-0 text-accent-400" />}
+      {directory ? <Folder size={14} className="shrink-0 text-accent-400" /> : text ? <FileCode size={14} className="shrink-0 text-accent-400" /> : <FileText size={14} className="shrink-0 text-accent-400" />}
       <input
         ref={ref}
         value={menu.newName}
         maxLength={120}
-        aria-label={directory ? t('Folder name') : t('Document name')}
-        placeholder={directory ? t('Folder name') : t('Document name')}
+        aria-label={label}
+        placeholder={label}
         className="min-w-0 flex-1 rounded border border-accent-400 bg-slate-800 px-1.5 py-0.5 text-sm text-slate-100 outline-none placeholder:text-slate-500"
         onChange={(event) => menu.setNewName(event.target.value)}
         onKeyDown={(event) => {
@@ -270,7 +274,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     }
     requestAnimationFrame(attempt)
   }
-  // Nuova cartella o nuovo documento: { parent, type: 'directory' | 'file' } con il nome in corso di digitazione.
+  // Nuova cartella, nuovo documento o nuovo file di testo: { parent, type: 'directory' | 'file' | 'text' } con il nome in corso di digitazione.
   const [creating, setCreating] = useState(null)
   // Cartella "corrente": l'ultima cliccata (o quella del file cliccato). I pulsanti Nuova cartella / Nuovo documento della barra creano lì; senza selezione, nella radice.
   const [selectedFolder, setSelectedFolder] = useState(null)
@@ -356,7 +360,8 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
       cancelCreate()
       if (parent !== project && !expandedPaths.has(parent)) onToggle(parent)
       setLocalRefresh((value) => value + 1)
-      if (type === 'file') onOpenFile(created)
+      // Il documento e il file di testo nuovi si aprono subito (il secondo nel lettore testuale, dove lo modifica solo l'utente).
+      if (type === 'file' || type === 'text') onOpenFile(created)
     } catch (reason) {
       onStatus(t('Could not create: {message}', { message: reason.message }))
     }
@@ -413,6 +418,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
           !entry.isDirectory && entry.openable !== false && { label: t('Open'), onClick: () => onOpenFile(entry.path) },
           entry.isDirectory && { label: t('New folder…'), onClick: () => startCreate(entry.path, 'directory') },
           entry.isDirectory && { label: t('New document…'), onClick: () => startCreate(entry.path, 'file') },
+          entry.isDirectory && { label: t('New text file…'), onClick: () => startCreate(entry.path, 'text') },
           entry.isDirectory && { separator: true },
           entry.isDirectory && !entry.isProject && { label: t('Create sub-project…'), onClick: () => createSubproject(entry) },
           entry.isProject && { label: t('Sub-project settings…'), onClick: () => setSubSettings({ path: entry.path, name: entry.name }) },
@@ -686,6 +692,35 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
     })
   }
 
+  // Tolta la selezione: anche la cartella scelta come destinazione dei nuovi file, così si torna alla radice del progetto.
+  const clearSelection = () => { setSelection([]); anchorRef.current = null; setSelectedFolder(null) }
+
+  // Tasto destro sull'area libera: il menu del progetto (nuovo elemento nella radice, incolla, cartelle di riferimento, impostazioni…), le stesse azioni dei pulsanti
+  // dell'intestazione. Prima si toglie la selezione, così «nuovo» agisce sulla radice e non sull'ultima cartella scelta.
+  const openRootMenu = (event) => {
+    event.preventDefault()
+    clearSelection()
+    openMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        { label: t('New folder…'), onClick: () => startCreate(project, 'directory') },
+        { label: t('New document…'), onClick: () => startCreate(project, 'file') },
+        { label: t('New text file…'), onClick: () => startCreate(project, 'text') },
+        { separator: true },
+        { label: t('Paste'), hint: 'Ctrl+V', onClick: () => pasteFromClipboard(project) },
+        { separator: true },
+        { label: t('Add a reference folder…'), onClick: addReference },
+        { label: t('Move a project here…'), onClick: () => moveProjectIn(project) },
+        { separator: true },
+        { label: t('Refresh'), onClick: () => setLocalRefresh((value) => value + 1) },
+        { label: t('Project settings'), onClick: () => setSubSettings({ path: project, name: projectName || project.split(/[\\/]/).filter(Boolean).at(-1) || project }) },
+        { separator: true },
+        { label: revealLabel, onClick: () => electronAPI.revealPath(project) },
+      ],
+    })
+  }
+
   useEffect(() => {
     if (!subSettings) return undefined
     const closeOnEscape = (event) => { if (event.key === 'Escape') setSubSettings(null) }
@@ -773,8 +808,10 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
             if (target && row.dataset.treeRow === 'file' && isImageFile(target) && isImageFile(activePath)) onOpenFile(target, { preview: true })
           })
         }}
-        // Un clic sull'area vuota sotto le righe toglie la selezione (e la cartella scelta come destinazione dei nuovi file: si torna alla radice del progetto).
-        onClick={(event) => { if (event.target === event.currentTarget) { setSelection([]); anchorRef.current = null; setSelectedFolder(null) } }}
+        // L'area libera (ciò che non è una riga, un campo o un pulsante: anche sotto le righe, accanto alle sezioni e nel messaggio di cartella vuota): un clic toglie
+        // la selezione (e la cartella scelta come destinazione dei nuovi file: si torna alla radice del progetto), il tasto destro apre il menu del progetto.
+        onClick={(event) => { if (isEmptyArea(event)) clearSelection() }}
+        onContextMenu={(event) => { if (!event.defaultPrevented && isEmptyArea(event)) openRootMenu(event) }}
         onDragOver={(event) => drop.over(event, project)}
         onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDropTarget(null) }}
         onDrop={(event) => drop.drop(event, project)}
@@ -789,7 +826,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
           <div className="mt-2 border-t border-slate-800 pt-1">
             <h3 className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500" title={t('Folders outside the project, linked here as references: the assistant can read them (as @name/…) but never changes them.')}><Library size={12} /> {t('References')}</h3>
             {references.map((reference) => (
-              <div key={reference.name} onContextMenu={(event) => openReferenceMenu(event, reference)} className={`group flex items-center pr-1 text-sm transition hover:bg-slate-800/70 ${reference.missing ? 'text-slate-600' : 'text-slate-400'}`}>
+              <div key={reference.name} data-aside-row onContextMenu={(event) => openReferenceMenu(event, reference)} className={`group flex items-center pr-1 text-sm transition hover:bg-slate-800/70 ${reference.missing ? 'text-slate-600' : 'text-slate-400'}`}>
                 <button type="button" title={reference.missing ? `${reference.path} · ${t('Folder not found')}` : `${reference.path}\n${t('Click to open the folder in the file manager')}`} className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-3 text-left" onClick={() => (reference.missing ? relinkReference(reference) : electronAPI.revealReference(reference.name).catch((reason) => onStatus(reason.message)))}>
                   <span className="w-3.5 shrink-0" />
                   <Folder size={14} className={`shrink-0 ${reference.missing ? 'text-slate-600' : 'text-accent-400'}`} />
@@ -806,7 +843,7 @@ export default function FileExplorer({ project, activePath, refreshToken, expand
           <div className="mt-2 border-t border-slate-800 pt-1">
             <h3 className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500" title={t('Documents outside the project folder, linked here: they are opened and edited where they are, not copied.')}><Link2 size={12} /> {t('Linked documents')}</h3>
             {links.map((link) => (
-              <div key={link.path} onContextMenu={(event) => openLinkMenu(event, link)} className={`group flex items-center pr-1 text-sm transition hover:bg-slate-800/70 ${link.path === activePath ? 'bg-slate-800 text-slate-50' : link.missing ? 'text-slate-600' : 'text-slate-400'}`}>
+              <div key={link.path} data-aside-row onContextMenu={(event) => openLinkMenu(event, link)} className={`group flex items-center pr-1 text-sm transition hover:bg-slate-800/70 ${link.path === activePath ? 'bg-slate-800 text-slate-50' : link.missing ? 'text-slate-600' : 'text-slate-400'}`}>
                 <button type="button" disabled={link.missing} title={link.missing ? `${link.path} · ${t('File not found')}` : link.path} className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-3 text-left disabled:cursor-not-allowed" onClick={() => onOpenFile(link.path, { preview: true })} onDoubleClick={() => onOpenFile(link.path, { permanent: true })}>
                   <span className="w-3.5 shrink-0" />
                   <FileText size={14} className={`shrink-0 ${link.missing ? 'text-slate-600' : 'text-accent-400'}`} />
