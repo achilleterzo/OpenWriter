@@ -1011,7 +1011,10 @@ function createWindow(context) {
     mcpBridge.rejectAll('The OpenWriter window stopped responding')
     if (details.reason !== 'clean-exit' && reloads < 2 && !win.isDestroyed()) {
       reloads += 1
-      setTimeout(() => { if (!win.isDestroyed()) win.webContents.reload() }, 500)
+      // Se l'app si sta chiudendo la finestra può esistere ancora mentre la sua pagina è già distrutta: ricaricarla farebbe un errore nel processo principale.
+      setTimeout(() => {
+        try { if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.reload() } catch { /* la finestra si sta chiudendo */ }
+      }, 500)
     }
   })
   win.webContents.on('unresponsive', () => logCrash('la finestra non risponde'))

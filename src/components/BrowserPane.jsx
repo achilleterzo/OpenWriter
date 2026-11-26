@@ -318,11 +318,44 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
   const [frameSet, setFrameSet] = useState(false) // il rettangolo è tracciato: la barra offre cosa farne
   const [frameDone, setFrameDone] = useState('') // ultima azione riuscita (copia, salva), per la spunta
   const frameOverlay = useRef(null)
-  const closeFrame = () => { setFraming(false); setFrame(null); setFrameSet(false); setFrameDone('') }
-  useEffect(() => { if (!active || reader) { setFraming(false); setFrame(null); setFrameSet(false) } }, [active, reader])
+  // L'istantanea della pagina, scattata quando si apre il riquadro: la pagina può muoversi (un video, una diretta) mentre si traccia, e si ritaglia da qui, non da una nuova foto.
+  const [snapshot, setSnapshot] = useState(null) // { src, width } (width = pixel dell'immagine)
+  const closeFrame = () => { setFraming(false); setFrame(null); setFrameSet(false); setFrameDone(''); setSnapshot(null) }
+  async function toggleFraming() {
+    setFrame(null); setFrameSet(false); setFrameDone('')
+    if (framing) { setFraming(false); setSnapshot(null); return }
+    setFrameBusy(true)
+    try {
+      const shot = await window.electronAPI.captureWebview(viewRef.current.getWebContentsId())
+      setSnapshot({ src: `data:${shot.mime || 'image/png'};base64,${shot.data}`, width: shot.width })
+    } catch (error) {
+      console.error(error)
+      setSnapshot(null) // senza istantanea si lavora sulla pagina viva, come prima
+    } finally {
+      setFrameBusy(false)
+    }
+    setFraming(true)
+  }
+  // Il rettangolo (pixel dell'area) ritagliato dall'istantanea.
+  function cropSnapshot(rect, area) {
+    return new Promise((resolve, reject) => {
+      const image = new Image()
+      image.onload = () => {
+        const scale = image.naturalWidth / area.width
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.round(rect.width * scale))
+        canvas.height = Math.max(1, Math.round(rect.height * scale))
+        canvas.getContext('2d').drawImage(image, Math.round(rect.x * scale), Math.round(rect.y * scale), canvas.width, canvas.height, 0, 0, canvas.width, canvas.height)
+        resolve({ mime: 'image/png', data: canvas.toDataURL('image/png').split(',')[1], width: canvas.width, height: canvas.height })
+      }
+      image.onerror = () => reject(new Error(t('The operation failed')))
+      image.src = snapshot.src
+    })
+  }
+  useEffect(() => { if (!active || reader) { setFraming(false); setFrame(null); setFrameSet(false); setSnapshot(null) } }, [active, reader])
   useEffect(() => {
     if (!framing) return undefined
-    const onKey = (event) => { if (event.key === 'Escape') { setFraming(false); setFrame(null); setFrameSet(false); setFrameDone('') } }
+    const onKey = (event) => { if (event.key === 'Escape') closeFrame() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [framing])
@@ -345,7 +378,7 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
     setFrameBusy(true)
     try {
       const view = viewRef.current
-      const shot = await window.electronAPI.captureWebview(view.getWebContentsId(), { rect, viewport: { width: area.width, height: area.height } })
+      const shot = snapshot ? await cropSnapshot(rect, area) : await window.electronAPI.captureWebview(view.getWebContentsId(), { rect, viewport: { width: area.width, height: area.height } })
       if (kind === 'send') {
         closeFrame()
         onRegion?.({ ...shot, title: view.getTitle() || view.getURL() })
@@ -522,7 +555,7 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
         <button type="button" aria-label={t('Open in the system browser')} title={t('Open in the system browser')} className={buttonClass} onClick={() => { const url = viewRef.current?.getURL?.(); if (/^https?:\/\//i.test(url || '')) window.electronAPI.openLink(url) }}><ExternalLink size={16} /></button>
         <button type="button" aria-label={t('Saved passwords')} title={t('Fill in a saved password')} className={buttonClass} onClick={openPasswordMenu}><KeyRound size={16} /></button>
         <button type="button" aria-label={t('Save a screenshot')} title={t('Save a screenshot')} disabled={shotBusy || Boolean(reader)} className={buttonClass} onClick={saveScreenshot}>{shotBusy ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} />}</button>
-        <button type="button" aria-label={t('Frame a region')} title={t('Frame a region')} aria-pressed={framing} disabled={frameBusy || Boolean(reader) || !onRegion} className={`${buttonClass} ${framing ? 'bg-slate-800 text-accent-400' : ''}`} onClick={() => { setFrame(null); setFrameSet(false); setFrameDone(''); setFraming((value) => !value) }}>{frameBusy ? <Loader2 size={16} className="animate-spin" /> : <Crop size={16} />}</button>
+        <button type="button" aria-label={t('Frame a region')} title={t('Frame a region')} aria-pressed={framing} disabled={frameBusy || Boolean(reader) || !onRegion} className={`${buttonClass} ${framing ? 'bg-slate-800 text-accent-400' : ''}`} onClick={toggleFraming}>{frameBusy ? <Loader2 size={16} className="animate-spin" /> : <Crop size={16} />}</button>
         <button type="button" aria-label={savedPage ? t('Remove from the context') : t('Add to the context')} title={savedPage ? t('Remove from the context') : t('Add to the context')} aria-pressed={Boolean(savedPage)} disabled={!canSave || starBusy} className={`${buttonClass} ${savedPage ? 'text-amber-400 hover:text-amber-300' : ''}`} onClick={toggleStar}>{starBusy ? <Loader2 size={16} className="animate-spin" /> : <Star size={16} className={savedPage ? 'fill-amber-400' : ''} />}</button>
         <button type="button" aria-label={reader ? t('Exit reading view') : t('Reading view')} title={reader ? t('Exit reading view') : t('Reading view')} aria-pressed={Boolean(reader)} disabled={readerBusy} className={`${buttonClass} ${reader ? 'bg-slate-800 text-accent-400' : ''}`} onClick={toggleReader}>{readerBusy ? <Loader2 size={16} className="animate-spin" /> : <BookOpen size={16} />}</button>
         {reader && (
@@ -557,6 +590,7 @@ export default function BrowserPane({ tab, active, onRegister, onTitle, onSaved,
             onPointerMove={(event) => { if (frame && !frameSet) { const point = framePoint(event); setFrame({ ...frame, x1: point.x, y1: point.y }) } }}
             onPointerUp={(event) => { if (frame && !frameSet) { const point = framePoint(event); finishFrame({ ...frame, x1: point.x, y1: point.y }) } }}
           >
+            {snapshot && <img src={snapshot.src} alt="" draggable={false} className="pointer-events-none absolute inset-0 h-full w-full select-none" />}
             {!frame && <span className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-md bg-slate-900/90 px-3 py-1.5 text-xs text-slate-200 shadow">{t('Drag to frame a region · Esc to cancel')}</span>}
             {frame && (
               <div
